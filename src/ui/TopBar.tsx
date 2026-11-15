@@ -13,7 +13,7 @@ export function TopBar({ title, dark }: { title: string; dark?: boolean }) {
       {saveError && <div className="demo-banner error-banner">{saveError}</div>}
       <header className={`topbar ${dark ? 'dark' : ''}`}>
         <a href="#" className="brand">
-          <img src="./icon.svg" alt="" width={28} height={28} />
+          <img src="./logo-small.png" alt="" width={36} height={36} />
           <span>Chick Chick Boom</span>
         </a>
         <span className="topbar-title">{title}</span>
