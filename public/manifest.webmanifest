@@ -1,9 +1,0 @@
-{
-  "name": "Chick Chick Boom POS",
-  "short_name": "CCB POS",
-  "start_url": "./#cashier",
-  "display": "standalone",
-  "background_color": "#fff8ec",
-  "theme_color": "#d7261e",
-  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
-}
