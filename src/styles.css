@@ -1064,6 +1064,19 @@ textarea.input {
   color: var(--yellow);
   margin: 0;
 }
+.serving-brand {
+  display: flex;
+  align-items: center;
+  gap: 2vw;
+}
+.serving-brand img {
+  height: clamp(4rem, 12vh, 9rem);
+  width: auto;
+  border-radius: 50%;
+}
+.brand img {
+  border-radius: 50%;
+}
 .serving-numbers {
   flex: 1;
   display: flex;

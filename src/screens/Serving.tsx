@@ -65,7 +65,10 @@ export function Serving() {
       {s.mode === 'demo' && <div className="demo-banner">DEMO</div>}
       <div className="serving-top">
         <section className="now-serving">
-          <h1>NOW SERVING</h1>
+          <div className="serving-brand">
+            <img src="./logo.png" alt="Chick Chick Boom" />
+            <h1>NOW SERVING</h1>
+          </div>
           <div className="serving-numbers">
             {serving.length === 0 ? <span className="serving-empty">—</span> : serving.slice(0, 6).map((o, i) => (
               <span key={o.id} className={`snum ${i === 0 ? 'first' : ''} ${flash === o.id ? 'flash' : ''}`}>{o.number}</span>
