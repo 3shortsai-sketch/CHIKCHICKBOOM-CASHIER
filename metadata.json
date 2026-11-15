@@ -1,0 +1,6 @@
+{
+  "name": "CounterSync",
+  "description": "Real-time multi-screen cashier POS, customer-facing order display, and kitchen tablet queue system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
