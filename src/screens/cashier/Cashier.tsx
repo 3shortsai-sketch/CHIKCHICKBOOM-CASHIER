@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { amountDue, createOrder, nextSeq, orderNumber } from '../../domain/checkout';
-import { availableRewards, canRedeem, cardState, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
+import { cardStateFor } from '../../domain/cards';
+import { availableRewards, canRedeem, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
 import { applyCombo, itemById, needsPicker, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
 import { allergenText, itemTags } from '../../domain/allergens';
 import { promoStatus } from '../../domain/promo';
 import { isAvailable, pendingSpins, popularToday, stockLeft, summarize } from '../../domain/reports';
 import type { Category, Combo, MenuItem, Order, OrderLine, PaymentMethod, Reward } from '../../domain/types';
 import { publishCart } from '../../data/live';
-import { modeOrders, openDay, patchDay, patchOrder, putOrder, saveSettings, useDevice, useStore } from '../../data/store';
+import { modeCards, modeOrders, openDay, patchDay, patchOrder, putOrder, saveSettings, useDevice, useStore } from '../../data/store';
 import { TopBar } from '../../ui/TopBar';
 import { OpenDayForm } from './OpenDay';
 import { AfterPay, PayModal, StampDots, type AfterPayMode } from './payflow';
@@ -96,7 +97,8 @@ export function Cashier() {
     [s, day, left, remaining],
   );
 
-  const card = useMemo(() => (cardId ? cardState(cardId, orders, s) : null), [cardId, orders, s]);
+  const cardList = useMemo(() => modeCards(state), [state]);
+  const card = useMemo(() => (cardId ? cardStateFor(cardId, orders, s, cardList) : null), [cardId, orders, s, cardList]);
   // A registered card fills in the customer's first name, so the kitchen and
   // the monitor can call them (only when the cashier hasn't typed one).
   const registeredName = useCardName(cardId);

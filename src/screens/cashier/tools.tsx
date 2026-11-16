@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { cardRows, searchCards } from '../../domain/cards';
-import { availableRewards, cardState, parseCard } from '../../domain/loyalty';
+import { cardRows, cardStateFor, searchCards } from '../../domain/cards';
+import { availableRewards, parseCard } from '../../domain/loyalty';
 import { newId, peso } from '../../domain/pricing';
 import type { BusinessDay, Order, Settings } from '../../domain/types';
 import { modeCards, patchDay, useStore } from '../../data/store';
 import { Modal } from '../../ui/ui';
 import { CardNameField } from './CardName';
+import { StampEditor } from './StampEditor';
 import { StampDots } from './payflow';
 
 /**
@@ -17,13 +18,14 @@ export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; order
   const rows = useMemo(() => cardRows(cards, orders, s), [cards, orders, s]);
   const [input, setInput] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
+  const [editStamps, setEditStamps] = useState(false);
 
   const typedNumber = parseCard(input, s);
   const matches = useMemo(() => (input.trim() ? searchCards(rows, input).slice(0, 6) : []), [rows, input]);
   // A valid number that nobody has registered or used yet is still a real card.
   const number = picked ?? (typedNumber && /\d/.test(input) ? typedNumber : (matches.length === 1 ? matches[0].number : null));
   const row = number ? (rows.find((r) => r.number === number) ?? cardRows([], [], s)[0]) : undefined;
-  const st = number ? cardState(number, orders, s) : null;
+  const st = number ? cardStateFor(number, orders, s, cards) : null;
   const rewards = st ? availableRewards(st, s) : [];
   const next = st ? s.loyalty.rewards.find((r) => r.at > st.stamps && !st.used.includes(r.at)) : undefined;
   const visits = number ? orders.filter((o) => o.cardId === number && !o.voided).sort((a, b) => b.createdAt - a.createdAt) : [];
@@ -68,6 +70,9 @@ export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; order
             <span className="muted small">Name:</span> <CardNameField number={number} by={cashier} />
           </div>
           <StampDots n={st.stamps} size={s.loyalty.cardSize} />
+          <button className="link-btn" onClick={() => setEditStamps(true)}>
+            Edit stamps (manager PIN)
+          </button>
           {rewards.length > 0 ? (
             <p className="ok-note">Reward ready: {rewards.map((r) => r.label).join(', ')}. Add the card to an order to use it.</p>
           ) : next ? (
@@ -86,6 +91,9 @@ export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; order
       <p className="muted small">
         <a href="#cards">See all cards →</a> (team passcode)
       </p>
+      {editStamps && number && st && (
+        <StampEditor number={number} name={row?.name} stamps={st.stamps} size={s.loyalty.cardSize} cards={cards} by={cashier} pin={s.managerPin} onClose={() => setEditStamps(false)} />
+      )}
     </Modal>
   );
 }

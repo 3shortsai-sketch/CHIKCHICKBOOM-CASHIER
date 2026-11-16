@@ -192,6 +192,7 @@ but the kitchen tablet is not.
 - At the cashier, adding a card to an order shows its name next to the number; an unregistered card shows a box to type the name. A registered name also fills in the customer's first name (unless the cashier typed one).
 - **Card** button at the cashier: look up any card by number or by part of the name (stamps, rewards, visits), and type a name for one that has none.
 - **Cards screen** (`#cards`, team passcode, listed on the home screen): every card with name, stamps, visits, reward ready and last visit; search; register a card; edit a name; Download Excel.
+- **Edit stamps** (Cards screen: "edit stamps" next to the count; cashier Card tool: "Edit stamps (manager PIN)"): − / + buttons up to a full card, with a reason (stamps from the paper card, missed a stamp, wrong stamp given, other). Every change is saved with who, when and why, shown under "Earlier changes" and as "+4 added by hand" in the list. A reward unlocks as usual when the stamps reach it.
 - Stamps are still counted from the orders, so voiding an order takes its stamp back. A card used on an order but never named appears in the list as "no name yet".
 - Practice (demo) and real cards are kept apart; "Clear demo data" removes the practice ones. Backups include cards.
 - **Firebase rules must include `cards`** (see `firestore.rules`). Until the updated rules are published, the status pill shows "Sync problem" with this reason.

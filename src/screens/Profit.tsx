@@ -148,7 +148,7 @@ function ProfitInner() {
                         <td>{r.name}</td>
                         <td>{r.qty}</td>
                         <td>{peso(r.sales)}</td>
-                        <td className={r.profit < 0 ? 'neg' : ''}>{peso(Math.round(r.profit * 100) / 100)}</td>
+                        <td className={r.profit < 0 ? 'neg' : ''}>{peso(Math.round(r.profit))}</td>
                       </tr>
                     ))}
                 </tbody>

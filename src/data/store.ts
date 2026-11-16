@@ -206,6 +206,18 @@ export function modeCards(s: State): Card[] {
   return Object.values(s.cards).filter((c) => c.mode === s.settings.mode);
 }
 
+/** Add or remove stamps by hand. Kept in the card's history with who, when and why. */
+export function adjustStamps(number: string, delta: number, reason: string, by: string) {
+  if (!delta) return;
+  const s = getState();
+  const mode = s.settings.mode;
+  const id = cardDocId(mode, number);
+  const old = s.cards[id];
+  const now = Date.now();
+  const adjustments = [...(old?.adjustments ?? []), { delta, reason: reason.trim(), at: now, by }];
+  commit({ type: 'put', col: 'cards', id, doc: { number, mode, name: old?.name ?? '', createdAt: old?.createdAt ?? now, updatedAt: now, by: old?.by ?? by, adjustments } satisfies Card });
+}
+
 /** Save or rename a card owner. An empty name removes the record. */
 export function saveCard(number: string, name: string, by: string) {
   const s = getState();
@@ -213,12 +225,14 @@ export function saveCard(number: string, name: string, by: string) {
   const id = cardDocId(mode, number);
   const clean = cleanCardName(name);
   const now = Date.now();
+  const old = s.cards[id];
   if (!clean) {
-    if (s.cards[id]) commit({ type: 'remove', col: 'cards', id });
+    // Keep the record if it holds stamp adjustments; only the name goes.
+    if (old?.adjustments?.length) commit({ type: 'put', col: 'cards', id, doc: { ...old, name: '', updatedAt: now } satisfies Card });
+    else if (old) commit({ type: 'remove', col: 'cards', id });
     return;
   }
-  const old = s.cards[id];
-  commit({ type: 'put', col: 'cards', id, doc: { number, mode, name: clean, createdAt: old?.createdAt ?? now, updatedAt: now, by } satisfies Card });
+  commit({ type: 'put', col: 'cards', id, doc: { ...old, number, mode, name: clean, createdAt: old?.createdAt ?? now, updatedAt: now, by } satisfies Card });
 }
 
 export function modeOrders(s: State): Order[] {

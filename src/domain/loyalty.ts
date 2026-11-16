@@ -1,4 +1,4 @@
-import type { Order, Reward, Settings } from './types';
+import type { Order, Reward, Settings, StampAdjustment } from './types';
 
 /** Accepts "37", "037", "ccb37", "CCB-037". Returns "CCB-037", or null if not a real card. */
 export function parseCard(input: string, s: Settings): string | null {
@@ -20,12 +20,22 @@ function counted(o: Order): boolean {
  * A card's stamps are worked out from its orders, so a voided order takes
  * its stamps (and any reward it used) back automatically.
  */
-export function cardState(cardId: string, orders: Order[], s: Settings, excludeOrderId?: string): CardState {
+export function cardState(cardId: string, orders: Order[], s: Settings, excludeOrderId?: string, adjustments: StampAdjustment[] = []): CardState {
   const state: CardState = { cardId, stamps: 0, used: [], cardsCompleted: 0, orders: 0 };
   const mine = orders
     .filter((o) => o.cardId === cardId && counted(o) && o.id !== excludeOrderId)
     .sort((a, b) => a.createdAt - b.createdAt);
-  for (const o of mine) {
+  // Manual adjustments and orders are applied in the order they happened.
+  const events: ({ at: number; order: Order } | { at: number; adj: StampAdjustment })[] = [
+    ...mine.map((order) => ({ at: order.createdAt, order })),
+    ...adjustments.map((adj) => ({ at: adj.at, adj })),
+  ].sort((a, b) => a.at - b.at);
+  for (const ev of events) {
+    if ('adj' in ev) {
+      state.stamps = Math.min(s.loyalty.cardSize, Math.max(0, state.stamps + ev.adj.delta));
+      continue;
+    }
+    const o = ev.order;
     state.orders += 1;
     for (const at of [...o.rewardsRedeemed].sort((a, b) => a - b)) {
       state.used.push(at);
