@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { dayXlsx, xlsxFileName } from '../domain/excel';
 import { margins } from '../domain/inventory';
+import { XLSX_MIME } from '../domain/xlsx';
 import { peso } from '../domain/pricing';
 import { summarize } from '../domain/reports';
 import { latestDay, modeOrders, openDay, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
-import { PinGate } from '../ui/ui';
+import { download, PinGate } from '../ui/ui';
 
 const LOCK_LABEL = 'Team';
 const IDLE_LOCK_MS = 60_000;
@@ -78,6 +80,11 @@ function ProfitInner() {
         <button className="btn small" onClick={() => setShown(!shown)}>
           {shown ? 'Hide numbers' : 'Show numbers'}
         </button>
+        {day && (
+          <button className="btn small" onClick={() => download(xlsxFileName(day), dayXlsx(day, orders, s), XLSX_MIME)}>
+            Download Excel
+          </button>
+        )}
         <button className="btn small" onClick={lockAndLeave}>
           Hide (Esc)
         </button>

@@ -334,8 +334,8 @@ export function useLatest<T>(value: T) {
   return ref;
 }
 
-export function download(filename: string, text: string, type = 'text/plain') {
-  const blob = new Blob([text], { type });
+export function download(filename: string, content: string | Uint8Array, type = 'text/plain') {
+  const blob = new Blob([content as BlobPart], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

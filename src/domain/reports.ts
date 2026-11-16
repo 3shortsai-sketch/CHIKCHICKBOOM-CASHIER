@@ -224,12 +224,21 @@ function time(ts: number): string {
  * One row per item, discount, payback and refund. Adding up the "amount"
  * column of rows where voided = no gives the day's net sales.
  */
-export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Settings): string {
+export type Cell = string | number;
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * One row per item, discount, payback, refund and waste. Adding up the
+ * "amount" column of rows where voided = no gives the day's net sales.
+ * Amounts are numbers (for Excel); text stays text.
+ */
+export function orderRows(day: BusinessDay | undefined, all: Order[], s: Settings): Cell[][] {
   const header = ['date', 'order', 'time', 'cashier', 'payment', 'reference', 'card', 'row_type', 'item', 'details', 'qty', 'unit_price', 'amount', 'cost', 'voided', 'void_reason'];
-  const out: string[][] = [header];
+  const out: Cell[][] = [header];
   for (const o of dayOrders(day, all).sort((a, b) => a.seq - b.seq)) {
-    const base = [day?.date ?? '', o.number, time(o.createdAt), o.cashier, o.payment.method, o.payment.reference ?? '', o.cardId ?? ''];
-    const tail = [o.voided ? 'yes' : 'no', o.voided?.reason ?? ''];
+    const base: Cell[] = [day?.date ?? '', o.number, time(o.createdAt), o.cashier, o.payment.method, o.payment.reference ?? '', o.cardId ?? ''];
+    const tail: Cell[] = [o.voided ? 'yes' : 'no', o.voided?.reason ?? ''];
     for (const l of o.lines) {
       const details = [
         l.choices?.side && `side: ${l.choices.side}`,
@@ -242,19 +251,26 @@ export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Setting
       ]
         .filter(Boolean)
         .join('; ');
-      out.push([...base, 'item', l.combo ? (s.combos.find((c) => c.id === l.combo!.comboId)?.name ?? l.itemId) : (itemById(s, l.itemId)?.name ?? l.name), details, String(l.qty), String(l.unitPrice), String(lineTotal(l, s)), money2(lineCost(l, s)), ...tail]);
+      const name = l.combo ? (s.combos.find((c) => c.id === l.combo!.comboId)?.name ?? l.itemId) : (itemById(s, l.itemId)?.name ?? l.name);
+      out.push([...base, 'item', name, details, l.qty, l.unitPrice, lineTotal(l, s), r2(lineCost(l, s)), ...tail]);
     }
-    if (o.voucher) out.push([...base, 'voucher', o.voucher.code, '', '1', '', String(-o.voucher.amount), '0', ...tail]);
+    if (o.voucher) out.push([...base, 'voucher', o.voucher.code, '', 1, '', -o.voucher.amount, 0, ...tail]);
     for (const sp of o.spins) {
-      if (sp.refund) out.push([...base, 'prize_payback', PRIZE_LABEL[sp.prize], 'cash given back', '1', '', String(-sp.refund), '0', ...tail]);
+      if (sp.refund) out.push([...base, 'prize_payback', PRIZE_LABEL[sp.prize], 'cash given back', 1, '', -sp.refund, 0, ...tail]);
     }
-    for (const r of o.refunds ?? []) out.push([...base, 'refund', 'Refund', r.reason, '1', '', String(-r.amount), '0', ...tail]);
+    for (const r of o.refunds ?? []) out.push([...base, 'refund', 'Refund', r.reason, 1, '', -r.amount, 0, ...tail]);
   }
   for (const w of day?.waste ?? []) {
     const item = itemById(s, w.itemId);
-    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, String(w.qty), '0', '0', money2((item?.unitCost ?? 0) * w.qty), 'no', '']);
+    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, w.qty, 0, 0, r2((item?.unitCost ?? 0) * w.qty), 'no', '']);
   }
-  return out.map((r) => r.map(csvCell).join(',')).join('\n');
+  return out;
+}
+
+export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Settings): string {
+  return orderRows(day, all, s)
+    .map((r) => r.map((c) => csvCell(typeof c === 'number' ? money2(c) : c)).join(','))
+    .join('\n');
 }
 
 // ---------- Customer monitor ----------

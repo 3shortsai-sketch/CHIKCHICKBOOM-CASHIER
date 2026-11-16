@@ -5,6 +5,8 @@ import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from 
 import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
 import { allergenHint, allergenText, itemTags } from './allergens';
 import { isLow, margins, onHand, servingsLeft, waitMinutes } from './inventory';
+import { dayXlsx, daySheets } from './excel';
+import { colName, crc32 } from './xlsx';
 import { bestSellers, kitchenMadeCounts, ordersCsv, pendingSpins, recentWins, stockLeft, summarize } from './reports';
 import { expectedSpinCost, promoStatus } from './promo';
 import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
@@ -381,5 +383,36 @@ describe('profit per item', () => {
     expect(a.low.cost).toBeCloseTo(108.22 + 44.98 + 90.49, 2); // Soy Garlic is the costliest bowl
     expect(Math.round(a.low.pct)).toBe(26);
     expect(Math.round(a.high.pct)).toBe(30);
+  });
+});
+
+describe('Excel export', () => {
+  it('uses the standard zip checksum and column letters', () => {
+    expect(crc32(new TextEncoder().encode('123456789'))).toBe(0xcbf43926);
+    expect([0, 25, 26, 27, 51, 52].map(colName)).toEqual(['A', 'Z', 'AA', 'AB', 'AZ', 'BA']);
+  });
+
+  it('builds a workbook with the day, sales and profit sheets', async () => {
+    const a = order([bowl(), cookie()]);
+    const r = applyPrize(a, { lineId: a.lines[0].id, unit: 0 }, 'tenOff', ctx);
+    if (!r.ok) throw new Error();
+    const b = order([fries()], { method: 'gcash', reference: '0042' }, [a]);
+    const d = { ...day, waste: [{ id: 'w', itemId: 'cookie-biscoff', qty: 1, reason: 'Broken', at: 5, by: 'Kitchen' }] };
+    const sheets = daySheets(d, [r.order, b], s);
+    expect(sheets.map((x) => x.name)).toEqual(['Summary', 'Sales by item', 'Profit per piece', 'Orders', 'Hours', 'Payments', 'Wheel', 'Waste']);
+
+    const bytes = dayXlsx(d, [r.order, b], s);
+    expect([...bytes.slice(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]); // "PK"
+    const text = new TextDecoder().decode(bytes);
+    for (const part of ['[Content_Types].xml', 'xl/workbook.xml', 'xl/styles.xml', 'xl/worksheets/sheet8.xml']) expect(text).toContain(part);
+    // GCash reference keeps its leading zeros (stays text).
+    expect(text).toContain('>0042<');
+
+    // Set XLSX_OUT=path to save the file and open it in Excel / openpyxl.
+    const out = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.XLSX_OUT;
+    if (out) {
+      const fs = (await import(/* @vite-ignore */ 'node:' + 'fs')) as { writeFileSync: (p: string, d: Uint8Array) => void };
+      fs.writeFileSync(out, bytes);
+    }
   });
 });

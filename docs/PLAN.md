@@ -128,6 +128,7 @@ but the kitchen tablet is not.
 ### Exports
 - **CSV**: one row per item, voucher, prize payback and refund. Adding up the `amount` column (rows where `voided` = no) gives the day's sales. Columns can be matched to the master Google Sheet once Step 4 sets it up.
 - **Print day-end report**: the dashboard, printed.
+- **Excel (.xlsx)**: Dashboard "Export to Excel" or Team page "Download Excel". One file per day with sheets: Summary (sales, profit, promos, cash drawer), Sales by item (qty, sales, cost, profit, margin), Profit per piece (items and combos), Orders (every row, same as the CSV), Hours, Payments, Wheel, Waste. Amounts are real numbers with peso formatting, so they can be summed and charted. Built in, works offline.
 - **Backup file**: everything on the device, restorable from the dashboard.
 
 ### Customer monitor
