@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { amountDue, createOrder } from '../../domain/checkout';
+import { amountDue, createOrder, nextSeq, orderNumber } from '../../domain/checkout';
 import { availableRewards, canRedeem, cardState, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
 import { applyCombo, itemById, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
 import { isAvailable, stockLeft } from '../../domain/reports';
@@ -20,7 +20,7 @@ const TABS: { id: Category; label: string }[] = [
 ];
 
 type Picking =
-  | { type: 'item'; item: MenuItem; free?: OrderLine['free'] }
+  | { type: 'item'; item: MenuItem; free?: OrderLine['free']; initial?: OrderLine }
   | { type: 'combo'; combo: Combo }
   | { type: 'reward'; reward: Reward }
   | null;
@@ -37,7 +37,7 @@ export function Cashier() {
   const [lines, setLines] = useState<OrderLine[]>([]);
   const [picking, setPicking] = useState<Picking>(null);
   const [paying, setPaying] = useState(false);
-  const [afterPay, setAfterPay] = useState<string | null>(null);
+  const [afterPay, setAfterPay] = useState<{ id: string; past: boolean } | null>(null);
   const [soldOutMode, setSoldOutMode] = useState(false);
   const [cardInput, setCardInput] = useState('');
   const [cardId, setCardId] = useState<string | undefined>();
@@ -73,12 +73,20 @@ export function Cashier() {
 
   // ----- Adding items -----
   const addLine = (line: OrderLine) => {
+    const existing = lines.find((l) => l.id === line.id);
+    const freed = existing ? stockUsage([existing]) : {};
     const use = stockUsage([line]);
     for (const [id, n] of Object.entries(use)) {
-      if (remaining(id) < n) {
-        flash(`Not enough ${itemById(s, id)?.name ?? id} left (${Math.max(0, remaining(id))}).`, true);
+      const avail = remaining(id) + (freed[id] ?? 0);
+      if (avail < n) {
+        flash(`Not enough ${itemById(s, id)?.name ?? id} left (${Math.max(0, avail)}).`, true);
         return;
       }
+    }
+    if (existing) {
+      setLines(lines.map((l) => (l.id === line.id ? line : l)));
+      setPicking(null);
+      return;
     }
     // Same item with the same choices: bump quantity.
     const same = lines.find((l) => !l.combo && !l.free && !line.free && !line.combo && l.itemId === line.itemId && JSON.stringify(l.choices ?? {}) === JSON.stringify(line.choices ?? {}) && (l.notes ?? '') === (line.notes ?? ''));
@@ -96,6 +104,20 @@ export function Cashier() {
     if (!canUse(item.id)) return flash(`${item.name} is sold out.`, true);
     if (item.kind === 'bowl' || item.kind === 'fries' || item.kind === 'extraSide') setPicking({ type: 'item', item });
     else addLine({ id: newId('l'), itemId: item.id, name: item.name, qty: 1, unitPrice: item.price });
+  };
+
+  /** Smallest saving a combo gives versus buying its cheapest parts separately. */
+  const comboSaving = (c: Combo) =>
+    c.parts.reduce((sum, k) => {
+      const prices = s.menu.filter((m) => m.active && (k === 'fries' ? m.kind === 'fries' && m.regular : m.kind === k)).map((m) => m.price);
+      return sum + (prices.length ? Math.min(...prices) : 0);
+    }, 0) - c.price;
+
+  const editLine = (l: OrderLine) => {
+    if (l.combo) return flash('To change a combo, remove it and add it again.');
+    const item = itemById(s, l.itemId);
+    if (!item || !(item.kind === 'bowl' || item.kind === 'fries' || item.kind === 'extraSide')) return;
+    setPicking({ type: 'item', item, initial: l });
   };
 
   const comboAvailable = (c: Combo) =>
@@ -179,7 +201,7 @@ export function Cashier() {
       });
       putOrder(o);
       setPaying(false);
-      setAfterPay(o.id);
+      setAfterPay({ id: o.id, past: false });
       clearOrder();
     } catch (e) {
       flash((e as Error).message, true);
@@ -230,205 +252,289 @@ export function Cashier() {
 
   if (!day) return <OpenDayForm />;
 
-  const after = afterPay ? state.orders[afterPay] : undefined;
-  const readyToClaim = orders.filter((o) => o.dayId === day.id && o.status === 'ready' && !o.voided).sort((a, b) => (a.readyAt ?? 0) - (b.readyAt ?? 0));
+  const after = afterPay ? state.orders[afterPay.id] : undefined;
+  const todays = orders.filter((o) => o.dayId === day.id && !o.voided);
+  const readyToClaim = todays.filter((o) => o.status === 'ready').sort((a, b) => (a.readyAt ?? 0) - (b.readyAt ?? 0));
+  const inKitchen = todays.filter((o) => o.status === 'new' || o.status === 'cooking').length;
+  const recent = [...todays].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
+  const nextNumber = orderNumber(device.orderLetter || 'A', nextSeq(day, orders, device.orderLetter || 'A'));
   const soldOutCount = s.menu.filter((m) => m.active && day.soldOut[m.id]).length;
+  const tabCount = (id: Category) =>
+    lines.reduce((n, l) => n + (id === 'combos' ? (l.combo ? l.qty : 0) : !l.combo && itemById(s, l.itemId)?.category === id ? l.qty : 0), 0);
 
   return (
     <div className="screen cashier">
-      <TopBar title="Cashier" />
+      <TopBar title="Cashier">
+        <div className="status-strip" aria-label="Booth status">
+          <span>
+            Next <b>{nextNumber}</b>
+          </span>
+          <span>
+            Kitchen <b>{inKitchen}</b>
+          </span>
+          <span className={readyToClaim.length ? 'hot' : ''}>
+            Ready <b>{readyToClaim.length}</b>
+          </span>
+          <span>
+            Today <b>{todays.length}</b>
+          </span>
+        </div>
+      </TopBar>
       {after ? (
-        <AfterPay order={after} orders={orders} s={s} pickFree={pickFree} onUpdate={putOrder} onDone={() => setAfterPay(null)} />
+        <AfterPay past={afterPay?.past} order={after} orders={orders} s={s} pickFree={pickFree} onUpdate={putOrder} onDone={() => setAfterPay(null)} />
       ) : (
         <div className="cashier-body">
           <section className="menu-side">
-            <nav className="tabs" role="tablist">
-              {TABS.map((t) => (
-                <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'selected' : ''} onClick={() => setTab(t.id)}>
-                  {t.label}
-                </button>
-              ))}
+            <nav className="tabs" role="tablist" aria-label="Menu">
+              {TABS.map((t) => {
+                const n = tabCount(t.id);
+                return (
+                  <button key={t.id} role="tab" aria-selected={tab === t.id} className={`tab tab-${t.id} ${tab === t.id ? 'selected' : ''}`} onClick={() => setTab(t.id)}>
+                    {t.label}
+                    {n > 0 && <span className="tab-count">{n}</span>}
+                  </button>
+                );
+              })}
               <span className="tabs-spacer" />
               <button className={`btn small ${soldOutMode ? 'danger' : 'ghost'}`} onClick={() => setSoldOutMode(!soldOutMode)}>
-                {soldOutMode ? 'Done marking' : `Mark sold out${soldOutCount ? ` (${soldOutCount} out)` : ''}`}
+                {soldOutMode ? 'Done marking' : `Mark sold out${soldOutCount ? ` · ${soldOutCount} out` : ''}`}
               </button>
             </nav>
-            {soldOutMode && <p className="banner warn">Tap an item to mark it sold out, or tap again to bring it back.</p>}
+            {soldOutMode && <p className="banner warn">Tap an item to mark it sold out. Tap it again to bring it back.</p>}
 
-            <div className="tiles">
+            <div className={`tiles ${soldOutMode ? 'marking' : ''}`}>
               {tab === 'combos'
                 ? combos.map((c, i) => {
                     const ok = comboAvailable(c);
+                    const save = comboSaving(c);
                     return (
-                      <button key={c.id} className={`tile tile-combo ${ok ? '' : 'out'}`} onClick={() => (ok ? setPicking({ type: 'combo', combo: c }) : flash(`${c.name} is sold out.`, true))}>
+                      <button key={c.id} className={`tile tile-combos ${ok ? '' : 'out'}`} onClick={() => (ok ? setPicking({ type: 'combo', combo: c }) : flash(`${c.name} is sold out.`, true))}>
                         <kbd>{i + 1}</kbd>
                         <span className="tile-name">{c.name}</span>
                         <span className="tile-sub">{c.parts.map((p) => (p === 'fries' ? 'regular fries' : p)).join(' + ')}</span>
-                        <span className="tile-price">{peso(c.price)}</span>
+                        <span className="tile-foot">
+                          <span className="tile-price">{peso(c.price)}</span>
+                          {ok ? save > 0 && <span className="tile-save">save {peso(save)}+</span> : <span className="tile-out">sold out</span>}
+                        </span>
                       </button>
                     );
                   })
                 : visible.map((m, i) => {
                     const n = remaining(m.id);
-                    const out = !!day.soldOut[m.id] || n <= 0;
+                    const start = day.stockStart[m.id] ?? m.startStock;
+                    const marked = !!day.soldOut[m.id];
+                    const out = marked || n <= 0;
+                    const pct = start > 0 ? Math.max(0, Math.min(100, (n / start) * 100)) : 0;
                     return (
-                      <button key={m.id} className={`tile tile-${m.category} ${out ? 'out' : ''}`} onClick={() => tapItem(m)}>
+                      <button key={m.id} className={`tile tile-${m.category} ${out ? 'out' : ''} ${!out && n <= 5 ? 'low' : ''}`} onClick={() => tapItem(m)} aria-label={`${m.name}, ${peso(m.price)}, ${out ? 'sold out' : `${n} left`}`}>
                         {i < 9 && <kbd>{i + 1}</kbd>}
                         <span className="tile-name">{m.short && m.category === 'bowls' ? m.short : m.name}</span>
-                        <span className="tile-price">{peso(m.price)}</span>
-                        <span className={`tile-stock ${n <= 5 ? 'low' : ''}`}>{day.soldOut[m.id] ? 'SOLD OUT' : n <= 0 ? 'SOLD OUT (0 left)' : `${n} left`}</span>
+                        <span className="tile-foot">
+                          <span className="tile-price">{peso(m.price)}</span>
+                          <span className="tile-left">{marked ? 'sold out' : n <= 0 ? '0 left' : `${n} left`}</span>
+                        </span>
+                        <span className="stock-meter" aria-hidden="true">
+                          <span style={{ width: `${out ? 0 : pct}%` }} />
+                        </span>
                       </button>
                     );
                   })}
             </div>
 
-            {readyToClaim.length > 0 && (
-              <div className="claim-strip">
-                <span>Ready, tap when picked up:</span>
-                {readyToClaim.map((o) => (
-                  <button key={o.id} className="btn small success" onClick={() => patchOrder(o.id, { status: 'claimed', claimedAt: Date.now() })}>
-                    {o.number} ✓
-                  </button>
-                ))}
-              </div>
-            )}
-            <p className="key-help">
-              Keys: <kbd>1</kbd>–<kbd>9</kbd> add item · <kbd>←</kbd>
-              <kbd>→</kbd> switch tab · <kbd>Enter</kbd> pay · <kbd>Esc</kbd> twice to cancel order
-            </p>
+            <div className="orders-bar">
+              {readyToClaim.length > 0 && (
+                <div className="orders-group">
+                  <span className="orders-label">Ready · tap when picked up</span>
+                  {readyToClaim.map((o) => (
+                    <button key={o.id} className="btn small success" onClick={() => patchOrder(o.id, { status: 'claimed', claimedAt: Date.now() })}>
+                      {o.number} ✓
+                    </button>
+                  ))}
+                </div>
+              )}
+              {recent.length > 0 && (
+                <div className="orders-group">
+                  <span className="orders-label">Recent · tap to see spin, voucher, stamps</span>
+                  {recent.map((o) => {
+                    const spinsLeft = o.spinsEarned - o.spins.length;
+                    return (
+                      <button key={o.id} className="btn small recent" onClick={() => setAfterPay({ id: o.id, past: true })}>
+                        {o.number}
+                        {spinsLeft > 0 && <span className="recent-spin">{spinsLeft} spin</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="key-help">
+                <kbd>1</kbd>–<kbd>9</kbd> add · <kbd>←</kbd>
+                <kbd>→</kbd> tab · <kbd>Enter</kbd> pay · <kbd>Esc</kbd>×2 cancel
+              </p>
+            </div>
           </section>
 
-          <section className="order-side">
-            <h2 className="order-title">
-              Order <span className="muted">· {day.date}</span>
-            </h2>
-            {lines.length === 0 ? (
-              <p className="empty">Tap an item to start an order.</p>
-            ) : (
-              <ul className="lines">
-                {lines.map((l) => (
-                  <li key={l.id} className={`line ${l.free ? 'free' : ''}`}>
-                    <div className="line-main">
-                      <div className="line-name">
-                        <b>{l.name}</b>
-                        <LineDetails line={l} />
-                        {l.notes && <span className="note">📝 {l.notes}</span>}
-                      </div>
-                      <div className="line-price">{peso(lineTotal(l, s))}</div>
-                    </div>
-                    <div className="line-actions">
-                      <div className="stepper">
-                        <button className="btn small" onClick={() => changeQty(l.id, -1)} aria-label="Less">−</button>
-                        <b>{l.qty}</b>
-                        <button className="btn small" onClick={() => changeQty(l.id, 1)} aria-label="More">+</button>
-                      </div>
-                      {l.qty > 1 && <span className="muted small">{peso(lineUnitTotal(l, s))} each</span>}
-                      <span className="spacer" />
-                      <button className="btn ghost small" onClick={() => setEditingNote(editingNote === l.id ? null : l.id)}>Note</button>
-                      <button className="btn ghost small danger-text" onClick={() => setLines(lines.filter((x) => x.id !== l.id))}>Remove</button>
-                    </div>
-                    {editingNote === l.id && (
-                      <input
-                        className="input"
-                        autoFocus
-                        defaultValue={l.notes}
-                        placeholder="e.g. no cucumber"
-                        onBlur={(e) => {
-                          setLines(lines.map((x) => (x.id === l.id ? { ...x, notes: e.target.value.trim() || undefined } : x)));
-                          setEditingNote(null);
-                        }}
-                        onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                      />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {combo && comboDismissed !== comboKey && (
-              <div className="banner combo-offer">
-                <span>
-                  This order has everything in <b>{combo.combo.name}</b>. Switch and save <b>{peso(combo.saving)}</b>?
-                </span>
-                <div className="row">
-                  <button className="btn primary small" onClick={() => setLines(applyCombo(lines, combo, s))}>Make it {combo.combo.name}</button>
-                  <button className="btn ghost small" onClick={() => setComboDismissed(comboKey)}>No</button>
+          <section className="order-side" aria-label="Current order">
+            <div className="order-head">
+              <h2>Order</h2>
+              <span className="order-next">{nextNumber}</span>
+            </div>
+            <div className="order-scroll">
+              {lines.length === 0 ? (
+                <div className="empty-order">
+                  <img src="./logo.png" alt="" width={120} height={120} />
+                  <p>Tap an item to start an order.</p>
                 </div>
-              </div>
-            )}
+              ) : (
+                <ul className="lines">
+                  {lines.map((l) => {
+                    const editable = !l.combo && ['bowl', 'fries', 'extraSide'].includes(itemById(s, l.itemId)?.kind ?? '');
+                    return (
+                      <li key={l.id} className={`line ${l.free ? 'free' : ''}`}>
+                        <div className="line-main">
+                          <button className="line-name" onClick={() => editLine(l)} disabled={!editable} title={editable ? 'Tap to change side, dip or extras' : undefined}>
+                            <b>{l.name}</b>
+                            <LineDetails line={l} />
+                            {l.notes && <span className="note">Note: {l.notes}</span>}
+                            {editable && <span className="edit-hint">Edit</span>}
+                          </button>
+                          <div className="line-price">{peso(lineTotal(l, s))}</div>
+                        </div>
+                        <div className="line-actions">
+                          <div className="stepper">
+                            <button className="btn small" onClick={() => changeQty(l.id, -1)} aria-label={`One less ${l.name}`}>
+                              −
+                            </button>
+                            <b>{l.qty}</b>
+                            <button className="btn small" onClick={() => changeQty(l.id, 1)} aria-label={`One more ${l.name}`}>
+                              +
+                            </button>
+                          </div>
+                          {l.qty > 1 && <span className="muted small">{peso(lineUnitTotal(l, s))} each</span>}
+                          <span className="spacer" />
+                          <button className="btn ghost small" onClick={() => setEditingNote(editingNote === l.id ? null : l.id)}>
+                            Note
+                          </button>
+                          <button className="btn ghost small danger-text" onClick={() => setLines(lines.filter((x) => x.id !== l.id))}>
+                            Remove
+                          </button>
+                        </div>
+                        {editingNote === l.id && (
+                          <input
+                            className="input"
+                            autoFocus
+                            defaultValue={l.notes}
+                            placeholder="e.g. no cucumber"
+                            onBlur={(e) => {
+                              setLines(lines.map((x) => (x.id === l.id ? { ...x, notes: e.target.value.trim() || undefined } : x)));
+                              setEditingNote(null);
+                            }}
+                            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                          />
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
 
-            <div className="loyalty">
+              {combo && comboDismissed !== comboKey && (
+                <div className="combo-offer">
+                  <span>
+                    This order has everything in <b>{combo.combo.name}</b>. Switch and save <b>{peso(combo.saving)}</b>?
+                  </span>
+                  <div className="row">
+                    <button className="btn primary small" onClick={() => setLines(applyCombo(lines, combo, s))}>
+                      Make it {combo.combo.name}
+                    </button>
+                    <button className="btn ghost small" onClick={() => setComboDismissed(comboKey)}>
+                      No thanks
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="order-extras">
               {card ? (
                 <div className="card-row">
                   <div>
                     <b>{card.cardId}</b> <span className="muted">{card.stamps}/{s.loyalty.cardSize} stamps</span>
                     <StampDots n={card.stamps} size={s.loyalty.cardSize} />
                   </div>
-                  <button className="btn ghost small" onClick={() => { setCardId(undefined); setLines(lines.filter((l) => l.free?.reason !== 'reward')); }}>✕</button>
+                  <button className="btn ghost small" aria-label="Remove card" onClick={() => { setCardId(undefined); setLines(lines.filter((l) => l.free?.reason !== 'reward')); }}>
+                    ✕
+                  </button>
                 </div>
               ) : (
-                <div className="row">
-                  <input className="input" value={cardInput} onChange={(e) => setCardInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), applyCard())} placeholder="Loyalty card no. (e.g. 37)" />
-                  <button className="btn" onClick={applyCard}>Add card</button>
+                <div className="mini-form">
+                  <input className="input" value={cardInput} onChange={(e) => setCardInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), applyCard())} placeholder="Loyalty card no." aria-label="Loyalty card number" />
+                  <button className="btn small" onClick={applyCard} disabled={!cardInput.trim()}>
+                    Add
+                  </button>
                 </div>
               )}
               {card &&
                 availableRewards(card, s).map((r) => (
                   <button key={r.at} className="btn reward" disabled={rewardsInCart.includes(r.at)} onClick={() => useReward(r)}>
-                    🎁 Use reward: {r.label} ({r.at} stamps)
+                    🎁 Use reward: {r.label}
                   </button>
                 ))}
-            </div>
-
-            <div className="voucher">
               {voucher ? (
                 <div className="card-row">
                   <span>
                     Voucher <b>{voucher.code}</b> −{peso(voucher.amount)}
                   </span>
-                  <button className="btn ghost small" onClick={() => setVoucher(undefined)}>✕</button>
+                  <button className="btn ghost small" aria-label="Remove voucher" onClick={() => setVoucher(undefined)}>
+                    ✕
+                  </button>
                 </div>
               ) : (
-                <div className="row">
-                  <input className="input" value={voucherInput} onChange={(e) => setVoucherInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), applyVoucher())} placeholder="Voucher code (V-XXXX)" />
-                  <button className="btn" onClick={applyVoucher} disabled={!voucherInput.trim()}>Apply</button>
+                <div className="mini-form">
+                  <input className="input" value={voucherInput} onChange={(e) => setVoucherInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), applyVoucher())} placeholder="Voucher code" aria-label="Voucher code" />
+                  <button className="btn small" onClick={applyVoucher} disabled={!voucherInput.trim()}>
+                    Apply
+                  </button>
                 </div>
               )}
             </div>
 
-            {notice && <p className={notice.bad ? 'error' : 'ok-note'}>{notice.text}</p>}
-            {escArmed && <p className="error">Press Esc again to cancel this order.</p>}
-
             <div className="totals">
               {voucher && (
-                <div>
+                <div className="totals-row">
                   <span>Subtotal</span>
                   <span>{peso(sub)}</span>
                 </div>
               )}
               {voucher && (
-                <div>
+                <div className="totals-row">
                   <span>Voucher</span>
                   <span>−{peso(voucher.amount)}</span>
                 </div>
               )}
               <div className="grand">
                 <span>Total</span>
-                <b>{peso(due)}</b>
+                <b className="display">{peso(due)}</b>
               </div>
-              {lines.length > 0 && <div className="muted small">{spins > 0 ? `🎡 ${spins} spin${spins > 1 ? 's' : ''} after paying` : s.wheel.paused ? 'Wheel paused' : 'No spins'}</div>}
+              {lines.length > 0 && <div className="spin-hint">{spins > 0 ? `🎡 ${spins} spin${spins > 1 ? 's' : ''} after paying` : s.wheel.paused ? 'Wheel paused today' : 'No spins on this order'}</div>}
+              <div className="pay-row">
+                <button className="btn ghost" disabled={!lines.length} onClick={clearOrder}>
+                  Cancel
+                </button>
+                <button className="btn primary pay-btn" disabled={!lines.length} onClick={() => setPaying(true)}>
+                  {lines.length ? `Pay ${peso(due)}` : 'Pay'} <kbd>↵</kbd>
+                </button>
+              </div>
             </div>
-            <div className="row">
-              <button className="btn ghost" disabled={!lines.length} onClick={clearOrder}>Cancel</button>
-              <button className="btn primary big grow" disabled={!lines.length} onClick={() => setPaying(true)}>
-                Pay {lines.length ? peso(due) : ''} ↵
-              </button>
+
+            <div className="toast-zone" aria-live="polite">
+              {escArmed && <p className="toast-msg bad">Press Esc again to cancel this order.</p>}
+              {notice && <p className={`toast-msg ${notice.bad ? 'bad' : ''}`}>{notice.text}</p>}
             </div>
           </section>
         </div>
       )}
 
-      {picking?.type === 'item' && <ItemPicker item={picking.item} s={s} free={picking.free} onAdd={addLine} onClose={() => setPicking(null)} />}
+      {picking?.type === 'item' && <ItemPicker item={picking.item} s={s} free={picking.free} initial={picking.initial} onAdd={addLine} onClose={() => setPicking(null)} />}
       {picking?.type === 'combo' && <ComboPicker combo={picking.combo} s={s} canUse={canUse} onAdd={addLine} onClose={() => setPicking(null)} />}
       {picking?.type === 'reward' && (
         <RewardBowlPicker

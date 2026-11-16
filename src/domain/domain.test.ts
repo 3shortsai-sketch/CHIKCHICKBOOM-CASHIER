@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createOrder, nextSeq } from './checkout';
+import { cashSuggestions, createOrder, nextSeq } from './checkout';
 import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
 import { applyCombo, lineTotal, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
@@ -225,5 +225,15 @@ describe('day summary', () => {
     const csv = ordersCsv(day, [r.order, b, c], s).split('\n').slice(1).map((row) => row.split(','));
     const net = csv.filter((row) => row[14] === 'no').reduce((n, row) => n + Number(row[12]), 0);
     expect(net).toBe(sum.net);
+  });
+});
+
+describe('cash buttons', () => {
+  it('suggests the bills a customer is likely to hand over', () => {
+    expect(cashSuggestions(528)).toEqual([550, 600, 1000]);
+    expect(cashSuggestions(179)).toEqual([200, 500, 1000]);
+    expect(cashSuggestions(500)).toEqual([1000]);
+    expect(cashSuggestions(1240)).toEqual([1250, 1300, 1500, 2000]);
+    expect(cashSuggestions(0)).toEqual([]);
   });
 });
