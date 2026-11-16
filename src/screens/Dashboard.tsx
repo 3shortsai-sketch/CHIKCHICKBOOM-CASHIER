@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { peso } from '../domain/pricing';
+import { dayXlsx, xlsxFileName } from '../domain/excel';
 import { expectedSpinCost, promoStatus } from '../domain/promo';
+import { XLSX_MIME } from '../domain/xlsx';
 import { ordersCsv, orderNet, stockLeft, summarize } from '../domain/reports';
 import type { Order } from '../domain/types';
 import { exportBackup, importBackup, latestDay, modeOrders, openDay, patchDay, patchOrder, useStore } from '../data/store';
@@ -82,6 +84,9 @@ function DashboardInner() {
             </select>
           </label>
           <span className="spacer" />
+          <button className="btn primary" onClick={() => download(xlsxFileName(day), dayXlsx(day, orders, s), XLSX_MIME)}>
+            Export to Excel
+          </button>
           <button className="btn" onClick={() => download(`ccb-${day.date}-orders.csv`, ordersCsv(day, orders, s), 'text/csv')}>Export CSV</button>
           <button className="btn" onClick={() => print()}>Print day-end report</button>
           <button className="btn" onClick={() => download(`ccb-backup-${new Date().toISOString().slice(0, 16).replace(':', '')}.json`, exportBackup(), 'application/json')}>Download backup</button>

@@ -94,7 +94,11 @@ export function Kitchen() {
 
   return (
     <div className="screen kitchen">
-      <TopBar title="Kitchen" />
+      <TopBar title="Kitchen">
+        <a className="btn small" href="#inventory">
+          Inventory
+        </a>
+      </TopBar>
       {!day && <p className="banner warn">The cashier has not opened the day yet.</p>}
       <div className="kitchen-counts">
         {counts.map((c) => (

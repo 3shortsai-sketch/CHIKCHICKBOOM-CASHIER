@@ -145,6 +145,23 @@ export type Order = {
 
 export type DataMode = 'demo' | 'live';
 
+export type StockCount = { qty: number; at: number; by: string };
+
+/** Raw ingredient or supply the kitchen tracks (chicken in kg, cups in pcs...). */
+export type Ingredient = {
+  id: string;
+  name: string;
+  unit: string;
+  /** Warn when on hand drops to this or below. 0 = no warning. */
+  low: number;
+  /** Optional: how much one of each menu item uses, e.g. { 'bowl-alaking': 0.15 }. */
+  uses?: Record<string, number>;
+  /** Last count by the kitchen. */
+  count?: StockCount;
+  /** Removed since the count (spoiled, dropped...), as positive amounts. */
+  removed?: { qty: number; reason: string; at: number; by: string }[];
+};
+
 export type WasteEntry = { id: string; itemId: string; qty: number; reason: string; at: number; by: string };
 
 export type BusinessDay = {
@@ -156,6 +173,11 @@ export type BusinessDay = {
   openingFloat: number;
   stockStart: Record<string, number>;
   soldOut: Record<string, boolean>;
+  /**
+   * Physical counts by the kitchen ("we have 30 cookies"). From that moment
+   * the item's stock counts down from this number instead of the opening stock.
+   */
+  stockCounts?: Record<string, StockCount>;
   /** Dropped, spoiled or mistake items: out of stock and counted as cost. */
   waste?: WasteEntry[];
   closedAt?: number;
@@ -185,6 +207,13 @@ export type Settings = {
   payments: { gcash: boolean; maya: boolean; gcashNumber: string };
   /** Prize cost as % of the day's sales: warn, then tell the cashier to pause the wheel. */
   promoLimits: { warnPct: number; pausePct: number; minSales: number };
+  /** Passcode for team members to see profits on the cashier. */
+  teamPin: string;
+  /** Monitor shows "Only N left!" at or below this many. */
+  lowStockAlert: number;
+  /** Wait estimate before the kitchen has finished any orders today (minutes). */
+  defaultWaitMinutes: number;
+  ingredients: Ingredient[];
   cashiers: string[];
   managerPin: string;
   adminPin: string;

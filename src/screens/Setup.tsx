@@ -412,7 +412,86 @@ function SetupInner() {
               <input className="input" inputMode="numeric" defaultValue={s.servingClearMinutes} onBlur={(e) => save({ servingClearMinutes: num(e.target.value) })} />
             </label>
           </div>
+          <div className="grid-2">
+            <label className="field">
+              <span>Team passcode (cashier "Team" page)</span>
+              <input className="input" inputMode="numeric" defaultValue={s.teamPin} onBlur={(e) => e.target.value.length >= 4 && save({ teamPin: e.target.value })} />
+            </label>
+            <label className="field">
+              <span>Monitor shows "Only N left!" at</span>
+              <input className="input" inputMode="numeric" defaultValue={s.lowStockAlert} onBlur={(e) => save({ lowStockAlert: num(e.target.value) })} />
+            </label>
+            <label className="field">
+              <span>Wait estimate before any order is done (min)</span>
+              <input className="input" inputMode="numeric" defaultValue={s.defaultWaitMinutes} onBlur={(e) => save({ defaultWaitMinutes: Math.max(1, num(e.target.value)) })} />
+            </label>
+          </div>
           <p className="muted small">PINs need at least 4 digits. Change both from the defaults (1234 / 0000) before the event.</p>
+        </section>
+
+        <section className="panel wide">
+          <h2>Ingredients: how much one item uses (optional)</h2>
+          <p className="muted small">
+            Fill these in once you know your recipe amounts (e.g. one bowl uses 0.15 kg chicken). The Inventory page then counts down by itself and shows how many servings are left. Leave blank to count by hand only.
+          </p>
+          <div className="table-scroll">
+            <table className="edit-table">
+              <thead>
+                <tr>
+                  <th>Ingredient</th>
+                  <th>Low at</th>
+                  {s.menu
+                    .filter((m) => m.active && m.category !== 'addons')
+                    .map((m) => (
+                      <th key={m.id} title={m.name}>
+                        {m.name.replace(' Chicken Rice Bowl', ' bowl').replace(' Cookie', '')}
+                      </th>
+                    ))}
+                </tr>
+              </thead>
+              <tbody>
+                {s.ingredients.map((ing) => (
+                  <tr key={ing.id}>
+                    <td>
+                      <b>{ing.name}</b> <span className="muted small">({ing.unit})</span>
+                    </td>
+                    <td>
+                      <input
+                        className="input tiny-input"
+                        inputMode="decimal"
+                        defaultValue={ing.low || ''}
+                        onBlur={(e) => save({ ingredients: s.ingredients.map((x) => (x.id === ing.id ? { ...x, low: num(e.target.value) } : x)) })}
+                      />
+                    </td>
+                    {s.menu
+                      .filter((m) => m.active && m.category !== 'addons')
+                      .map((m) => (
+                        <td key={m.id}>
+                          <input
+                            className="input tiny-input"
+                            inputMode="decimal"
+                            aria-label={`${ing.name} per ${m.name}`}
+                            defaultValue={ing.uses?.[m.id] ?? ''}
+                            onBlur={(e) => {
+                              const v = num(e.target.value);
+                              const uses = { ...(ing.uses ?? {}) };
+                              if (v > 0) uses[m.id] = v;
+                              else delete uses[m.id];
+                              save({ ingredients: s.ingredients.map((x) => (x.id === ing.id ? { ...x, uses } : x)) });
+                            }}
+                          />
+                        </td>
+                      ))}
+                    <td>
+                      <button className="btn ghost small danger-text" onClick={() => confirm(`Remove ${ing.name} from inventory?`) && save({ ingredients: s.ingredients.filter((x) => x.id !== ing.id) })}>
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="panel">
