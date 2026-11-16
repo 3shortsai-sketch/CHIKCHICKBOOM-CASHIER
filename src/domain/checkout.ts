@@ -61,4 +61,13 @@ export function createOrder(i: CheckoutInput): Order {
   };
 }
 
-export const QUICK_CASH = [100, 200, 500, 1000];
+/**
+ * Cash buttons a customer is likely to hand over for this amount:
+ * the next ₱50, the next ₱100, then ₱500 and ₱1,000 bills. Exact is a separate button.
+ */
+export function cashSuggestions(due: number): number[] {
+  if (due <= 0) return [];
+  const up = (step: number) => Math.ceil(due / step) * step;
+  const picks = [up(50), up(100), up(500), up(1000)].filter((n) => n > due);
+  return [...new Set(picks)].slice(0, 4);
+}
