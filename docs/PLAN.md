@@ -178,6 +178,14 @@ but the kitchen tablet is not.
 - Optional in Setup: how much of each ingredient one item uses (e.g. 0.15 kg chicken per bowl). Then ingredients count down with sales and show servings left.
 - Until Firebase is connected, counts entered on the tablet stay on the tablet.
 
+### Popular tab and park order
+- The cashier opens on **★ Popular**: today's most ordered items and combos (before anything sells: bowls, combos, Regular Fries, slushies). Keys 1–9 work on it.
+- **⏸ Park** sets an undecided customer's order aside (items, card, voucher, name) so the next customer can be served. Parked orders show as chips; tapping one brings it back (and parks whatever was on screen). Parked orders are kept on this device and don't hold stock, so the app warns if something ran out meanwhile.
+- Card, Waste, Team and Sold out moved to the bottom bar so the tabs fit on one line.
+
+### Customer first name
+- Optional field on the order (max 20 characters). Shown on the kitchen card, under the number on the monitor and on "Your order", and spoken: "Order A, 12 for Ana is ready!".
+
 ## Still to decide
 - Starting stock per item (placeholder numbers in Setup).
 - Unit cost of Extra Side and Extra Sauce (placeholders ₱7 and ₱3).

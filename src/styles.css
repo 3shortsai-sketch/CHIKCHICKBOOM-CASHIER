@@ -893,6 +893,25 @@ textarea.input {
   padding: 0 0.4rem;
   letter-spacing: 0;
 }
+.tools-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.tools {
+  display: flex;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+}
+.tools .tool-btn {
+  border: 2px solid var(--line) !important;
+  background: var(--paper);
+}
+.tools .tool-btn.danger {
+  border-color: var(--ink) !important;
+}
 .key-help {
   font-size: 0.78rem;
   color: var(--ink-soft);
@@ -2782,6 +2801,48 @@ a.btn {
 }
 .wide-input {
   width: 12rem;
+}
+
+/* ---------- Names and parked orders ---------- */
+.knum-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.kname {
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--red-deep);
+}
+.snum {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.snum-name {
+  font-family: var(--body);
+  font-weight: 800;
+  font-size: 0.24em;
+  letter-spacing: 0.02em;
+  color: #fff;
+  text-shadow: 2px 2px 0 var(--ink);
+  margin-top: 0.2em;
+}
+.name-form {
+  flex: 1 1 100%;
+}
+.btn.parked-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+  background: var(--chick);
+  border-color: var(--ink);
+  border-style: dashed;
+}
+.btn.parked-chip span {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-soft);
 }
 
 /* ---------- Smaller screens (tablet portrait, phone) ---------- */

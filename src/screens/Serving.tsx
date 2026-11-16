@@ -40,7 +40,7 @@ function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string 
             </span>
           </div>
         </div>
-        <p>Your number</p>
+        <p>{cart.name ? `${cart.name}, your number` : 'Your number'}</p>
         <b className="your-number">{cart.number}</b>
         {cart.change > 0 && <p className="your-change">Change: {peso(cart.change)}</p>}
         {cart.spins > 0 && <p className="your-spin">🎡 Spin the wheel at the pickup counter! {cart.spins > 1 ? `(${cart.spins} spins)` : ''}</p>}
@@ -63,7 +63,7 @@ function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string 
   }
   return (
     <section className="your-order" aria-live="polite">
-      <h2>Your order</h2>
+      <h2>{cart.name ? `${cart.name}'s order` : 'Your order'}</h2>
       <ul>
         {cart.lines.map((l, i) => (
           <li key={i} className={l.free ? 'free' : ''}>
@@ -161,7 +161,7 @@ export function Serving() {
       fresh.forEach((o, i) => {
         setTimeout(() => {
           const secs = cluck();
-          setTimeout(() => announce(`Order ${spokenNumber(o.number)} is ready!`), secs * 1000 + 150);
+          setTimeout(() => announce(`Order ${spokenNumber(o.number)}${o.customerName ? ` for ${o.customerName}` : ''} is ready!`), secs * 1000 + 150);
         }, i * 3500);
       });
       if (fresh[0]) {
@@ -240,6 +240,7 @@ export function Serving() {
               serving.slice(0, 6).map((o, i) => (
                 <span key={o.id} className={`snum ${i === 0 ? 'first' : ''} ${flash === o.id ? 'flash' : ''}`}>
                   {o.number}
+                  {o.customerName && <small className="snum-name">{o.customerName}</small>}
                 </span>
               ))
             )}

@@ -114,7 +114,10 @@ export function Kitchen() {
           return (
             <article key={o.id} className={`kcard ${o.status} ${late ? 'late' : ''}`}>
               <header>
-                <b className="knum">{o.number}</b>
+                <span className="knum-wrap">
+                  <b className="knum">{o.number}</b>
+                  {o.customerName && <span className="kname">{o.customerName}</span>}
+                </span>
                 <span className="kage">{minutesAgo(o.createdAt, now)}</span>
               </header>
               <ul className="klines">
