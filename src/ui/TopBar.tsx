@@ -17,6 +17,9 @@ export function TopBar({ title, children }: { title: string; children?: ReactNod
           <img src="./logo-small.png" alt="" width={48} height={48} />
           <span className="wordmark">Chick Chick Boom</span>
         </a>
+        <a href="#" className="home-btn" title="Back to the list of screens">
+          <span aria-hidden="true">⌂</span> Screens
+        </a>
         <span className="topbar-title">{title}</span>
         {children && <div className="topbar-extra">{children}</div>}
         <span className="spacer" />
