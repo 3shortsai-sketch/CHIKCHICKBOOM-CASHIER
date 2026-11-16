@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { defaultSettings, MENU_VERSION } from '../domain/defaults';
-import type { BusinessDay, Order, Settings } from '../domain/types';
+import { cardDocId, cleanCardName } from '../domain/cards';
+import type { BusinessDay, Card, Order, Settings } from '../domain/types';
 
 /**
  * Local-first store.
@@ -11,7 +12,7 @@ import type { BusinessDay, Order, Settings } from '../domain/types';
  *    every local change and feeds back changes made on other devices.
  */
 
-export type Collection = 'settings' | 'days' | 'orders';
+export type Collection = 'settings' | 'days' | 'orders' | 'cards';
 
 export type Op =
   | { type: 'put'; col: Collection; id: string; doc: unknown }
@@ -22,6 +23,8 @@ export type State = {
   settings: Settings;
   days: Record<string, BusinessDay>;
   orders: Record<string, Order>;
+  /** Loyalty card owners, keyed by cardDocId(mode, number). */
+  cards: Record<string, Card>;
 };
 
 export interface Remote {
@@ -29,7 +32,7 @@ export interface Remote {
   push(op: Op): void;
 }
 
-const KEY = { settings: 'ccb:settings', days: 'ccb:days', orders: 'ccb:orders' } as const;
+const KEY = { settings: 'ccb:settings', days: 'ccb:days', orders: 'ccb:orders', cards: 'ccb:cards' } as const;
 const SETTINGS_ID = 'main';
 
 function read<T>(key: string, fallback: T): T {
@@ -69,6 +72,7 @@ let state: State = {
   settings: loadSettings(),
   days: read(KEY.days, {}),
   orders: read(KEY.orders, {}),
+  cards: read(KEY.cards, {}),
 };
 
 const listeners = new Set<() => void>();
@@ -197,6 +201,26 @@ export function ordersList(s: State): Order[] {
   return Object.values(s.orders);
 }
 
+/** Loyalty cards (number + name) for the current data mode. */
+export function modeCards(s: State): Card[] {
+  return Object.values(s.cards).filter((c) => c.mode === s.settings.mode);
+}
+
+/** Save or rename a card owner. An empty name removes the record. */
+export function saveCard(number: string, name: string, by: string) {
+  const s = getState();
+  const mode = s.settings.mode;
+  const id = cardDocId(mode, number);
+  const clean = cleanCardName(name);
+  const now = Date.now();
+  if (!clean) {
+    if (s.cards[id]) commit({ type: 'remove', col: 'cards', id });
+    return;
+  }
+  const old = s.cards[id];
+  commit({ type: 'put', col: 'cards', id, doc: { number, mode, name: clean, createdAt: old?.createdAt ?? now, updatedAt: now, by } satisfies Card });
+}
+
 export function modeOrders(s: State): Order[] {
   return Object.values(s.orders).filter((o) => o.mode === s.settings.mode);
 }
@@ -206,6 +230,7 @@ export function clearDemoData() {
   const ops: Op[] = [];
   for (const o of Object.values(s.orders)) if (o.mode === 'demo') ops.push({ type: 'remove', col: 'orders', id: o.id });
   for (const d of Object.values(s.days)) if (d.mode === 'demo') ops.push({ type: 'remove', col: 'days', id: d.id });
+  for (const [id, c] of Object.entries(s.cards)) if (c.mode === 'demo') ops.push({ type: 'remove', col: 'cards', id });
   commit(...ops);
 }
 
@@ -220,6 +245,7 @@ export function importBackup(json: string): { ok: boolean; message: string } {
     const ops: Op[] = [];
     for (const [id, d] of Object.entries(data.days ?? {})) ops.push({ type: 'put', col: 'days', id, doc: d });
     for (const [id, o] of Object.entries(data.orders ?? {})) ops.push({ type: 'put', col: 'orders', id, doc: o });
+    for (const [id, c] of Object.entries(data.cards ?? {})) ops.push({ type: 'put', col: 'cards', id, doc: c });
     if (data.settings) ops.push({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: data.settings });
     commit(...ops);
     return { ok: true, message: `Restored ${Object.keys(data.orders ?? {}).length} orders.` };

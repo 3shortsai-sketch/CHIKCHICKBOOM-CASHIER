@@ -147,6 +147,17 @@ export type Order = {
 
 export type DataMode = 'demo' | 'live';
 
+/** A loyalty card's owner. Stamps are not stored here; they are counted from orders. */
+export type Card = {
+  /** Same as the number printed on the card, e.g. "CCB-037". */
+  number: string;
+  mode: DataMode;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  by: string;
+};
+
 export type StockCount = { qty: number; at: number; by: string };
 
 /** Raw ingredient or supply the kitchen tracks (chicken in kg, cups in pcs...). */

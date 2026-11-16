@@ -186,6 +186,16 @@ but the kitchen tablet is not.
 ### Customer first name
 - Optional field on the order (max 20 characters). Shown on the kitchen card, under the number on the monitor and on "Your order", and spoken: "Order A, 12 for Ana is ready!".
 
+## Loyalty cards (number + name)
+
+- Every card has a **number** (CCB-001…CCB-500) and a **name**, saved on every device (Firestore `cards/{mode}_{number}`).
+- At the cashier, adding a card to an order shows its name next to the number; an unregistered card shows a box to type the name. A registered name also fills in the customer's first name (unless the cashier typed one).
+- **Card** button at the cashier: look up any card by number or by part of the name (stamps, rewards, visits), and type a name for one that has none.
+- **Cards screen** (`#cards`, team passcode, listed on the home screen): every card with name, stamps, visits, reward ready and last visit; search; register a card; edit a name; Download Excel.
+- Stamps are still counted from the orders, so voiding an order takes its stamp back. A card used on an order but never named appears in the list as "no name yet".
+- Practice (demo) and real cards are kept apart; "Clear demo data" removes the practice ones. Backups include cards.
+- **Firebase rules must include `cards`** (see `firestore.rules`). Until the updated rules are published, the status pill shows "Sync problem" with this reason.
+
 ## Sync between devices (Firebase)
 
 - **Firestore** holds `settings/main`, `days/{id}` and `orders/{id}`. Every change is saved on the device first, then sent to Firestore; other devices get it in well under a second. Without internet, changes queue up and send when it's back (status pill: "Offline · will sync" → "Synced").
