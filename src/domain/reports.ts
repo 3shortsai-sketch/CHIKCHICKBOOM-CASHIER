@@ -19,6 +19,9 @@ export function stockLeft(day: BusinessDay | undefined, orders: Order[], s: Sett
       if (id in left) left[id] -= n;
     }
   }
+  for (const w of day?.waste ?? []) {
+    if (w.itemId in left) left[w.itemId] -= w.qty;
+  }
   return left;
 }
 
@@ -60,6 +63,7 @@ export type DaySummary = {
   goal: number;
   goalPct: number;
   promo: { wheel: number; vouchers: number; rewards: number; total: number };
+  waste: { rows: { itemId: string; name: string; qty: number; cost: number }[]; cost: number };
   items: ItemRow[];
   payments: { method: PaymentMethod; orders: number; amount: number }[];
   hours: { hour: number; orders: number; sales: number }[];
@@ -77,7 +81,16 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
   const prizeRefunds = live.reduce((n, o) => n + prizeRefundTotal(o), 0);
   const manualRefunds = live.reduce((n, o) => n + manualRefundTotal(o), 0);
   const net = gross - prizeRefunds - manualRefunds;
-  const cost = live.reduce((n, o) => n + orderCost(o, s), 0);
+  const wasteMap = new Map<string, { itemId: string; name: string; qty: number; cost: number }>();
+  for (const w of day?.waste ?? []) {
+    const item = itemById(s, w.itemId);
+    const row = wasteMap.get(w.itemId) ?? { itemId: w.itemId, name: item?.name ?? w.itemId, qty: 0, cost: 0 };
+    row.qty += w.qty;
+    row.cost += w.qty * (item?.unitCost ?? 0);
+    wasteMap.set(w.itemId, row);
+  }
+  const waste = { rows: [...wasteMap.values()], cost: [...wasteMap.values()].reduce((n, r) => n + r.cost, 0) };
+  const cost = live.reduce((n, o) => n + orderCost(o, s), 0) + waste.cost;
 
   // Items
   const rows = new Map<string, ItemRow>();
@@ -158,6 +171,7 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
     goal: s.dailyGoal,
     goalPct: s.dailyGoal ? Math.round((net / s.dailyGoal) * 100) : 0,
     promo: { wheel: wheelCost, vouchers, rewards, total: wheelCost + vouchers + rewards },
+    waste,
     items,
     payments,
     hours,
@@ -226,6 +240,10 @@ export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Setting
       if (sp.refund) out.push([...base, 'prize_payback', PRIZE_LABEL[sp.prize], 'cash given back', '1', '', String(-sp.refund), '0', ...tail]);
     }
     for (const r of o.refunds ?? []) out.push([...base, 'refund', 'Refund', r.reason, '1', '', String(-r.amount), '0', ...tail]);
+  }
+  for (const w of day?.waste ?? []) {
+    const item = itemById(s, w.itemId);
+    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, String(w.qty), '0', '0', String((item?.unitCost ?? 0) * w.qty), 'no', '']);
   }
   return out.map((r) => r.map(csvCell).join(',')).join('\n');
 }

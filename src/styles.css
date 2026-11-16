@@ -5,6 +5,18 @@
    and numbers; everything people read in sentences stays in the system font.
    ========================================================================== */
 
+/* Comic font for letters only. Digits are left out on purpose: in Bangers
+   "1" and "7" look alike, which is dangerous for prices and change, so
+   numbers fall through to a heavy plain font (Arial Black, else system bold). */
+@font-face {
+  font-family: 'CCB Display';
+  src: url('../node_modules/@fontsource/bangers/files/bangers-latin-400-normal.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-002F, U+003A-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2212, U+FEFF;
+}
+
 :root {
   --ink: #3b2314;
   --ink-soft: #6e5543;
@@ -23,7 +35,7 @@
   --blue: #2a7fd4;
   --danger-soft: #fde3df;
 
-  --display: 'Bangers', Impact, 'Arial Narrow Bold', system-ui, sans-serif;
+  --display: 'CCB Display', 'Arial Black', 'Segoe UI Black', system-ui, sans-serif;
   --body: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 
   --radius: 16px;
@@ -33,6 +45,7 @@
   --halftone-light: radial-gradient(rgb(255 255 255 / 16%) 1.3px, transparent 1.7px);
 
   font-family: var(--body);
+  font-synthesis: none;
   color: var(--ink);
   background: var(--cream);
   -webkit-text-size-adjust: 100%;
@@ -76,7 +89,7 @@ a {
 }
 .display {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.03em;
 }
 kbd {
@@ -173,7 +186,7 @@ kbd {
 .btn.huge {
   padding: 1.4rem 2.4rem;
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.04em;
   font-size: 2rem;
   border-radius: 20px;
@@ -338,7 +351,7 @@ textarea.input {
 .pin-card h1,
 .open-day h1 {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.04em;
   font-size: 2.2rem;
   color: var(--red);
@@ -411,6 +424,7 @@ textarea.input {
     -1.5px 1.5px 0 var(--ink),
     1.5px 1.5px 0 var(--ink),
     3px 3px 0 var(--ink);
+  font-weight: 800;
 }
 .topbar-title {
   font-weight: 800;
@@ -447,7 +461,7 @@ textarea.input {
 }
 .status-strip b {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   font-size: 1.3rem;
   letter-spacing: 0.04em;
   color: var(--ink);
@@ -525,7 +539,7 @@ textarea.input {
 }
 .home-card b {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.04em;
   font-size: 1.9rem;
   color: var(--red);
@@ -584,11 +598,14 @@ textarea.input {
   background: var(--red);
   color: #fff;
   border: 2px solid var(--ink);
-  font: 400 0.95rem/18px var(--display);
+  font: 800 0.95rem/18px var(--display);
   letter-spacing: 0.03em;
 }
 .tabs-spacer {
   flex: 1;
+}
+.tool-btn {
+  padding-inline: 0.6rem !important;
 }
 
 .tiles {
@@ -649,6 +666,7 @@ textarea.input {
   letter-spacing: 0.03em;
   line-height: 1.02;
   padding-right: 1.6rem;
+  font-weight: 800;
 }
 .tile-sub {
   font-size: 0.85rem;
@@ -668,6 +686,7 @@ textarea.input {
   font-size: 1.6rem;
   letter-spacing: 0.03em;
   color: var(--red);
+  font-weight: 800;
 }
 .tile-left {
   font-size: 0.8rem;
@@ -750,6 +769,7 @@ textarea.input {
   border-radius: 8px;
   padding: 0 0.45rem;
   background: rgb(255 253 246 / 85%);
+  font-weight: 800;
 }
 .tiles.marking .tile {
   outline: 3px dashed var(--red);
@@ -780,7 +800,7 @@ textarea.input {
 }
 .btn.recent {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   font-size: 1.1rem;
   letter-spacing: 0.04em;
   display: inline-flex;
@@ -822,7 +842,7 @@ textarea.input {
 }
 .order-head h2 {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.05em;
   font-size: 1.9rem;
   margin: 0;
@@ -836,6 +856,7 @@ textarea.input {
   border-radius: 10px;
   padding: 0 0.55rem;
   box-shadow: var(--comic-sm);
+  font-weight: 800;
 }
 .order-scroll {
   flex: 1;
@@ -938,7 +959,7 @@ textarea.input {
   min-width: 1.6rem;
   text-align: center;
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   font-size: 1.35rem;
 }
 .combo-offer {
@@ -1033,7 +1054,7 @@ textarea.input {
   flex: 1;
   min-height: 64px;
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.05em;
   font-size: 1.9rem;
   border-width: 3px;
@@ -1126,7 +1147,7 @@ textarea.input {
 .modal-head h2 {
   margin: 0;
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.04em;
   font-size: 1.9rem;
   line-height: 1.05;
@@ -1251,7 +1272,7 @@ textarea.input {
 }
 .extra-count {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   font-size: 1.2rem;
   padding-right: 0.2rem;
 }
@@ -1333,7 +1354,7 @@ textarea.input {
 .quick-cash .btn {
   min-height: 58px;
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.03em;
   font-size: 1.4rem;
 }
@@ -1455,6 +1476,7 @@ textarea.input {
   color: var(--ink);
   touch-action: manipulation;
   transition: transform 0.06s, box-shadow 0.06s;
+  font-weight: 800;
 }
 .prize:active {
   transform: translate(2px, 2px);
@@ -1532,7 +1554,7 @@ textarea.input {
 }
 .stamps b {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   font-size: 2.4rem;
   letter-spacing: 0.04em;
 }
@@ -1599,7 +1621,7 @@ textarea.input {
 }
 .knum {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.04em;
   font-size: 2.6rem;
   line-height: 1;
@@ -1657,7 +1679,7 @@ textarea.input {
 .kcard footer .btn {
   min-height: 66px;
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.05em;
   font-size: 1.6rem;
 }
@@ -1679,7 +1701,8 @@ textarea.input {
 
 /* ---------- Serving (customer monitor) ---------- */
 .serving {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background: var(--ink);
   color: var(--cream);
   display: flex;
@@ -1717,7 +1740,7 @@ textarea.input {
 }
 .now-serving h1 {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   font-size: clamp(2.5rem, 6vw, 5.5rem);
   letter-spacing: 0.05em;
   color: var(--yellow);
@@ -1744,6 +1767,7 @@ textarea.input {
   line-height: 1;
   color: #fff;
   text-shadow: 4px 4px 0 var(--ink);
+  font-weight: 800;
 }
 .snum.first {
   font-size: clamp(5rem, 13vw, 13rem);
@@ -1765,8 +1789,10 @@ textarea.input {
 }
 .serving-empty {
   font-family: var(--display);
-  font-size: 6rem;
-  opacity: 0.35;
+  font-size: clamp(2rem, 4vw, 4rem);
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  font-weight: 800;
 }
 .preparing {
   padding: 2.5vh 2vw;
@@ -1774,7 +1800,7 @@ textarea.input {
 }
 .preparing h2 {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.05em;
   font-size: clamp(1.8rem, 3.4vw, 3rem);
   color: var(--cream);
@@ -1787,6 +1813,7 @@ textarea.input {
   letter-spacing: 0.04em;
   font-size: clamp(1.8rem, 3.4vw, 3rem);
   color: #ead8bf;
+  font-weight: 800;
 }
 .serving-bottom {
   display: grid;
@@ -1805,7 +1832,7 @@ textarea.input {
 }
 .serving-menu h3 {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.05em;
   color: var(--red);
   font-size: 1.6em;
@@ -1823,7 +1850,7 @@ textarea.input {
 }
 .serving-menu li b {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.04em;
   font-size: 1.2em;
 }
@@ -1841,7 +1868,7 @@ textarea.input {
 }
 .serving-wheel h3 {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.05em;
   font-size: 2.1em;
   color: var(--red);
@@ -1886,7 +1913,7 @@ textarea.input {
 }
 .goal-text b {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.03em;
   font-size: 2.6rem;
 }
@@ -1927,7 +1954,7 @@ textarea.input {
 }
 .stat b {
   font-family: var(--display);
-  font-weight: 400;
+  font-weight: 800;
   letter-spacing: 0.03em;
   font-size: 2.1rem;
   line-height: 1.05;
@@ -2056,6 +2083,272 @@ tr.voided td .error {
 }
 .print-only {
   display: none;
+}
+
+/* ---------- Cashier tools ---------- */
+.promo-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.8rem;
+  border: 2.5px solid var(--ink);
+  border-radius: 14px;
+  background: var(--chick);
+  box-shadow: var(--comic-sm);
+  font-weight: 600;
+}
+.promo-alert.pause {
+  background: var(--danger-soft);
+  border-color: var(--red-deep);
+}
+.field-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.lookup {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.lookup-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.lookup-id {
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+.lookup-head b {
+  font-size: 3rem;
+  line-height: 1;
+}
+.lookup .stamp-dots span {
+  width: 22px;
+  height: 22px;
+}
+button.extra-chip.extra-chip-main {
+  border: 2px solid var(--line);
+}
+button.extra-chip.extra-chip-main.on {
+  border-color: var(--ink);
+}
+
+/* ---------- Prize limit (dashboard) ---------- */
+.promo-meter {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.promo-meter b {
+  font-size: 2.2rem;
+  line-height: 1;
+  min-width: 5ch;
+  text-align: right;
+}
+.promo-meter-bar {
+  position: relative;
+  flex: 1;
+  height: 18px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.promo-meter-bar div {
+  height: 100%;
+  background: var(--green);
+}
+.promo-meter.warn .promo-meter-bar div {
+  background: var(--orange);
+}
+.promo-meter.pause .promo-meter-bar div {
+  background: var(--red);
+}
+.promo-meter.pause b {
+  color: var(--red-deep);
+}
+.promo-meter-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--ink);
+}
+
+/* ---------- Customer monitor: the order at the counter ---------- */
+.preparing {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+  overflow: hidden;
+}
+.preparing.with-qr > h2,
+.preparing.with-qr > .prep-numbers {
+  display: none;
+}
+.your-order.qr .qr-amount {
+  font-size: 2.8em;
+}
+.preparing.with-order .prep-numbers {
+  font-size: clamp(1.3rem, 2.2vw, 2rem);
+}
+.your-order {
+  background: var(--paper);
+  color: var(--ink);
+  border: 4px solid var(--yellow);
+  border-radius: 20px;
+  box-shadow: 6px 6px 0 #000;
+  padding: 1.2rem 1.4rem;
+  font-size: clamp(1rem, 1.25vw, 1.35rem);
+  animation: modal-in 0.18s ease-out;
+}
+.your-order h2 {
+  font-family: var(--display);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  font-size: 2.2em;
+  color: var(--red);
+  margin-bottom: 0.4rem;
+}
+.your-order ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 34vh;
+  overflow: hidden;
+}
+.your-order li {
+  display: grid;
+  grid-template-columns: 2.2em 1fr auto;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 2px dashed var(--line);
+  align-items: baseline;
+}
+.your-order li.free b {
+  color: var(--green);
+}
+.yo-qty {
+  font-weight: 800;
+}
+.yo-name {
+  display: flex;
+  flex-direction: column;
+  font-weight: 700;
+}
+.yo-name small {
+  font-weight: 500;
+  color: var(--ink-soft);
+  font-size: 0.8em;
+}
+.your-order li b,
+.yo-total b {
+  font-family: var(--display);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+.yo-row {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 0.4rem;
+  font-weight: 700;
+}
+.yo-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 3px solid var(--ink);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.yo-total b {
+  font-size: 2.6em;
+  line-height: 1;
+  color: var(--red);
+  text-transform: none;
+}
+.your-spin {
+  margin: 0.6rem 0 0;
+  background: var(--yellow);
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  padding: 0.35rem 0.7rem;
+  font-weight: 800;
+}
+.your-order.paid {
+  text-align: center;
+}
+.your-order.paid p {
+  margin: 0.2rem 0;
+  font-weight: 700;
+}
+.your-number {
+  display: block;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 5em;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--red);
+  text-shadow: 3px 3px 0 var(--ink);
+}
+.your-change {
+  color: var(--green);
+}
+.your-order.qr {
+  text-align: center;
+  border-color: #005ce6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+.qr-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.gcash-badge {
+  background: #005ce6;
+  color: #fff;
+  border-radius: 8px;
+  padding: 0.1rem 0.6rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.qr-amount {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 3.4em;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.qr-img {
+  width: min(100%, 29vh);
+  height: auto;
+  image-rendering: crisp-edges;
+}
+.qr-number {
+  margin: 0;
+  font-weight: 800;
+  font-size: 1.2em;
+}
+.qr-note {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.85em;
 }
 
 /* ---------- Smaller screens (tablet portrait, phone) ---------- */

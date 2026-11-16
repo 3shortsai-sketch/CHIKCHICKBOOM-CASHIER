@@ -8,14 +8,24 @@ import { Modal } from '../../ui/ui';
 
 export function PayModal({
   due,
+  methods,
+  onMethod,
   onPay,
   onClose,
 }: {
   due: number;
+  /** Payment methods the booth accepts (cash is always on). */
+  methods: PaymentMethod[];
+  /** Tells the customer monitor which method is chosen, so it can show the QR. */
+  onMethod: (m: PaymentMethod) => void;
   onPay: (method: PaymentMethod, tendered: number, reference: string) => void;
   onClose: () => void;
 }) {
-  const [method, setMethod] = useState<PaymentMethod>('cash');
+  const [method, setMethodState] = useState<PaymentMethod>('cash');
+  const setMethod = (m: PaymentMethod) => {
+    setMethodState(m);
+    onMethod(m);
+  };
   const [tendered, setTendered] = useState<number | null>(null);
   const [typed, setTyped] = useState('');
   const [reference, setReference] = useState('');
@@ -47,7 +57,7 @@ export function PayModal({
         <b className="display">{peso(due)}</b>
       </div>
       <div className="segmented">
-        {(['cash', 'gcash', 'maya'] as const).map((m) => (
+        {methods.map((m) => (
           <button key={m} className={method === m ? 'selected' : ''} onClick={() => setMethod(m)}>
             {m === 'cash' ? 'Cash' : m === 'gcash' ? 'GCash' : 'Maya'}
           </button>
@@ -74,7 +84,8 @@ export function PayModal({
         </>
       ) : (
         <>
-          <p className="muted">Check the payment on the business phone before confirming.</p>
+          {method === 'gcash' && <p className="ok-note">The GCash QR and amount are showing on the customer screen.</p>}
+          <p className="muted">Check the payment arrived on the business phone before confirming.</p>
           <label className="field">
             <span>Reference number (optional)</span>
             <input className="input" inputMode="numeric" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="last 4 digits is enough" autoFocus />

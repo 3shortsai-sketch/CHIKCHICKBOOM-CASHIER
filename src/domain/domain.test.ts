@@ -4,6 +4,7 @@ import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
 import { applyCombo, lineTotal, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
 import { ordersCsv, stockLeft, summarize } from './reports';
+import { expectedSpinCost, promoStatus } from './promo';
 import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
 import { applyPrize, digitalSpin, undoLastSpin } from './wheel';
 
@@ -235,5 +236,33 @@ describe('cash buttons', () => {
     expect(cashSuggestions(500)).toEqual([1000]);
     expect(cashSuggestions(1240)).toEqual([1250, 1300, 1500, 2000]);
     expect(cashSuggestions(0)).toEqual([]);
+  });
+});
+
+describe('waste log', () => {
+  it('takes stock out and counts as cost', () => {
+    const d = { ...day, waste: [{ id: 'w1', itemId: 'bowl-alaking', qty: 2, reason: 'dropped', at: 1, by: 'Ana' }] };
+    expect(stockLeft(d, [], s)['bowl-alaking']).toBe(78);
+    const sum = summarize(d, [], s);
+    expect(sum.waste.cost).toBe(144);
+    expect(sum.profit).toBe(-144);
+  });
+});
+
+describe('prize limit', () => {
+  it('expects about ₱14 per spin with the starting menu', () => {
+    const e = expectedSpinCost(s);
+    expect(e.perSpin).toBeGreaterThan(13);
+    expect(e.perSpin).toBeLessThan(15);
+  });
+
+  it('waits for minimum sales, then warns and asks to pause', () => {
+    const base = summarize(day, [], s);
+    const at = (gross: number, wheel: number) => promoStatus({ ...base, gross, promo: { ...base.promo, wheel, vouchers: 0 } }, s);
+    expect(at(1000, 189).level).toBe('early');
+    expect(at(10000, 400).level).toBe('ok');
+    expect(at(10000, 700).level).toBe('warn');
+    expect(at(10000, 800).level).toBe('pause');
+    expect(at(10000, 800).pct).toBe(8);
   });
 });

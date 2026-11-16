@@ -133,6 +133,8 @@ export type Order = {
 
 export type DataMode = 'demo' | 'live';
 
+export type WasteEntry = { id: string; itemId: string; qty: number; reason: string; at: number; by: string };
+
 export type BusinessDay = {
   id: string;
   mode: DataMode;
@@ -142,6 +144,8 @@ export type BusinessDay = {
   openingFloat: number;
   stockStart: Record<string, number>;
   soldOut: Record<string, boolean>;
+  /** Dropped, spoiled or mistake items: out of stock and counted as cost. */
+  waste?: WasteEntry[];
   closedAt?: number;
   countedCash?: number;
   closedBy?: string;
@@ -160,6 +164,10 @@ export type Settings = {
   loyalty: { prefix: string; first: number; last: number; cardSize: number; rewards: Reward[]; rewardOrderEarnsStamp: boolean };
   voucher: { amount: number; minOrder: number; validDays: number };
   dailyGoal: number;
+  /** Which e-wallets the booth accepts. The GCash number is typed in Setup, not stored in code. */
+  payments: { gcash: boolean; maya: boolean; gcashNumber: string };
+  /** Prize cost as % of the day's sales: warn, then tell the cashier to pause the wheel. */
+  promoLimits: { warnPct: number; pausePct: number; minSales: number };
   cashiers: string[];
   managerPin: string;
   adminPin: string;

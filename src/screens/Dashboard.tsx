@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { peso } from '../domain/pricing';
+import { expectedSpinCost, promoStatus } from '../domain/promo';
 import { ordersCsv, orderNet, stockLeft, summarize } from '../domain/reports';
 import type { Order } from '../domain/types';
 import { exportBackup, importBackup, latestDay, modeOrders, openDay, patchDay, patchOrder, useStore } from '../data/store';
@@ -56,6 +57,8 @@ function DashboardInner() {
   const dayList = orders.filter((o) => o.dayId === day.id).sort((a, b) => b.seq - a.seq);
   const found = search.trim() ? dayList.filter((o) => o.number.toLowerCase().includes(search.trim().toLowerCase()) || o.cardId?.toLowerCase().includes(search.trim().toLowerCase())) : dayList.slice(0, 15);
   const maxHour = Math.max(1, ...sum.hours.map((h) => h.sales));
+  const promo = promoStatus(sum, s);
+  const expected = expectedSpinCost(s);
   const goalPct = Math.min(100, Math.max(0, sum.goalPct));
 
   const closeDay = () => {
@@ -140,7 +143,7 @@ function DashboardInner() {
             <h2>Payment</h2>
             <table>
               <tbody>
-                {sum.payments.map((p) => (
+                {sum.payments.filter((p) => p.method === 'cash' || p.orders > 0 || s.payments[p.method]).map((p) => (
                   <tr key={p.method}>
                     <td>{p.method === 'cash' ? 'Cash' : p.method === 'gcash' ? 'GCash' : 'Maya'}</td>
                     <td>{p.orders} {p.orders === 1 ? 'order' : 'orders'}</td>
@@ -188,6 +191,61 @@ function DashboardInner() {
               </tbody>
             </table>
             <p className="muted small">Cash prizes count the cash given back. Free items count their ingredient cost. ₱20 vouchers count when used (under promo cost).</p>
+          </section>
+
+          <section className="panel">
+            <h2>Prize limit</h2>
+            <div className={`promo-meter ${promo.level}`}>
+              <div className="promo-meter-bar">
+                <div style={{ width: `${Math.min(100, (promo.pct / (s.promoLimits.pausePct * 1.25)) * 100)}%` }} />
+                <i style={{ left: `${(s.promoLimits.warnPct / (s.promoLimits.pausePct * 1.25)) * 100}%` }} title="warning" />
+                <i style={{ left: `${80}%` }} title="pause" />
+              </div>
+              <b className="display">{promo.pct.toFixed(1)}%</b>
+            </div>
+            <p className="small">
+              Wheel prizes + vouchers used: <b>{peso(Math.round(promo.cost))}</b> of {peso(sum.gross)} paid.{' '}
+              {promo.level === 'early'
+                ? `Not checked until sales reach ${peso(s.promoLimits.minSales)}.`
+                : promo.level === 'pause'
+                  ? `Over the ${s.promoLimits.pausePct}% limit: the cashier is asked to pause the wheel.`
+                  : promo.level === 'warn'
+                    ? `Above the ${s.promoLimits.warnPct}% warning.`
+                    : 'Within normal range.'}
+            </p>
+            <p className="muted small">
+              With today's menu a spin costs about {peso(Math.round(expected.perSpin))} on average ({expected.pctOfBowl.toFixed(1)}% of a bowl). On a normal day that is roughly 4–5% of sales.
+            </p>
+          </section>
+
+          <section className="panel">
+            <h2>Waste</h2>
+            {sum.waste.rows.length === 0 ? (
+              <p className="muted">Nothing logged.</p>
+            ) : (
+              <table>
+                <tbody>
+                  {sum.waste.rows.map((w) => (
+                    <tr key={w.itemId}>
+                      <td>{w.name}</td>
+                      <td>{w.qty}</td>
+                      <td>{peso(w.cost)}</td>
+                    </tr>
+                  ))}
+                  <tr className="strong">
+                    <td>Total cost</td>
+                    <td></td>
+                    <td>{peso(sum.waste.cost)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+            {(day.waste?.length ?? 0) > 0 && (
+              <p className="muted small">
+                {day.waste!.map((w) => `${w.qty}× ${s.menu.find((m) => m.id === w.itemId)?.short ?? w.itemId}: ${w.reason} (${w.by}, ${new Date(w.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})`).join(' · ')}
+              </p>
+            )}
+            <p className="muted small">Waste is included in ingredient cost and profit.</p>
           </section>
 
           <section className="panel">
