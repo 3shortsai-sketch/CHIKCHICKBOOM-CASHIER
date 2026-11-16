@@ -2,13 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { amountDue, createOrder, nextSeq, orderNumber } from '../../domain/checkout';
 import { availableRewards, canRedeem, cardState, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
 import { applyCombo, itemById, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
-import { isAvailable, stockLeft } from '../../domain/reports';
-import type { Category, Combo, MenuItem, Order, OrderLine, Reward } from '../../domain/types';
-import { modeOrders, openDay, patchDay, patchOrder, putOrder, useDevice, useStore } from '../../data/store';
+import { promoStatus } from '../../domain/promo';
+import { isAvailable, stockLeft, summarize } from '../../domain/reports';
+import type { Category, Combo, MenuItem, Order, OrderLine, PaymentMethod, Reward } from '../../domain/types';
+import { publishCart } from '../../data/live';
+import { modeOrders, openDay, patchDay, patchOrder, putOrder, saveSettings, useDevice, useStore } from '../../data/store';
 import { TopBar } from '../../ui/TopBar';
 import { OpenDayForm } from './OpenDay';
 import { AfterPay, PayModal, StampDots } from './payflow';
 import { ComboPicker, ItemPicker } from './pickers';
+import { CardLookup, WasteLog } from './tools';
 
 const TABS: { id: Category; label: string }[] = [
   { id: 'bowls', label: 'Bowls' },
@@ -47,6 +50,9 @@ export function Cashier() {
   const [editingNote, setEditingNote] = useState<string | null>(null);
   const [comboDismissed, setComboDismissed] = useState<string>('');
   const [escArmed, setEscArmed] = useState(false);
+  const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
+  const [tool, setTool] = useState<'card' | 'waste' | null>(null);
+  const [promoDismissed, setPromoDismissed] = useState<string>('');
 
   const cartUse = useMemo(() => stockUsage(lines), [lines]);
   const remaining = useCallback((id: string) => (left[id] ?? 0) - (cartUse[id] ?? 0), [left, cartUse]);
@@ -201,6 +207,7 @@ export function Cashier() {
       });
       putOrder(o);
       setPaying(false);
+      setPayMethod('cash');
       setAfterPay({ id: o.id, past: false });
       clearOrder();
     } catch (e) {
@@ -211,6 +218,39 @@ export function Cashier() {
   const pickFree = (kind: MenuItem['kind']) =>
     s.menu.filter((m) => m.kind === kind && isAvailable(m, day, left)).sort((a, b) => a.price - b.price)[0];
 
+  // ----- Customer monitor: show the order as it is rung up -----
+  const afterOrder = afterPay ? state.orders[afterPay.id] : undefined;
+  useEffect(() => {
+    if (afterOrder && !afterPay?.past) {
+      publishCart({ stage: 'paid', number: afterOrder.number, spins: afterOrder.spinsEarned - afterOrder.spins.length, change: afterOrder.payment.method === 'cash' ? afterOrder.payment.change : 0 });
+      return;
+    }
+    if (!lines.length) {
+      publishCart({ stage: 'idle' });
+      return;
+    }
+    publishCart({
+      stage: paying ? 'paying' : 'ordering',
+      lines: lines.map((l) => {
+        const bits: string[] = [];
+        const add = (c?: OrderLine['choices']) => {
+          if (c?.side) bits.push(c.side);
+          if (c?.extraSides?.length) bits.push(`+${c.extraSides.join(', ')}`);
+          if (c?.extraSauce) bits.push(`+${c.extraSauce} sauce`);
+          if (c?.dip) bits.push(c.dip);
+        };
+        add(l.choices);
+        l.combo?.parts.forEach((p) => add(p));
+        return { qty: l.qty, name: l.name, details: bits.join(' · '), total: lineTotal(l, s), free: !!l.free };
+      }),
+      subtotal: sub,
+      voucher: voucher?.amount,
+      due,
+      spins,
+      method: paying ? payMethod : undefined,
+    });
+  }, [lines, paying, payMethod, voucher, afterOrder, afterPay?.past, s, sub, due, spins]);
+
   // ----- Keyboard -----
   const visible = useMemo(() => {
     if (tab === 'combos') return [];
@@ -220,7 +260,7 @@ export function Cashier() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (picking || paying || afterPay) return;
+      if (picking || paying || afterPay || tool) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         if (e.key === 'Escape') (e.target as HTMLElement).blur();
         return;
@@ -259,6 +299,9 @@ export function Cashier() {
   const recent = [...todays].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
   const nextNumber = orderNumber(device.orderLetter || 'A', nextSeq(day, orders, device.orderLetter || 'A'));
   const soldOutCount = s.menu.filter((m) => m.active && day.soldOut[m.id]).length;
+  const promo = promoStatus(summarize(day, orders, s), s);
+  const promoKey = `${day.id}:${promo.level}`;
+  const methods: PaymentMethod[] = ['cash', ...(s.payments.gcash ? (['gcash'] as const) : []), ...(s.payments.maya ? (['maya'] as const) : [])];
   const tabCount = (id: Category) =>
     lines.reduce((n, l) => n + (id === 'combos' ? (l.combo ? l.qty : 0) : !l.combo && itemById(s, l.itemId)?.category === id ? l.qty : 0), 0);
 
@@ -296,10 +339,34 @@ export function Cashier() {
                 );
               })}
               <span className="tabs-spacer" />
-              <button className={`btn small ${soldOutMode ? 'danger' : 'ghost'}`} onClick={() => setSoldOutMode(!soldOutMode)}>
-                {soldOutMode ? 'Done marking' : `Mark sold out${soldOutCount ? ` · ${soldOutCount} out` : ''}`}
+              <button className="btn small ghost tool-btn" title="Check a loyalty card's stamps" onClick={() => setTool('card')}>
+                Card
+              </button>
+              <button className="btn small ghost tool-btn" title="Log dropped or spoiled items" onClick={() => setTool('waste')}>
+                Waste
+              </button>
+              <button className={`btn small tool-btn ${soldOutMode ? 'danger' : 'ghost'}`} title="Mark items sold out" onClick={() => setSoldOutMode(!soldOutMode)}>
+                {soldOutMode ? 'Done' : `Sold out${soldOutCount ? ` · ${soldOutCount}` : ''}`}
               </button>
             </nav>
+            {!s.wheel.paused && (promo.level === 'warn' || promo.level === 'pause') && promoDismissed !== promoKey && (
+              <div className={`promo-alert ${promo.level}`} role="alert">
+                <span>
+                  {promo.level === 'pause' ? <b>Pause the wheel?</b> : <b>Prizes are running high.</b>} Prizes cost {promo.pct.toFixed(1)}% of today's sales (
+                  {promo.level === 'pause' ? `limit ${s.promoLimits.pausePct}%` : `warning at ${s.promoLimits.warnPct}%`}).
+                </span>
+                <div className="row">
+                  {promo.level === 'pause' && (
+                    <button className="btn small danger" onClick={() => saveSettings({ wheel: { ...s.wheel, paused: true } })}>
+                      Pause wheel
+                    </button>
+                  )}
+                  <button className="btn small ghost" onClick={() => setPromoDismissed(promoKey)}>
+                    Keep spinning
+                  </button>
+                </div>
+              </div>
+            )}
             {soldOutMode && <p className="banner warn">Tap an item to mark it sold out. Tap it again to bring it back.</p>}
 
             <div className={`tiles ${soldOutMode ? 'marking' : ''}`}>
@@ -544,7 +611,20 @@ export function Cashier() {
           onClose={() => setPicking(null)}
         />
       )}
-      {paying && <PayModal due={due} onPay={pay} onClose={() => setPaying(false)} />}
+      {paying && (
+        <PayModal
+          due={due}
+          methods={methods}
+          onMethod={setPayMethod}
+          onPay={pay}
+          onClose={() => {
+            setPaying(false);
+            setPayMethod('cash');
+          }}
+        />
+      )}
+      {tool === 'card' && <CardLookup s={s} orders={orders} onClose={() => setTool(null)} />}
+      {tool === 'waste' && <WasteLog s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
     </div>
   );
 }

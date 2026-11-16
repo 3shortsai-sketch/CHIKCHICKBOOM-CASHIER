@@ -228,6 +228,42 @@ function SetupInner() {
         </section>
 
         <section className="panel">
+          <h2>Payments</h2>
+          <label className="row">
+            <input type="checkbox" checked={s.payments.gcash} onChange={(e) => save({ payments: { ...s.payments, gcash: e.target.checked } })} />
+            <b>Accept GCash</b>
+          </label>
+          <label className="row">
+            <input type="checkbox" checked={s.payments.maya} onChange={(e) => save({ payments: { ...s.payments, maya: e.target.checked } })} />
+            <b>Accept Maya</b>
+          </label>
+          <label className="field">
+            <span>GCash number to show on the customer screen (optional)</span>
+            <input className="input" inputMode="tel" defaultValue={s.payments.gcashNumber} onBlur={(e) => save({ payments: { ...s.payments, gcashNumber: e.target.value.trim() } })} placeholder="09XX XXX XXXX" />
+          </label>
+          <p className="muted small">When the cashier picks GCash, the customer screen shows the GCash QR and the amount.</p>
+        </section>
+
+        <section className="panel">
+          <h2>Prize limit</h2>
+          <div className="grid-2">
+            <label className="field">
+              <span>Warn the cashier at (% of sales)</span>
+              <input className="input" inputMode="decimal" defaultValue={s.promoLimits.warnPct} onBlur={(e) => save({ promoLimits: { ...s.promoLimits, warnPct: num(e.target.value) } })} />
+            </label>
+            <label className="field">
+              <span>Ask to pause the wheel at (% of sales)</span>
+              <input className="input" inputMode="decimal" defaultValue={s.promoLimits.pausePct} onBlur={(e) => save({ promoLimits: { ...s.promoLimits, pausePct: num(e.target.value) } })} />
+            </label>
+            <label className="field">
+              <span>Start checking after sales of (₱)</span>
+              <input className="input" inputMode="numeric" defaultValue={s.promoLimits.minSales} onBlur={(e) => save({ promoLimits: { ...s.promoLimits, minSales: num(e.target.value) } })} />
+            </label>
+          </div>
+          <p className="muted small">Counts wheel prizes (cash given back + ingredient cost of free items) and vouchers used. A normal day is about 4–5%.</p>
+        </section>
+
+        <section className="panel">
           <h2>Loyalty card</h2>
           <div className="grid-2">
             <label className="field">
