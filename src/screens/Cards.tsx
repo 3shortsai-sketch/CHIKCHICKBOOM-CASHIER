@@ -4,6 +4,7 @@ import { parseCard } from '../domain/loyalty';
 import { buildXlsx, XLSX_MIME, type XCell } from '../domain/xlsx';
 import { modeCards, modeOrders, saveCard, useDevice, useStore } from '../data/store';
 import { StampDots } from './cashier/payflow';
+import { StampEditor } from './cashier/StampEditor';
 import { TopBar } from '../ui/TopBar';
 import { download, PinGate } from '../ui/ui';
 
@@ -29,6 +30,7 @@ function CardsInner() {
   const [newName, setNewName] = useState('');
   const [message, setMessage] = useState<{ text: string; bad?: boolean } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [stampsFor, setStampsFor] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const shown = searchCards(rows, query);
   const by = device.cashier || 'Team';
@@ -51,11 +53,11 @@ function CardsInner() {
     const bytes = buildXlsx([
       {
         name: 'Loyalty cards',
-        widths: [12, 28, 8, 8, 8, 18, 36, 20],
+        widths: [12, 28, 8, 8, 8, 18, 36, 20, 14],
         freezeHeader: true,
         rows: [
-          head('Card', 'Name', 'Stamps', 'Of', 'Visits', 'Full cards done', 'Rewards ready', 'Last visit'),
-          ...rows.map((r): XCell[] => [r.number, r.name, r.stamps, r.size, r.visits, r.cardsCompleted, r.rewardsReady.join(', '), when(r.lastVisit)]),
+          head('Card', 'Name', 'Stamps', 'Of', 'Visits', 'Full cards done', 'Rewards ready', 'Last visit', 'Added by hand'),
+          ...rows.map((r): XCell[] => [r.number, r.name, r.stamps, r.size, r.visits, r.cardsCompleted, r.rewardsReady.join(', '), when(r.lastVisit), r.adjusted]),
         ],
       },
     ]);
@@ -166,8 +168,12 @@ function CardsInner() {
                       <td>
                         <b>
                           {r.stamps}/{r.size}
-                        </b>
+                        </b>{' '}
+                        <button className="link-btn" onClick={() => setStampsFor(r.number)}>
+                          edit stamps
+                        </button>
                         <StampDots n={r.stamps} size={r.size} />
+                        {r.adjusted !== 0 && <div className="muted small">{r.adjusted > 0 ? `+${r.adjusted}` : `−${Math.abs(r.adjusted)}`} added by hand</div>}
                         {r.cardsCompleted > 0 && <div className="muted small">{r.cardsCompleted} full card{r.cardsCompleted > 1 ? 's' : ''} done</div>}
                       </td>
                       <td>{r.visits}</td>
@@ -181,6 +187,17 @@ function CardsInner() {
           )}
         </section>
       </div>
+      {stampsFor && (
+        <StampEditor
+          number={stampsFor}
+          name={rows.find((r) => r.number === stampsFor)?.name}
+          stamps={rows.find((r) => r.number === stampsFor)?.stamps ?? 0}
+          size={s.loyalty.cardSize}
+          cards={cards}
+          by={by}
+          onClose={() => setStampsFor(null)}
+        />
+      )}
     </div>
   );
 }

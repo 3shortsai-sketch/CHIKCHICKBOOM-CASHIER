@@ -4,7 +4,7 @@ import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
 import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
 import { allergenHint, allergenText, itemTags } from './allergens';
-import { cardDocId, cardRows, cleanCardName, searchCards } from './cards';
+import { cardDocId, cardRows, cardStateFor, cleanCardName, searchCards } from './cards';
 import { isLow, margins, onHand, servingsLeft, waitMinutes } from './inventory';
 import { dayXlsx, daySheets } from './excel';
 import { colName, crc32 } from './xlsx';
@@ -469,5 +469,35 @@ describe('loyalty card list', () => {
     expect(cardDocId('demo', 'CCB-037')).not.toBe(cardDocId('live', 'CCB-037'));
     expect(cleanCardName('  Ana   Marie  ')).toBe('Ana Marie');
     expect(cleanCardName('x'.repeat(50))).toHaveLength(30);
+  });
+});
+
+describe('editing stamps by hand', () => {
+  const adj = (delta: number, at: number, reason = 'Stamps from the paper card') => ({ delta, reason, at, by: 'Ana' });
+
+  it('adds paper-card stamps in the order things happened', () => {
+    // 4 stamps from the paper card, then two paid visits.
+    const o1 = { ...order([bowl()], { cardId: 'CCB-050' }), createdAt: 2000 };
+    const o2 = { ...order([bowl()], { cardId: 'CCB-050' }, [o1]), createdAt: 3000 };
+    const st = cardState('CCB-050', [o1, o2], s, undefined, [adj(4, 1000)]);
+    expect(st.stamps).toBe(6);
+    expect(availableRewards(st, s).map((r) => r.at)).toEqual([5]);
+  });
+
+  it('can remove stamps, never goes below 0 or above a full card', () => {
+    expect(cardState('CCB-050', [], s, undefined, [adj(3, 1), adj(-5, 2, 'Wrong stamp given')]).stamps).toBe(0);
+    expect(cardState('CCB-050', [], s, undefined, [adj(9, 1), adj(9, 2)]).stamps).toBe(10);
+  });
+
+  it('lists a card that only holds adjustments, with the hand-added total', () => {
+    const c = { number: 'CCB-060', mode: 'demo' as const, name: '', createdAt: 1, updatedAt: 1, by: 'Ana', adjustments: [adj(4, 5), adj(-1, 6, 'Wrong stamp given')] };
+    const row = cardRows([c], [], s)[0];
+    expect([row.stamps, row.adjusted, row.registered, row.name]).toEqual([3, 3, false, '']);
+    expect(cardStateFor('CCB-060', [], s, [c]).stamps).toBe(3);
+  });
+
+  it('a voided order still takes its own stamp back but keeps the hand-added ones', () => {
+    const o = { ...order([bowl()], { cardId: 'CCB-070' }), createdAt: 2000, voided: { reason: 'x', at: 1, by: 'm' } };
+    expect(cardState('CCB-070', [o], s, undefined, [adj(2, 1000)]).stamps).toBe(2);
   });
 });

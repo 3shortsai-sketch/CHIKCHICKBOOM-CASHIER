@@ -1,5 +1,5 @@
 import { cardState } from './loyalty';
-import type { Card, DataMode, Order, Settings } from './types';
+import type { Card, DataMode, Order, Settings, StampAdjustment } from './types';
 
 /** Practice and real cards are kept apart, like orders. */
 export function cardDocId(mode: DataMode, number: string): string {
@@ -9,6 +9,15 @@ export function cardDocId(mode: DataMode, number: string): string {
 /** A name as typed at the counter: single spaces, at most 30 characters. */
 export function cleanCardName(name: string | undefined): string {
   return (name ?? '').replace(/\s+/g, ' ').trim().slice(0, 30);
+}
+
+/** A card's stamps and rewards: its orders plus any manual stamp changes. */
+export function cardStateFor(number: string, orders: Order[], s: Settings, cards: Card[], excludeOrderId?: string) {
+  return cardState(number, orders, s, excludeOrderId, cards.find((c) => c.number === number)?.adjustments ?? []);
+}
+
+export function adjustmentsOf(cards: Card[], number: string): StampAdjustment[] {
+  return cards.find((c) => c.number === number)?.adjustments ?? [];
 }
 
 export type CardRow = {
@@ -23,6 +32,8 @@ export type CardRow = {
   rewardsReady: string[];
   lastVisit?: number;
   lastOrder?: string;
+  /** Net stamps added or removed by hand (e.g. +4 for a paper card). */
+  adjusted: number;
 };
 
 /**
@@ -34,13 +45,13 @@ export function cardRows(cards: Card[], orders: Order[], s: Settings): CardRow[]
   const numbers = new Set<string>([...byNumber.keys(), ...orders.filter((o) => o.cardId && !o.voided).map((o) => o.cardId!)]);
   const rows: CardRow[] = [];
   for (const number of numbers) {
-    const st = cardState(number, orders, s);
+    const st = cardState(number, orders, s, undefined, byNumber.get(number)?.adjustments ?? []);
     const mine = orders.filter((o) => o.cardId === number && !o.voided).sort((a, b) => b.createdAt - a.createdAt);
     const card = byNumber.get(number);
     rows.push({
       number,
       name: card?.name ?? '',
-      registered: !!card,
+      registered: !!card && card.name !== '',
       stamps: st.stamps,
       size: s.loyalty.cardSize,
       visits: st.orders,
@@ -48,6 +59,7 @@ export function cardRows(cards: Card[], orders: Order[], s: Settings): CardRow[]
       rewardsReady: s.loyalty.rewards.filter((r) => st.stamps >= r.at && !st.used.includes(r.at)).map((r) => r.label),
       lastVisit: mine[0]?.createdAt,
       lastOrder: mine[0]?.number,
+      adjusted: (card?.adjustments ?? []).reduce((n, a) => n + a.delta, 0),
     });
   }
   return rows.sort((a, b) => (b.lastVisit ?? 0) - (a.lastVisit ?? 0) || a.number.localeCompare(b.number));

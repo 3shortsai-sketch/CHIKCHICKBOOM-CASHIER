@@ -147,7 +147,10 @@ export type Order = {
 
 export type DataMode = 'demo' | 'live';
 
-/** A loyalty card's owner. Stamps are not stored here; they are counted from orders. */
+/** A manual change to a card's stamps (paper-card stamps, a missed stamp, a correction). */
+export type StampAdjustment = { delta: number; reason: string; at: number; by: string };
+
+/** A loyalty card's owner. Stamps are counted from orders, plus any manual adjustments. */
 export type Card = {
   /** Same as the number printed on the card, e.g. "CCB-037". */
   number: string;
@@ -156,6 +159,8 @@ export type Card = {
   createdAt: number;
   updatedAt: number;
   by: string;
+  /** Manual stamp changes, oldest first. A card can exist with no name, just to hold these. */
+  adjustments?: StampAdjustment[];
 };
 
 export type StockCount = { qty: number; at: number; by: string };

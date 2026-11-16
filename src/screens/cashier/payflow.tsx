@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { cashSuggestions } from '../../domain/checkout';
-import { availableRewards, cardState, parseCard } from '../../domain/loyalty';
+import { cardStateFor } from '../../domain/cards';
+import { availableRewards, parseCard } from '../../domain/loyalty';
 import { peso, spinnableBowls } from '../../domain/pricing';
 import type { MenuItem, Order, PaymentMethod, PrizeId, Settings } from '../../domain/types';
 import { applyPrize, digitalSpin, PRIZE_LABEL, prizeRefundTotal, undoLastSpin } from '../../domain/wheel';
+import { modeCards, useStore } from '../../data/store';
 import { Modal } from '../../ui/ui';
 import { CardNameField } from './CardName';
 
@@ -135,7 +137,8 @@ export function AfterPay({
   // Only prizes logged since this screen opened are still to be paid out.
   const [spinsAtOpen] = useState(() => (mode === 'fresh' ? 0 : order.spins.length));
   const refund = past ? prizeRefundTotal(order) : order.spins.slice(spinsAtOpen).reduce((n, x) => n + x.refund, 0);
-  const card = order.cardId ? cardState(order.cardId, orders.filter((o) => o.id !== order.id).concat(order), s) : null;
+  const cardList = useStore((st) => modeCards(st));
+  const card = order.cardId ? cardStateFor(order.cardId, orders.filter((o) => o.id !== order.id).concat(order), s, cardList) : null;
   const vouchers = order.spins.filter((x) => x.voucherCode);
 
   const log = (prize: PrizeId, via: 'physical' | 'digital') => {

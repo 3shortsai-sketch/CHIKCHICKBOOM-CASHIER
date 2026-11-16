@@ -2047,12 +2047,20 @@ textarea.input {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.stat {
+  container-type: inline-size;
+  min-width: 0;
+  overflow: hidden;
+}
 .stat b {
   font-family: var(--display);
   font-weight: 800;
-  letter-spacing: 0.03em;
-  font-size: 2.1rem;
-  line-height: 1.05;
+  letter-spacing: 0.02em;
+  font-size: 1.7rem;
+  /* As wide as the tile allows, at most 2.1rem: long amounts shrink, short ones stay big. */
+  font-size: min(2.1rem, calc(100cqw / (var(--len, 6) * 0.78)));
+  line-height: 1.1;
+  white-space: nowrap;
 }
 .stat small {
   color: var(--ink-soft);
@@ -2074,6 +2082,8 @@ textarea.input {
   border-radius: var(--radius);
   padding: 1rem 1.2rem;
   min-width: 0;
+  /* Wide tables scroll inside their box instead of sticking out (phones). */
+  overflow-x: auto;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
@@ -2977,6 +2987,80 @@ a.btn {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+}
+
+/* Amounts never break across lines. */
+td,
+th {
+  white-space: nowrap;
+}
+td:first-child,
+th:first-child {
+  white-space: normal;
+}
+
+@media (max-width: 600px) {
+  .panel {
+    padding: 0.8rem;
+  }
+  td,
+  th {
+    padding: 0.3rem 0.3rem;
+    font-size: 0.82rem;
+  }
+  .margin-pill {
+    padding: 0 0.3rem;
+  }
+}
+
+/* ---------- Stamp editor ---------- */
+.stamp-edit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2rem;
+}
+.stamp-edit .btn.big {
+  width: 72px;
+  min-height: 72px;
+  font-size: 2rem;
+  padding: 0;
+}
+.stamp-edit-count {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 11rem;
+}
+.stamp-edit-count b {
+  font-size: 3.4rem;
+  line-height: 1;
+}
+.stamp-edit-count .stamp-dots span {
+  width: 18px;
+  height: 18px;
+}
+.stamp-delta {
+  font-weight: 800;
+  color: var(--ink-soft);
+}
+.stamp-delta.up,
+.adjust-history .up {
+  color: var(--green);
+}
+.stamp-delta.down,
+.adjust-history .down {
+  color: var(--red-deep);
+}
+.adjust-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.9rem;
 }
 
 /* ---------- Smaller screens (tablet portrait, phone) ---------- */

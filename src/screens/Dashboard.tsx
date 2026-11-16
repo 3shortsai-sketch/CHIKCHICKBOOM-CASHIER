@@ -23,7 +23,8 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
   return (
     <div className={`stat ${tone ?? ''}`}>
       <span>{label}</span>
-      <b>{value}</b>
+      {/* --len lets the CSS shrink long amounts (₱42,725) to fit the tile. */}
+      <b style={{ '--len': Math.max(value.length, 3) } as React.CSSProperties}>{value}</b>
       {sub && <small>{sub}</small>}
     </div>
   );
@@ -109,9 +110,9 @@ function DashboardInner() {
         <section className="stats">
           <Stat label="Orders" value={String(sum.orders)} />
           <Stat label="Average order" value={peso(sum.average)} />
-          <Stat label="Ingredient cost" value={peso(sum.cost)} />
-          <Stat label="Profit after ingredients" value={peso(sum.profit)} tone={sum.profit >= 0 ? 'good' : 'bad'} />
-          <Stat label="Promo cost" value={peso(sum.promo.total)} sub={`wheel ${peso(sum.promo.wheel)} · vouchers ${peso(sum.promo.vouchers)} · rewards ${peso(sum.promo.rewards)}`} />
+          <Stat label="Ingredient cost" value={peso(Math.round(sum.cost))} />
+          <Stat label="Profit after ingredients" value={peso(Math.round(sum.profit))} tone={sum.profit >= 0 ? 'good' : 'bad'} />
+          <Stat label="Promo cost" value={peso(Math.round(sum.promo.total))} sub={`wheel ${peso(sum.promo.wheel)} · vouchers ${peso(sum.promo.vouchers)} · rewards ${peso(sum.promo.rewards)}`} />
           <Stat label="Spins" value={String(sum.spins)} />
         </section>
 
@@ -134,8 +135,8 @@ function DashboardInner() {
                     <td>{r.name}</td>
                     <td>{r.qty}</td>
                     <td>{peso(r.sales)}</td>
-                    <td>{peso(r.cost)}</td>
-                    <td>{peso(r.profit)}</td>
+                    <td>{peso(Math.round(r.cost))}</td>
+                    <td>{peso(Math.round(r.profit))}</td>
                   </tr>
                 ))}
               </tbody>
