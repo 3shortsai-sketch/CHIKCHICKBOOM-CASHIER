@@ -218,16 +218,31 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   );
 }
 
-const UNLOCK_KEY = 'ccb:unlocked';
-
-export function PinGate({ pin, label, children }: { pin: string; label: string; children: ReactNode }) {
-  const [ok, setOk] = useState(() => sessionStorage.getItem(UNLOCK_KEY) === pin);
+/**
+ * Locks a page behind one or more passcodes. Each page remembers its own
+ * unlock for this browser tab, so unlocking Profit doesn't lock Setup.
+ * Extra passcodes (e.g. the admin PIN on the team Profit page) also open it.
+ */
+export function PinGate({ pin, also = [], label, children }: { pin: string; also?: string[]; label: string; children: ReactNode }) {
+  const key = `ccb:unlocked:${label}`;
+  const pins = [pin, ...also];
+  const [ok, setOk] = useState(() => {
+    try {
+      return pins.includes(sessionStorage.getItem(key) ?? '');
+    } catch {
+      return false;
+    }
+  });
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   if (ok) return <>{children}</>;
   const submit = () => {
-    if (value === pin) {
-      sessionStorage.setItem(UNLOCK_KEY, pin);
+    if (pins.includes(value)) {
+      try {
+        sessionStorage.setItem(key, value);
+      } catch {
+        /* private mode: unlock for this view only */
+      }
       setOk(true);
     } else {
       setError('Wrong PIN');

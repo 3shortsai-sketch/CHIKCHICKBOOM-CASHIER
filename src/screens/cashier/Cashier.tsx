@@ -354,6 +354,9 @@ export function Cashier() {
               <button className="btn small ghost tool-btn" title="Log dropped or spoiled items" onClick={() => setTool('waste')}>
                 Waste
               </button>
+              <a className="btn small ghost tool-btn" title="Team page (passcode)" href="#team">
+                Team
+              </a>
               <button className={`btn small tool-btn ${soldOutMode ? 'danger' : 'ghost'}`} title="Mark items sold out" onClick={() => setSoldOutMode(!soldOutMode)}>
                 {soldOutMode ? 'Done' : `Sold out${soldOutCount ? ` · ${soldOutCount}` : ''}`}
               </button>

@@ -11,16 +11,25 @@ export function liveOrders(orders: Order[]): Order[] {
   return orders.filter((o) => !o.voided);
 }
 
+/**
+ * Pieces left of each menu item: opening stock, or the kitchen's latest
+ * count, minus what sold and what was wasted after that.
+ */
 export function stockLeft(day: BusinessDay | undefined, orders: Order[], s: Settings): Record<string, number> {
   const left: Record<string, number> = {};
-  for (const m of s.menu) left[m.id] = day?.stockStart[m.id] ?? m.startStock;
+  const since: Record<string, number> = {};
+  for (const m of s.menu) {
+    const count = day?.stockCounts?.[m.id];
+    left[m.id] = count ? count.qty : (day?.stockStart[m.id] ?? m.startStock);
+    since[m.id] = count ? count.at : -Infinity;
+  }
   for (const o of liveOrders(dayOrders(day, orders))) {
     for (const [id, n] of Object.entries(stockUsage(o.lines))) {
-      if (id in left) left[id] -= n;
+      if (id in left && o.createdAt > since[id]) left[id] -= n;
     }
   }
   for (const w of day?.waste ?? []) {
-    if (w.itemId in left) left[w.itemId] -= w.qty;
+    if (w.itemId in left && w.at > since[w.itemId]) left[w.itemId] -= w.qty;
   }
   return left;
 }

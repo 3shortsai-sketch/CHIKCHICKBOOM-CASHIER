@@ -4,6 +4,7 @@ import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
 import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
 import { allergenHint, allergenText, itemTags } from './allergens';
+import { isLow, margins, onHand, servingsLeft, waitMinutes } from './inventory';
 import { bestSellers, kitchenMadeCounts, ordersCsv, pendingSpins, recentWins, stockLeft, summarize } from './reports';
 import { expectedSpinCost, promoStatus } from './promo';
 import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
@@ -329,5 +330,56 @@ describe('real menu and allergens', () => {
     expect(peso(215.86000000000001)).toBe('₱215.86');
     expect(peso(1234)).toBe('₱1,234');
     expect(peso(-10)).toBe('−₱10');
+  });
+});
+
+describe('inventory', () => {
+  it('counts down from the kitchen count, ignoring sales before it', () => {
+    const a = order([cookie(), cookie()]); // sold before the count
+    const counted = { ...day, stockCounts: { 'cookie-choco': { qty: 30, at: a.createdAt + 1000, by: 'Kitchen' } } };
+    const b = { ...order([cookie()], {}, [a]), createdAt: a.createdAt + 2000 };
+    const broke = { ...counted, waste: [{ id: 'w', itemId: 'cookie-choco', qty: 2, reason: 'Broken', at: a.createdAt + 3000, by: 'Kitchen' }] };
+    expect(stockLeft(broke, [a, b], s)['cookie-choco']).toBe(30 - 1 - 2);
+    expect(stockLeft(day, [a, b], s)['cookie-choco']).toBe(40 - 3);
+  });
+
+  it('tracks ingredients by count, removals and (optionally) per-item use', () => {
+    const ing = { id: 'i', name: 'Chicken', unit: 'kg', low: 3, count: { qty: 20, at: 1000, by: 'K' }, removed: [{ qty: 0.5, reason: 'spoiled', at: 2000, by: 'K' }] };
+    const o = { ...order([bowl(4)]), createdAt: 3000 };
+    expect(onHand(ing, [o])).toBe(19.5);
+    const withUse = { ...ing, uses: { 'bowl-alaking': 0.2 } };
+    expect(onHand(withUse, [o])).toBe(18.7);
+    expect(servingsLeft(withUse, [o], 'bowl-alaking')).toBe(93);
+    expect(onHand({ ...ing, count: undefined }, [o])).toBeNull();
+    expect(isLow({ ...ing, count: { qty: 3, at: 1, by: 'K' }, removed: [] }, [])).toBe(true);
+  });
+});
+
+describe('wait estimate', () => {
+  const t0 = Date.parse('2026-11-15T12:00:00');
+  const done = (i: number, prepMin: number): Order => ({ ...order([bowl()]), id: 'd' + i, createdAt: t0 + i * 120000, readyAt: t0 + i * 120000 + prepMin * 60000, status: 'ready' });
+  const waiting = (i: number): Order => ({ ...order([bowl()]), id: 'w' + i, createdAt: t0 + 20 * 60000 + i, status: 'new' });
+
+  it('uses the starting guess until two orders are done', () => {
+    expect(waitMinutes([done(0, 5)], t0, 8)).toBe(8);
+  });
+  it('follows the real prep time, and grows with the queue', () => {
+    const recent = [0, 1, 2, 3, 4].map((i) => done(i, 6));
+    expect(waitMinutes(recent, t0, 8)).toBe(6);
+    const busy = [...recent, ...[0, 1, 2, 3, 4].map(waiting)];
+    expect(waitMinutes(busy, t0, 8)).toBe(12); // 6 orders ahead incl. yours × 2 min apart
+  });
+});
+
+describe('profit per item', () => {
+  it('works out profit and margin from the unit costs', () => {
+    const m = margins(s);
+    const ala = m.items.find((x) => x.id === 'bowl-alaking')!;
+    expect(ala.profit).toBeCloseTo(61.07, 2);
+    expect(Math.round(ala.pct)).toBe(36);
+    const a = m.combos.find((c) => c.name === 'Combo A')!;
+    expect(a.low.cost).toBeCloseTo(108.22 + 44.98 + 90.49, 2); // Soy Garlic is the costliest bowl
+    expect(Math.round(a.low.pct)).toBe(26);
+    expect(Math.round(a.high.pct)).toBe(30);
   });
 });

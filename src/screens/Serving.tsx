@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { allergenHint, allergenText, itemTags } from '../domain/allergens';
+import { waitMinutes } from '../domain/inventory';
 import { peso } from '../domain/pricing';
 import { bestSellers, isAvailable, recentWins, stockLeft, type Win } from '../domain/reports';
 import type { MenuItem, Settings } from '../domain/types';
@@ -90,7 +91,8 @@ function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string 
   );
 }
 
-function MenuRow({ m, available, best }: { m: MenuItem; available: boolean; best: boolean }) {
+function MenuRow({ m, available, best, left, lowAt }: { m: MenuItem; available: boolean; best: boolean; left: number; lowAt: number }) {
+  const few = available && lowAt > 0 && left <= lowAt;
   return (
     <li className={`menu-row ${available ? '' : 'out'}`}>
       {m.photo && <img className="menu-photo" src={`./${m.photo}`} alt="" loading="lazy" />}
@@ -98,7 +100,8 @@ function MenuRow({ m, available, best }: { m: MenuItem; available: boolean; best
         <div className="menu-line">
           <span className="menu-name">
             {m.name}
-            {best && available && <span className="best-badge">★ Best seller</span>}
+            {best && available && !few && <span className="best-badge">★ Best seller</span>}
+            {few && <span className="few-badge">Only {left} left!</span>}
           </span>
           <b>{available ? peso(m.price) : 'SOLD OUT'}</b>
         </div>
@@ -141,6 +144,7 @@ export function Serving() {
   const left = useMemo(() => stockLeft(day, all, s), [day, all, s]);
   const best = useMemo(() => new Set(bestSellers(day, all, s)), [day, all, s]);
   const wins = useMemo(() => recentWins(day, all, 4), [day, all]);
+  const wait = waitMinutes(orders, now, s.defaultWaitMinutes);
   const clearMs = s.servingClearMinutes * 60000;
   const serving = orders
     .filter((o) => o.status === 'ready' && now - (o.readyAt ?? 0) < clearMs)
@@ -243,7 +247,10 @@ export function Serving() {
         </section>
         <section className={`preparing ${cart.stage !== 'idle' ? 'with-order' : ''} ${cart.stage === 'paying' && cart.method === 'gcash' ? 'with-qr' : ''}`}>
           <YourOrder cart={cart} gcashNumber={s.payments.gcashNumber} />
-          <h2>Preparing</h2>
+          <div className="prep-head">
+            <h2>Preparing</h2>
+            {day && <span className="wait-chip">Wait ≈ {wait} min</span>}
+          </div>
           <div className="prep-numbers">
             {preparing.slice(0, 15).map((o) => (
               <span key={o.id}>{o.number}</span>
@@ -261,7 +268,7 @@ export function Serving() {
                 {s.menu
                   .filter((m) => m.category === c.id && m.active)
                   .map((m) => (
-                    <MenuRow key={m.id} m={m} available={isAvailable(m, day, left)} best={best.has(m.id)} />
+                    <MenuRow key={m.id} m={m} available={isAvailable(m, day, left)} best={best.has(m.id)} left={left[m.id] ?? 0} lowAt={s.lowStockAlert} />
                   ))}
               </ul>
               {c.id === 'bowls' && <ChoiceLine label="Free side" options={s.sides} tags={s.sideAllergens} />}

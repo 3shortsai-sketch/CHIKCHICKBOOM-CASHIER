@@ -162,6 +162,21 @@ but the kitchen tablet is not.
 ### Card check
 - The "Card" button shows a card's stamps, rewards ready and visits, without starting an order.
 
+### Low stock and wait on the monitor
+- "Only N left!" next to an item at 5 or fewer (Setup: "Only N left" number).
+- "Wait ≈ N min" next to Preparing, from today's real pace (how long recent orders took and how fast the kitchen is finishing them versus the queue). Before 2 orders are finished it shows the starting guess (8 min, in Setup).
+
+### Team page (profits), discreet
+- The cashier's **Team** button opens it with the **team passcode** (default 2468; the admin PIN also works). The word "profit" is never visible to customers.
+- Amounts are blurred until "Show numbers" is tapped and blur again after 30 seconds. "Hide (Esc)" returns to the cashier; the page locks itself after 1 minute idle.
+- Shows today's profit (what customers paid − prize cash and refunds − ingredient cost − waste), items sold with their profit, profit and margin per piece, and the combo margin range.
+
+### Inventory (kitchen team, `#inventory`, linked from the kitchen screen)
+- Menu items: "Set count" when you count what you physically have (e.g. 30 cookies); sales after that keep counting down. "Remove" takes out broken/dropped/spoiled pieces and adds their cost to waste.
+- Ingredients and supplies (chicken kg, rice, eggs, cups…): set the count, remove spoiled amounts, add new ones. Low ones are flagged.
+- Optional in Setup: how much of each ingredient one item uses (e.g. 0.15 kg chicken per bowl). Then ingredients count down with sales and show servings left.
+- Until Firebase is connected, counts entered on the tablet stay on the tablet.
+
 ## Still to decide
 - Starting stock per item (placeholder numbers in Setup).
 - Unit cost of Extra Side and Extra Sauce (placeholders ₱7 and ₱3).
