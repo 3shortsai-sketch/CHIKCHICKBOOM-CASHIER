@@ -12,7 +12,7 @@ function offlineServiceWorker(): Plugin {
     apply: 'build',
     generateBundle(_options, bundle) {
       const files = Object.keys(bundle).filter((f) => !f.endsWith('.map'));
-      const precache = ['./', ...files.map((f) => './' + f), './manifest.webmanifest', './icon.svg'];
+      const precache = ['./', ...files.map((f) => './' + f), './manifest.webmanifest', './icon-192.png', './logo.png', './logo-small.png', './gcash-qr.jpg'];
       const version = Date.now().toString(36);
       const source = `// Generated at build time. Do not edit.
 const CACHE = 'ccb-pos-${version}';

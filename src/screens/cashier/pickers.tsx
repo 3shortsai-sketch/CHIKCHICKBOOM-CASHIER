@@ -20,10 +20,10 @@ function useNumberKeys(count: number, onPick: (i: number) => void) {
   }, [count, onPick]);
 }
 
-function Options({ options, value, onPick, keys = true }: { options: string[]; value?: string; onPick: (v: string) => void; keys?: boolean }) {
+function Options({ options, value, onPick, keys = true, big }: { options: string[]; value?: string; onPick: (v: string) => void; keys?: boolean; big?: boolean }) {
   useNumberKeys(keys ? options.length : 0, (i) => onPick(options[i]));
   return (
-    <div className="option-grid">
+    <div className={`option-grid ${big ? 'big' : ''}`}>
       {options.map((o, i) => (
         <button key={o} className={`option ${value === o ? 'selected' : ''}`} onClick={() => onPick(o)}>
           {keys && i < 9 && <kbd>{i + 1}</kbd>}
@@ -34,44 +34,63 @@ function Options({ options, value, onPick, keys = true }: { options: string[]; v
   );
 }
 
-/** Free side + paid extras for one bowl. */
-function BowlChoices({ s, value, onChange }: { s: Settings; value: Choices; onChange: (c: Choices) => void }) {
+/** Paid extras as compact counters: extra sides (+₱20) and extra sauce (+₱10). */
+function ExtrasRow({ s, value, onChange }: { s: Settings; value: Choices; onChange: (c: Choices) => void }) {
   const extras = value.extraSides ?? [];
+  const sauce = value.extraSauce ?? 0;
+  const chip = (label: string, price: number, n: number, inc: () => void, dec: () => void) => (
+    <div key={label} className={`extra-chip ${n ? 'on' : ''}`}>
+      <button className="extra-chip-main" onClick={inc} aria-label={`Add extra ${label}`}>
+        <span>+ {label}</span>
+        <small>{peso(price)}</small>
+      </button>
+      {n > 0 && (
+        <>
+          <b className="extra-count">×{n}</b>
+          <button className="extra-chip-minus" onClick={dec} aria-label={`Remove one extra ${label}`}>
+            −
+          </button>
+        </>
+      )}
+    </div>
+  );
+  return (
+    <div className="extras-row">
+      {s.sides.map((side) => {
+        const n = extras.filter((x) => x === side).length;
+        return chip(
+          side,
+          s.extraSidePrice,
+          n,
+          () => onChange({ ...value, extraSides: [...extras, side] }),
+          () => {
+            const i = extras.indexOf(side);
+            onChange({ ...value, extraSides: extras.filter((_, j) => j !== i) });
+          },
+        );
+      })}
+      {chip(
+        'Sauce',
+        s.extraSaucePrice,
+        sauce,
+        () => onChange({ ...value, extraSauce: sauce + 1 }),
+        () => onChange({ ...value, extraSauce: sauce - 1 }),
+      )}
+    </div>
+  );
+}
+
+/** Free side + paid extras for one bowl (used inside the combo picker). */
+function BowlChoices({ s, value, onChange }: { s: Settings; value: Choices; onChange: (c: Choices) => void }) {
   return (
     <div className="stack">
       <div>
-        <h3>1 free side</h3>
+        <h3 className="pick-title">1 free side</h3>
         <Options options={s.sides} value={value.side} onPick={(side) => onChange({ ...value, side })} />
       </div>
       <div>
-        <h3>
-          Extra sides <span className="muted">+{peso(s.extraSidePrice)} each</span>
-        </h3>
-        <div className="option-grid extras-grid">
-          {s.sides.map((side) => {
-            const n = extras.filter((x) => x === side).length;
-            return (
-              <div key={side} className="stepper-option">
-                <span>{side}</span>
-                <div className="stepper">
-                  <button className="btn small" disabled={!n} onClick={() => { const i = extras.indexOf(side); onChange({ ...value, extraSides: extras.filter((_, j) => j !== i) }); }}>−</button>
-                  <b>{n}</b>
-                  <button className="btn small" onClick={() => onChange({ ...value, extraSides: [...extras, side] })}>+</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div className="stepper-option wide">
-        <span>
-          Extra sauce <span className="muted">+{peso(s.extraSaucePrice)} each</span>
-        </span>
-        <div className="stepper">
-          <button className="btn small" disabled={!value.extraSauce} onClick={() => onChange({ ...value, extraSauce: (value.extraSauce ?? 0) - 1 })}>−</button>
-          <b>{value.extraSauce ?? 0}</b>
-          <button className="btn small" onClick={() => onChange({ ...value, extraSauce: (value.extraSauce ?? 0) + 1 })}>+</button>
-        </div>
+        <h3 className="pick-sub">Extras (optional)</h3>
+        <ExtrasRow s={s} value={value} onChange={onChange} />
       </div>
     </div>
   );
@@ -86,94 +105,97 @@ function clean(c: Choices): Choices {
   return out;
 }
 
+/**
+ * Bowl, fries or extra side. New item: extras and note are set first, then
+ * tapping the free side (or dip) adds it in one tap. Editing a line: the
+ * choices are pre-filled and Save replaces the line.
+ */
 export function ItemPicker({
   item,
   s,
   free,
+  initial,
   onAdd,
   onClose,
 }: {
   item: MenuItem;
   s: Settings;
   free?: OrderLine['free'];
+  initial?: OrderLine;
   onAdd: (line: OrderLine) => void;
   onClose: () => void;
 }) {
-  const [choices, setChoices] = useState<Choices>({});
-  const [notes, setNotes] = useState('');
+  const editing = !!initial;
+  const [choices, setChoices] = useState<Choices>(initial?.choices ?? {});
+  const [notes, setNotes] = useState(initial?.notes ?? '');
   const isBowl = item.kind === 'bowl';
   const isFries = item.kind === 'fries';
-  const isExtraSide = item.kind === 'extraSide';
-  const ready = isBowl ? !!choices.side : isFries ? !!choices.dip : isExtraSide ? !!choices.side : true;
+  const lineFree = initial?.free ?? free;
 
-  const add = () => {
-    if (!ready) return;
-    onAdd({
-      id: newId('l'),
-      itemId: item.id,
-      name: free ? `${item.name} (REWARD)` : item.name,
-      qty: 1,
-      unitPrice: free ? 0 : item.price,
-      choices: clean(choices),
-      notes: notes.trim() || undefined,
-      free,
-    });
+  const build = (c: Choices): OrderLine => ({
+    id: initial?.id ?? newId('l'),
+    itemId: item.id,
+    name: lineFree ? `${item.name} (REWARD)` : item.name,
+    qty: initial?.qty ?? 1,
+    unitPrice: lineFree ? 0 : item.price,
+    choices: clean(c),
+    notes: notes.trim() || undefined,
+    free: lineFree,
+  });
+
+  const pick = (c: Choices) => {
+    if (editing && isBowl) setChoices(c);
+    else onAdd(build(c));
   };
 
-  // Fries and extra sides: picking the option adds the item straight away.
-  const pickAndAdd = (c: Choices) => {
-    onAdd({
-      id: newId('l'),
-      itemId: item.id,
-      name: free ? `${item.name} (REWARD)` : item.name,
-      qty: 1,
-      unitPrice: free ? 0 : item.price,
-      choices: clean(c),
-      free,
-    });
+  const save = () => {
+    if (isBowl && !choices.side) return;
+    onAdd(build(choices));
   };
 
   useEffect(() => {
+    if (!editing) return;
     const onKey = (e: KeyboardEvent) => {
-      // Enter always means "add", even right after tapping an option button.
       if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
         e.stopPropagation();
-        add();
+        save();
       }
     };
     addEventListener('keydown', onKey, true);
     return () => removeEventListener('keydown', onKey, true);
   });
 
+  const title = `${editing ? 'Edit · ' : ''}${item.name}${lineFree ? ' · reward' : ` · ${peso(item.price)}`}`;
+  const options = isFries ? s.dips : s.sides;
+
   return (
-    <Modal title={`${item.name}${free ? ' — reward' : ` · ${peso(item.price)}`}`} onClose={onClose} wide={isBowl}>
-      {isBowl && <BowlChoices s={s} value={choices} onChange={setChoices} />}
-      {isFries && (
-        <div>
-          <h3>1 free dip</h3>
-          <Options options={s.dips} onPick={(dip) => pickAndAdd({ dip })} />
-        </div>
-      )}
-      {isExtraSide && (
-        <div>
-          <h3>Which side?</h3>
-          <Options options={s.sides} onPick={(side) => pickAndAdd({ side })} />
-        </div>
-      )}
+    <Modal title={title} onClose={onClose} wide={isBowl}>
       {isBowl && (
-        <>
-          <label className="field">
-            <span>Note for the kitchen</span>
-            <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. no cucumber" />
-          </label>
-          <div className="modal-foot">
-            <button className="btn ghost" onClick={onClose}>Cancel</button>
-            <button className="btn primary big" disabled={!ready} onClick={add}>
-              {ready ? 'Add to order ↵' : 'Pick a free side'}
-            </button>
-          </div>
-        </>
+        <div className="bowl-mods">
+          <h3 className="pick-sub">Extras (optional, set before the side)</h3>
+          <ExtrasRow s={s} value={choices} onChange={setChoices} />
+          <input className="input note-input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Note for the kitchen, e.g. no cucumber" aria-label="Note for the kitchen" />
+        </div>
+      )}
+      <h3 className="pick-title">
+        {isBowl ? (editing ? 'Free side' : 'Tap the free side to add') : isFries ? (editing ? 'Dip' : 'Tap the free dip to add') : 'Which side?'}
+      </h3>
+      <Options
+        big
+        options={options}
+        value={isFries ? choices.dip : choices.side}
+        onPick={(v) => pick(isFries ? { ...choices, dip: v } : { ...choices, side: v })}
+      />
+      {editing && isBowl && (
+        <div className="modal-foot">
+          <button className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary big" disabled={!choices.side} onClick={save}>
+            Save changes ↵
+          </button>
+        </div>
       )}
     </Modal>
   );

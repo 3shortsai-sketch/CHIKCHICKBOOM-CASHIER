@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { peso } from '../domain/pricing';
 import { isAvailable, stockLeft } from '../domain/reports';
+import { useLiveCart, type LiveCart } from '../data/live';
 import { modeOrders, openDay, useStore } from '../data/store';
 import { chime, unlockSound, useNow, useWakeLock } from '../ui/ui';
 
@@ -11,11 +12,75 @@ const CATS = [
   { id: 'cookies', label: 'Cookies' },
 ] as const;
 
+function formatPhone(n: string): string {
+  const d = n.replace(/\D/g, '');
+  return d.length === 11 ? `${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}` : n;
+}
+
+/** The order the cashier is ringing up, shown to the customer at the counter. */
+function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string }) {
+  if (cart.stage === 'idle') return null;
+  if (cart.stage === 'paid') {
+    return (
+      <section className="your-order paid" aria-live="polite">
+        <h2>Thank you!</h2>
+        <p>Your number</p>
+        <b className="your-number">{cart.number}</b>
+        {cart.spins > 0 && <p className="your-spin">🎡 Spin the wheel! {cart.spins > 1 ? `${cart.spins} spins` : '1 spin'}</p>}
+        {cart.change > 0 && <p className="your-change">Change: {peso(cart.change)}</p>}
+      </section>
+    );
+  }
+  if (cart.stage === 'paying' && cart.method === 'gcash') {
+    return (
+      <section className="your-order qr" aria-live="polite">
+        <div className="qr-head">
+          <span className="gcash-badge">GCash</span>
+          <span>Scan to pay</span>
+        </div>
+        <b className="qr-amount">{peso(cart.due)}</b>
+        <img src="./gcash-qr.jpg" alt="GCash QR code" className="qr-img" />
+        {gcashNumber && <p className="qr-number">or send to {formatPhone(gcashNumber)}</p>}
+        <p className="qr-note">Show the cashier your receipt screen</p>
+      </section>
+    );
+  }
+  return (
+    <section className="your-order" aria-live="polite">
+      <h2>Your order</h2>
+      <ul>
+        {cart.lines.map((l, i) => (
+          <li key={i} className={l.free ? 'free' : ''}>
+            <span className="yo-qty">{l.qty}×</span>
+            <span className="yo-name">
+              {l.name}
+              {l.details && <small>{l.details}</small>}
+            </span>
+            <b>{l.free ? 'FREE' : peso(l.total)}</b>
+          </li>
+        ))}
+      </ul>
+      {cart.voucher ? (
+        <div className="yo-row">
+          <span>Voucher</span>
+          <span>−{peso(cart.voucher)}</span>
+        </div>
+      ) : null}
+      <div className="yo-total">
+        <span>Total</span>
+        <b>{peso(cart.due)}</b>
+      </div>
+      {cart.spins > 0 && <p className="your-spin">🎡 {cart.spins} spin{cart.spins > 1 ? 's' : ''} after paying!</p>}
+    </section>
+  );
+}
+
 export function Serving() {
   const state = useStore((s) => s);
   const s = state.settings;
   const day = openDay(state);
   const now = useNow(5000);
+  const cart = useLiveCart();
   const [started, setStarted] = useState(false);
   useWakeLock(started);
 
@@ -65,14 +130,18 @@ export function Serving() {
       {s.mode === 'demo' && <div className="demo-banner">DEMO</div>}
       <div className="serving-top">
         <section className="now-serving">
-          <h1>NOW SERVING</h1>
+          <div className="serving-brand">
+            <img src="./logo.png" alt="Chick Chick Boom" />
+            <h1>NOW SERVING</h1>
+          </div>
           <div className="serving-numbers">
-            {serving.length === 0 ? <span className="serving-empty">—</span> : serving.slice(0, 6).map((o, i) => (
+            {serving.length === 0 ? <span className="serving-empty">Your number will show here</span> : serving.slice(0, 6).map((o, i) => (
               <span key={o.id} className={`snum ${i === 0 ? 'first' : ''} ${flash === o.id ? 'flash' : ''}`}>{o.number}</span>
             ))}
           </div>
         </section>
-        <section className="preparing">
+        <section className={`preparing ${cart.stage !== 'idle' ? 'with-order' : ''} ${cart.stage === 'paying' && cart.method === 'gcash' ? 'with-qr' : ''}`}>
+          <YourOrder cart={cart} gcashNumber={s.payments.gcashNumber} />
           <h2>Preparing</h2>
           <div className="prep-numbers">
             {preparing.slice(0, 15).map((o) => (

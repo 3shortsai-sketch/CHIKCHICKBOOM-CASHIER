@@ -89,10 +89,30 @@ but the kitchen tablet is not.
 - **Print day-end report**: the dashboard, printed.
 - **Backup file**: everything on the device, restorable from the dashboard.
 
+### Customer monitor
+- While the cashier rings up an order, the monitor shows it line by line with the total and how many spins it earns.
+- When the cashier picks GCash, the monitor shows the GCash QR and the amount (and the GCash number, if typed in Setup).
+- After payment it shows "Thank you! Your number A-012" and reminds the customer to spin.
+- This works with no internet, because both windows run on the laptop.
+
+### Payments
+- Cash and GCash. Maya is off (switch in Setup).
+
+### Prize limit
+- Wheel prizes (cash given back + ingredient cost of free items) plus vouchers used, as a % of what customers paid today.
+- A normal day is about 4–5% (about ₱14 per spin with the placeholder menu).
+- At **6.5%** the cashier sees a warning; at **8%** the cashier is asked to pause the wheel. Not checked until sales reach **₱5,000**, so one early FREE MEAL doesn't trigger it. All three numbers are in Setup.
+
+### Waste
+- The cashier logs dropped, spoiled or wrong items ("Waste" button). They come out of stock and count as ingredient cost on the dashboard and in the CSV.
+
+### Card check
+- The "Card" button shows a card's stamps, rewards ready and visits, without starting an order.
+
 ## Still to decide
 - Real menu, prices, costs and stock (Step 2).
 - Real loyalty rewards (Step 2).
-- Senior citizen / PWD discount: check whether the booth must give it. The app has no button for it yet.
+- Senior citizen / PWD discount: the team decided it is not needed.
 - Receipts: the app's screen is not a BIR official receipt. Check with whoever handles permits.
 
 ## Booth checklist

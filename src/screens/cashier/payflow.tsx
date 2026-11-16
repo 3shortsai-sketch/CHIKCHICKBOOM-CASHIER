@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { QUICK_CASH } from '../../domain/checkout';
+import { cashSuggestions } from '../../domain/checkout';
 import { availableRewards, cardState, parseCard } from '../../domain/loyalty';
 import { peso, spinnableBowls } from '../../domain/pricing';
 import type { MenuItem, Order, PaymentMethod, PrizeId, Settings } from '../../domain/types';
@@ -8,14 +8,24 @@ import { Modal } from '../../ui/ui';
 
 export function PayModal({
   due,
+  methods,
+  onMethod,
   onPay,
   onClose,
 }: {
   due: number;
+  /** Payment methods the booth accepts (cash is always on). */
+  methods: PaymentMethod[];
+  /** Tells the customer monitor which method is chosen, so it can show the QR. */
+  onMethod: (m: PaymentMethod) => void;
   onPay: (method: PaymentMethod, tendered: number, reference: string) => void;
   onClose: () => void;
 }) {
-  const [method, setMethod] = useState<PaymentMethod>('cash');
+  const [method, setMethodState] = useState<PaymentMethod>('cash');
+  const setMethod = (m: PaymentMethod) => {
+    setMethodState(m);
+    onMethod(m);
+  };
   const [tendered, setTendered] = useState<number | null>(null);
   const [typed, setTyped] = useState('');
   const [reference, setReference] = useState('');
@@ -44,10 +54,10 @@ export function PayModal({
     <Modal title="Payment" onClose={onClose}>
       <div className="due">
         <span>Amount due</span>
-        <b>{peso(due)}</b>
+        <b className="display">{peso(due)}</b>
       </div>
       <div className="segmented">
-        {(['cash', 'gcash', 'maya'] as const).map((m) => (
+        {methods.map((m) => (
           <button key={m} className={method === m ? 'selected' : ''} onClick={() => setMethod(m)}>
             {m === 'cash' ? 'Cash' : m === 'gcash' ? 'GCash' : 'Maya'}
           </button>
@@ -57,8 +67,8 @@ export function PayModal({
         <>
           <div className="quick-cash">
             <button className={`btn ${tendered === due && !typed ? 'primary' : ''}`} onClick={() => { setTendered(due); setTyped(''); }}>Exact</button>
-            {QUICK_CASH.map((n) => (
-              <button key={n} className={`btn ${tendered === n && !typed ? 'primary' : ''}`} disabled={n < due} onClick={() => { setTendered(n); setTyped(''); }}>
+            {cashSuggestions(due).map((n) => (
+              <button key={n} className={`btn ${tendered === n && !typed ? 'primary' : ''}`} onClick={() => { setTendered(n); setTyped(''); }}>
                 {peso(n)}
               </button>
             ))}
@@ -67,14 +77,15 @@ export function PayModal({
             <span>Or type the cash received</span>
             <input className="input" inputMode="numeric" value={typed} onChange={(e) => setTyped(e.target.value.replace(/\D/g, ''))} placeholder="₱" autoFocus />
           </label>
-          <div className={`change ${change < 0 ? 'short' : ''}`}>
-            <span>{change < 0 ? 'Still short' : 'Change'}</span>
-            <b>{cash ? peso(Math.abs(change)) : '—'}</b>
+          <div className={`change ${cash > 0 && change < 0 ? 'short' : ''}`}>
+            <span>{cash > 0 && change < 0 ? 'Still short' : 'Change'}</span>
+            <b className="display">{cash ? peso(Math.abs(change)) : '—'}</b>
           </div>
         </>
       ) : (
         <>
-          <p className="muted">Check the payment on the business phone before confirming.</p>
+          {method === 'gcash' && <p className="ok-note">The GCash QR and amount are showing on the customer screen.</p>}
+          <p className="muted">Check the payment arrived on the business phone before confirming.</p>
           <label className="field">
             <span>Reference number (optional)</span>
             <input className="input" inputMode="numeric" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="last 4 digits is enough" autoFocus />
@@ -92,6 +103,7 @@ const PRIZE_ORDER: PrizeId[] = ['freeMeal', 'freeCookie', 'freeWater', 'freeSauc
 
 /** Shown after payment: log each bowl's spin, then show the order number. */
 export function AfterPay({
+  past,
   order,
   orders,
   s,
@@ -99,6 +111,7 @@ export function AfterPay({
   onUpdate,
   onDone,
 }: {
+  past?: boolean;
   order: Order;
   orders: Order[];
   s: Settings;
@@ -120,7 +133,7 @@ export function AfterPay({
     const r = applyPrize(order, nextBowl, prize, { settings: s, pickFree, via, now: Date.now() });
     if (!r.ok) return setMessage({ text: r.message, bad: true });
     onUpdate(r.order);
-    setMessage({ text: `${via === 'digital' ? 'Digital wheel: ' : ''}${PRIZE_LABEL[prize]}. ${r.message}` });
+    setMessage({ text: via === 'digital' ? `Digital wheel landed on ${PRIZE_LABEL[prize]}. ${r.message}` : r.message });
   };
 
   const attachCard = () => {
@@ -148,14 +161,22 @@ export function AfterPay({
   return (
     <div className="afterpay">
       <div className="afterpay-main">
-        <div className="order-number-big">
-          <span>Order</span>
-          <b>{order.number}</b>
+        <div className="order-hero">
+          <div className="burst" aria-hidden="true" />
+          <div className="order-hero-text">
+            <span>Order number</span>
+            <b className="display">{order.number}</b>
+          </div>
         </div>
-        {order.payment.method === 'cash' && order.payment.change > 0 && (
+        {past && (
+          <p className="banner warn">
+            Past order, paid at {new Date(order.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Change and cash give-backs were already handled then.
+          </p>
+        )}
+        {!past && order.payment.method === 'cash' && order.payment.change > 0 && (
           <div className="change big-change">
             <span>Change</span>
-            <b>{peso(order.payment.change)}</b>
+            <b className="display">{peso(order.payment.change)}</b>
           </div>
         )}
 
@@ -184,7 +205,7 @@ export function AfterPay({
         )}
 
         {message && <p className={message.bad ? 'error' : 'ok-note'}>{message.text}</p>}
-        {order.spins.length > 0 && (
+        {!past && order.spins.length > 0 && (
           <button className="btn ghost small" onClick={() => { onUpdate(undoLastSpin(order)); setMessage({ text: 'Last spin undone.' }); }}>
             Undo last spin
           </button>
@@ -193,9 +214,9 @@ export function AfterPay({
 
       <aside className="afterpay-side">
         {refund > 0 && (
-          <div className="giveback">
-            <span>Give back cash</span>
-            <b>{peso(refund)}</b>
+          <div className={`giveback ${past ? 'past' : ''}`}>
+            <span>{past ? 'Cash given back' : 'Give back cash'}</span>
+            <b className="display">{peso(refund)}</b>
           </div>
         )}
         {vouchers.length > 0 && (
@@ -238,7 +259,7 @@ export function AfterPay({
           </div>
         )}
         <button className="btn primary big full" disabled={spinsLeft > 0} onClick={onDone}>
-          {spinsLeft > 0 ? `${spinsLeft} spin${spinsLeft > 1 ? 's' : ''} left` : 'Next order ↵'}
+          {spinsLeft > 0 ? `${spinsLeft} spin${spinsLeft > 1 ? 's' : ''} left` : past ? 'Back to orders ↵' : 'Next order ↵'}
         </button>
         {spinsLeft > 0 && (
           <button className="btn ghost small" onClick={onDone}>

@@ -55,6 +55,8 @@ export function defaultSettings(): Settings {
     },
     voucher: { amount: 20, minOrder: 150, validDays: 1 },
     dailyGoal: 66800,
+    payments: { gcash: true, maya: false, gcashNumber: '' },
+    promoLimits: { warnPct: 6.5, pausePct: 8, minSales: 5000 },
     cashiers: ['Cashier 1', 'Cashier 2'],
     managerPin: '1234',
     adminPin: '0000',
