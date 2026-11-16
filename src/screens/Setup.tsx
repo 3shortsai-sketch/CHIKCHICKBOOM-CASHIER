@@ -96,8 +96,7 @@ function SetupInner() {
               <thead>
                 <tr>
                   <th>On menu</th>
-                  <th>Name</th>
-                  <th>Short name</th>
+                  <th>Name (shown everywhere)</th>
                   <th>Tab</th>
                   <th>Type</th>
                   <th>Price ₱</th>
@@ -113,9 +112,6 @@ function SetupInner() {
                     </td>
                     <td>
                       <input className="input" defaultValue={m.name} onBlur={(e) => setItem(m.id, { name: e.target.value })} />
-                    </td>
-                    <td>
-                      <input className="input" defaultValue={m.short ?? ''} onBlur={(e) => setItem(m.id, { short: e.target.value || undefined })} />
                     </td>
                     <td>
                       <select className="input" value={m.category} onChange={(e) => { const category = e.target.value as MenuItem['category']; setItem(m.id, { category, kind: KIND_FOR[category][0] }); }}>
@@ -174,7 +170,7 @@ function SetupInner() {
                   .map((m) => (
                     <tr key={m.id}>
                       <td>
-                        <b>{m.short ?? m.name}</b>
+                        <b>{m.name}</b>
                       </td>
                       <td>
                         <input className="input" defaultValue={m.description ?? ''} maxLength={70} onBlur={(e) => setItem(m.id, { description: e.target.value.trim() || undefined })} placeholder="e.g. Crispy chicken in honey garlic glaze" />

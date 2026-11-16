@@ -110,7 +110,7 @@ export function suggestCombo(lines: OrderLine[], s: Settings): ComboSuggestion |
 }
 
 export function makeComboLine(combo: Combo, parts: ComboPart[], s: Settings, notes?: string): OrderLine {
-  const names = parts.map((p) => itemById(s, p.itemId)?.short ?? itemById(s, p.itemId)?.name ?? p.itemId);
+  const names = parts.map((p) => itemById(s, p.itemId)?.name ?? p.itemId);
   return {
     id: newId('l'),
     itemId: combo.id,

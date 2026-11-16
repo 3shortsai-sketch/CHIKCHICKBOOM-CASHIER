@@ -182,7 +182,7 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
   };
 }
 
-/** Bowls, fries, etc. finished by the kitchen today, by short name. */
+/** Bowls, fries, etc. finished by the kitchen today, by menu name. */
 export function kitchenMadeCounts(day: BusinessDay | undefined, all: Order[], s: Settings): { name: string; made: number; waiting: number }[] {
   const made = new Map<string, { name: string; made: number; waiting: number }>();
   for (const o of liveOrders(dayOrders(day, all))) {
@@ -190,7 +190,7 @@ export function kitchenMadeCounts(day: BusinessDay | undefined, all: Order[], s:
     for (const [id, n] of Object.entries(stockUsage(o.lines))) {
       const item = itemById(s, id);
       if (!item || item.category === 'addons') continue;
-      const row = made.get(id) ?? { name: item.short ?? item.name, made: 0, waiting: 0 };
+      const row = made.get(id) ?? { name: item.name, made: 0, waiting: 0 };
       if (done) row.made += n;
       else row.waiting += n;
       made.set(id, row);
@@ -227,7 +227,7 @@ export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Setting
         l.choices?.extraSides?.length && `extra sides: ${l.choices.extraSides.join('/')}`,
         l.choices?.extraSauce && `extra sauce x${l.choices.extraSauce}`,
         l.choices?.dip && `dip: ${l.choices.dip}`,
-        l.combo && l.combo.parts.map((p) => itemById(s, p.itemId)?.short ?? p.itemId).join(' + '),
+        l.combo && l.combo.parts.map((p) => itemById(s, p.itemId)?.name ?? p.itemId).join(' + '),
         l.free && (l.free.reason === 'prize' ? `wheel: ${PRIZE_LABEL[l.free.prize]}` : `reward: ${l.free.stampsAt} stamps`),
         l.notes,
       ]

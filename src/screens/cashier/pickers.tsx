@@ -247,7 +247,7 @@ export function ComboPicker({
       const fries = itemsFor('fries')[0];
       for (const dip of s.dips) options.push({ label: dip, onPick: () => setPart('fries', { itemId: fries.id, dip }), disabled: !fries || !canUse(fries.id) });
     } else {
-      for (const it of itemsFor(step.kind)) options.push({ label: it.short ?? it.name, onPick: () => setPart(step.kind, { itemId: it.id }), disabled: !canUse(it.id) });
+      for (const it of itemsFor(step.kind)) options.push({ label: it.name, onPick: () => setPart(step.kind, { itemId: it.id }), disabled: !canUse(it.id) });
     }
   }
   useNumberKeys(step.sub ? 0 : options.length, (i) => !options[i].disabled && options[i].onPick());

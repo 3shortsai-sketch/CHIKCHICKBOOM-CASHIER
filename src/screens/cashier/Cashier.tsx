@@ -403,7 +403,7 @@ export function Cashier() {
                     return (
                       <button key={m.id} className={`tile tile-${m.category} ${out ? 'out' : ''} ${!out && n <= 5 ? 'low' : ''}`} onClick={() => tapItem(m)} aria-label={`${m.name}, ${peso(m.price)}, ${out ? 'sold out' : `${n} left`}`}>
                         {i < 9 && <kbd>{i + 1}</kbd>}
-                        <span className="tile-name">{m.short && m.category === 'bowls' ? m.short : m.name}</span>
+                        <span className="tile-name">{m.name}</span>
                         {m.allergens && m.allergens.length > 0 && <span className="tile-allergens">Contains: {m.allergens.join(', ')}</span>}
                         <span className="tile-foot">
                           <span className="tile-price">{peso(m.price)}</span>
@@ -673,7 +673,7 @@ function RewardBowlPicker({ items, canUse, onPick, onClose }: { items: MenuItem[
         <div className="option-grid">
           {items.map((m) => (
             <button key={m.id} className="option" disabled={!canUse(m.id)} onClick={() => onPick(m)}>
-              {m.short ?? m.name}
+              {m.name}
             </button>
           ))}
         </div>

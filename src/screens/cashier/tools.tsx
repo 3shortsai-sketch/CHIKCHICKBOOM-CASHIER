@@ -121,14 +121,14 @@ export function WasteLog({ s, day, cashier, onClose }: { s: Settings; day: Busin
         </div>
         {reason === 'Other' && <input className="input" value={other} onChange={(e) => setOther(e.target.value)} placeholder="What happened?" autoFocus />}
         <button className="btn primary big" onClick={save} disabled={!item}>
-          Log {qty} × {item?.short ?? item?.name ?? ''}
+          Log {qty} × {item?.name ?? ''}
         </button>
         {today.length > 0 && (
           <p className="muted small">
             Logged today:{' '}
             {today
               .slice(-5)
-              .map((w) => `${w.qty}× ${items.find((m) => m.id === w.itemId)?.short ?? w.itemId} (${w.reason})`)
+              .map((w) => `${w.qty}× ${items.find((m) => m.id === w.itemId)?.name ?? w.itemId} (${w.reason})`)
               .join(', ')}
           </p>
         )}

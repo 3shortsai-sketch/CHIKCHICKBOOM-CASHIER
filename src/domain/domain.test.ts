@@ -3,7 +3,7 @@ import { cashSuggestions, createOrder, nextSeq } from './checkout';
 import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
 import { applyCombo, lineTotal, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
-import { bestSellers, ordersCsv, pendingSpins, recentWins, stockLeft, summarize } from './reports';
+import { bestSellers, kitchenMadeCounts, ordersCsv, pendingSpins, recentWins, stockLeft, summarize } from './reports';
 import { expectedSpinCost, promoStatus } from './promo';
 import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
 import { applyPrize, digitalSpin, undoLastSpin } from './wheel';
@@ -286,5 +286,19 @@ describe('customer monitor', () => {
     expect(recentWins(day, [r2.order]).map((w) => w.prize)).toEqual(['freeMeal']);
     expect(pendingSpins(day, [r2.order], o.createdAt + 60000)).toEqual([]);
     expect(pendingSpins(day, [o], o.createdAt + 50 * 60000)).toEqual([]);
+  });
+});
+
+describe('one name per item', () => {
+  it('uses the same menu name on every screen and in the export', () => {
+    const names = s.menu.map((m) => m.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(s.menu.filter((m) => m.kind === 'bowl').map((m) => m.name)).toEqual(['Ala King', 'Honey Garlic', 'Boom Sauce', 'Salted Egg']);
+    const forCombo = [bowl(), fries(), slush()];
+    const combo = applyCombo(forCombo, suggestCombo(forCombo, s)!, s);
+    expect(combo[0].name).toBe('Combo A: Ala King + Regular Fries + Blue Lemonade Slushie');
+    const o = { ...order(combo), status: 'ready' as const };
+    expect(kitchenMadeCounts(day, [o], s).map((r) => r.name)).toEqual(['Ala King', 'Regular Fries', 'Blue Lemonade Slushie']);
+    expect(ordersCsv(day, [o], s)).toContain('Ala King + Regular Fries + Blue Lemonade Slushie');
   });
 });

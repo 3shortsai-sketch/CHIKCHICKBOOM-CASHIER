@@ -4,9 +4,8 @@ export type Category = 'bowls' | 'fries' | 'drinks' | 'cookies' | 'combos' | 'ad
 
 export type MenuItem = {
   id: string;
+  /** The one name shown everywhere: cashier, kitchen, customer monitor, reports. */
   name: string;
-  /** Shorter label for the kitchen and serving screens. */
-  short?: string;
   category: Exclude<Category, 'combos'>;
   price: number;
   /** Ingredient + packaging cost per piece. */
