@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { lastSaveError, useStore } from '../data/store';
 import { useSyncStatus } from '../data/sync';
+import { askToSignIn } from './BoothLogin';
 import { useOnline } from './ui';
 
 export function TopBar({ title, children }: { title: string; children?: ReactNode }) {
@@ -23,10 +24,17 @@ export function TopBar({ title, children }: { title: string; children?: ReactNod
         <span className="topbar-title">{title}</span>
         {children && <div className="topbar-extra">{children}</div>}
         <span className="spacer" />
-        <span className={`pill ${online ? 'ok' : 'off'}`} title={sync.detail}>
-          <span className="pill-dot" aria-hidden="true" />
-          {!online ? 'Offline · saving here' : sync.label}
-        </span>
+        {sync.needsSignIn ? (
+          <button className="pill off pill-btn" title={sync.detail} onClick={askToSignIn}>
+            <span className="pill-dot" aria-hidden="true" />
+            Not synced · sign in
+          </button>
+        ) : (
+          <span className={`pill ${sync.connected ? 'ok' : online && sync.label === 'This device only' ? 'ok' : 'off'}`} title={sync.detail}>
+            <span className="pill-dot" aria-hidden="true" />
+            {!online && sync.label === 'This device only' ? 'Offline · saving here' : sync.label}
+          </span>
+        )}
       </header>
     </>
   );

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { newId } from '../domain/pricing';
 import { ALLERGENS, type AllergenTags, type MenuItem, type Settings } from '../domain/types';
 import { clearDemoData, openDay, resetSettings, saveSettings, setDevice, useDevice, useStore } from '../data/store';
+import { signOutBooth, useAuthState, useSyncStatus } from '../data/sync';
+import { askToSignIn } from '../ui/BoothLogin';
 import { TopBar } from '../ui/TopBar';
 import { PinGate } from '../ui/ui';
 
@@ -29,6 +31,29 @@ function ListEditor({ label, values, onChange }: { label: string; values: string
         onBlur={() => onChange(text.split('\n').map((x) => x.trim()).filter(Boolean))}
       />
     </label>
+  );
+}
+
+function SyncInfo() {
+  const auth = useAuthState();
+  const sync = useSyncStatus();
+  if (!auth.enabled) return <p className="muted small">Sync is not set up yet: this device works on its own.</p>;
+  return (
+    <div className="sync-info">
+      <p className="small">
+        <b>Sync:</b> {sync.label}
+        {auth.email ? ` · signed in as ${auth.email}` : ''}
+      </p>
+      {auth.email ? (
+        <button className="btn small ghost" onClick={() => confirm('Sign this device out? It will stop syncing until someone signs in again.') && void signOutBooth()}>
+          Sign out this device
+        </button>
+      ) : (
+        <button className="btn small" onClick={askToSignIn}>
+          Sign in to sync
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -496,6 +521,7 @@ function SetupInner() {
 
         <section className="panel">
           <h2>This device</h2>
+          <SyncInfo />
           <label className="field">
             <span>Order letter for this device</span>
             <input className="input small-input" maxLength={1} defaultValue={device.orderLetter} onBlur={(e) => setDevice({ orderLetter: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') || 'A' })} />

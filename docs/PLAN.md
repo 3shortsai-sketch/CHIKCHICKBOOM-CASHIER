@@ -186,6 +186,21 @@ but the kitchen tablet is not.
 ### Customer first name
 - Optional field on the order (max 20 characters). Shown on the kitchen card, under the number on the monitor and on "Your order", and spoken: "Order A, 12 for Ana is ready!".
 
+## Sync between devices (Firebase)
+
+- **Firestore** holds `settings/main`, `days/{id}` and `orders/{id}`. Every change is saved on the device first, then sent to Firestore; other devices get it in well under a second. Without internet, changes queue up and send when it's back (status pill: "Offline · will sync" → "Synced").
+- **Booth login**: each device signs in once with the shared booth account (Firebase Authentication, email/password). "Continue on this device only" lets a device work without signing in; it syncs after signing in later.
+- **Security rules** (`firestore.rules`): only the booth email(s) can read or write. Anyone else, even with their own account, is refused.
+- The first device to connect uploads its settings (menu, prices, PINs) and any orders the server doesn't have; after that the server's copy wins.
+- **Publishing**: `.github/workflows/test-and-deploy.yml` tests and builds every PR, and publishes to Firebase Hosting on every merge to `main` once the `FIREBASE_SERVICE_ACCOUNT` secret is added.
+- Tested against the Firebase emulators with two separate browsers (laptop and tablet): orders, Ready, inventory counts and price changes sync both ways; an order taken offline arrives after reconnecting; a non-booth login can't read anything.
+
+### To switch it on
+1. Paste the web app config into `src/data/firebase-config.ts` (Claude does this from the block you send).
+2. Put the booth email in `firestore.rules` and the project ID in `.firebaserc`, then publish the rules (Firestore → Rules → paste → Publish).
+3. In Firebase Authentication → Settings, turn off "Enable create (sign-up)" so nobody else can make accounts.
+4. Optional, for the online link: add the `FIREBASE_SERVICE_ACCOUNT` secret to GitHub.
+
 ## Still to decide
 - Starting stock per item (placeholder numbers in Setup).
 - Unit cost of Extra Side and Extra Sauce (placeholders ₱7 and ₱3).

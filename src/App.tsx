@@ -5,6 +5,7 @@ import { Kitchen } from './screens/Kitchen';
 import { Profit } from './screens/Profit';
 import { Serving } from './screens/Serving';
 import { Setup } from './screens/Setup';
+import { BoothLoginGate } from './ui/BoothLogin';
 import { TopBar } from './ui/TopBar';
 import { useHash } from './ui/ui';
 
@@ -41,6 +42,14 @@ function Home() {
 }
 
 export function App() {
+  return (
+    <BoothLoginGate>
+      <Screen />
+    </BoothLoginGate>
+  );
+}
+
+function Screen() {
   const hash = useHash();
   switch (hash) {
     case 'cashier':
