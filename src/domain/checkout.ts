@@ -2,6 +2,12 @@ import { baseStamps } from './loyalty';
 import { spinsEarned, subtotal } from './pricing';
 import type { BusinessDay, Order, OrderLine, PaymentMethod, Settings } from './types';
 
+/** First name only: trimmed, single spaces, at most 20 characters. */
+export function cleanName(name: string | undefined): string | undefined {
+  const n = (name ?? '').replace(/\s+/g, ' ').trim().slice(0, 20);
+  return n || undefined;
+}
+
 export function orderNumber(prefix: string, seq: number): string {
   return `${prefix}-${String(seq).padStart(3, '0')}`;
 }
@@ -26,6 +32,7 @@ export type CheckoutInput = {
   prefix: string;
   cashier: string;
   cardId?: string;
+  customerName?: string;
   rewardsRedeemed: number[];
   voucher?: { code: string; amount: number };
   method: PaymentMethod;
@@ -52,6 +59,7 @@ export function createOrder(i: CheckoutInput): Order {
     subtotal: subtotal(i.lines, i.settings),
     voucher: i.voucher,
     cardId: i.cardId,
+    customerName: cleanName(i.customerName),
     stampsEarned: baseStamps(i.cardId, i.rewardsRedeemed, i.settings),
     rewardsRedeemed: i.rewardsRedeemed,
     payment: { method: i.method, due, tendered, change: tendered - due, reference: i.reference || undefined },

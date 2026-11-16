@@ -40,7 +40,7 @@ function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string 
             </span>
           </div>
         </div>
-        <p>Your number</p>
+        <p>{cart.name ? `${cart.name}, your number` : 'Your number'}</p>
         <b className="your-number">{cart.number}</b>
         {cart.change > 0 && <p className="your-change">Change: {peso(cart.change)}</p>}
         {cart.spins > 0 && <p className="your-spin">🎡 Spin the wheel at the pickup counter! {cart.spins > 1 ? `(${cart.spins} spins)` : ''}</p>}
@@ -63,7 +63,7 @@ function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string 
   }
   return (
     <section className="your-order" aria-live="polite">
-      <h2>Your order</h2>
+      <h2>{cart.name ? `${cart.name}'s order` : 'Your order'}</h2>
       <ul>
         {cart.lines.map((l, i) => (
           <li key={i} className={l.free ? 'free' : ''}>
@@ -130,6 +130,15 @@ function ChoiceLine({ label, options, tags }: { label: string; options: string[]
   );
 }
 
+/** Leave the customer screen: exit full screen and go to the list of screens. */
+function goHome() {
+  // Wait for full screen to close first: changing page at the same moment can cancel it.
+  const exit = document.fullscreenElement && document.exitFullscreen ? document.exitFullscreen().catch(() => {}) : Promise.resolve();
+  void exit.finally(() => {
+    location.hash = '';
+  });
+}
+
 export function Serving() {
   const state = useStore((s) => s);
   const s = state.settings;
@@ -161,7 +170,7 @@ export function Serving() {
       fresh.forEach((o, i) => {
         setTimeout(() => {
           const secs = cluck();
-          setTimeout(() => announce(`Order ${spokenNumber(o.number)} is ready!`), secs * 1000 + 150);
+          setTimeout(() => announce(`Order ${spokenNumber(o.number)}${o.customerName ? ` for ${o.customerName}` : ''} is ready!`), secs * 1000 + 150);
         }, i * 3500);
       });
       if (fresh[0]) {
@@ -187,6 +196,31 @@ export function Serving() {
     seenWins.current = keys;
   }, [wins]);
 
+  // A home button for the team that customers don't see: it appears when the
+  // mouse moves (or the screen is tapped) and hides again after 3 seconds.
+  const [showHome, setShowHome] = useState(false);
+  useEffect(() => {
+    if (!started) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const wake = () => {
+      setShowHome(true);
+      clearTimeout(t);
+      t = setTimeout(() => setShowHome(false), 3000);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'h' || e.key === 'H') goHome();
+    };
+    addEventListener('mousemove', wake);
+    addEventListener('pointerdown', wake);
+    addEventListener('keydown', onKey);
+    return () => {
+      clearTimeout(t);
+      removeEventListener('mousemove', wake);
+      removeEventListener('pointerdown', wake);
+      removeEventListener('keydown', onKey);
+    };
+  }, [started]);
+
   const start = () => {
     unlockSound();
     setStarted(true);
@@ -200,6 +234,7 @@ export function Serving() {
           Tap to start the customer screen
         </button>
         <p>Drag this window onto the monitor first. Tapping turns on the sound and goes full screen.</p>
+        <p className="small">To leave the customer screen later: move the mouse and click ⌂ in the top-left corner, or press H.</p>
         <button
           className="btn"
           onClick={() => {
@@ -210,6 +245,9 @@ export function Serving() {
         >
           🔊 Test the sound
         </button>
+        <a className="btn ghost serving-back" href="#">
+          ← Back to screens
+        </a>
       </div>
     );
   }
@@ -217,6 +255,9 @@ export function Serving() {
   const prizes = s.wheel.slots.filter((w) => w.prize !== 'tryAgain');
   return (
     <div className="serving">
+      <button className={`serving-home ${showHome ? 'show' : ''}`} onClick={goHome} aria-label="Back to the list of screens (H)" title="Back to screens (H)">
+        ⌂
+      </button>
       {s.mode === 'demo' && <div className="demo-banner">DEMO</div>}
       {celebrate && (
         <div className="win-banner" role="status">
@@ -240,6 +281,7 @@ export function Serving() {
               serving.slice(0, 6).map((o, i) => (
                 <span key={o.id} className={`snum ${i === 0 ? 'first' : ''} ${flash === o.id ? 'flash' : ''}`}>
                   {o.number}
+                  {o.customerName && <small className="snum-name">{o.customerName}</small>}
                 </span>
               ))
             )}

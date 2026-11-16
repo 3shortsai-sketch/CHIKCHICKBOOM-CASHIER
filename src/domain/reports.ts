@@ -315,3 +315,42 @@ export function pendingSpins(day: BusinessDay | undefined, all: Order[], now: nu
     .filter((o) => o.spinsEarned > o.spins.length && now - o.createdAt < maxAgeMin * 60000)
     .sort((a, b) => a.createdAt - b.createdAt);
 }
+
+// ---------- Cashier: Popular tab ----------
+
+export type PopularEntry = { type: 'item'; id: string } | { type: 'combo'; id: string };
+
+/**
+ * Today's most ordered items and combos for the cashier's Popular tab.
+ * Before anything sells (or to fill it up), it uses the menu's own order:
+ * bowls, combos, regular fries, slushies.
+ */
+export function popularToday(day: BusinessDay | undefined, all: Order[], s: Settings, n = 8): PopularEntry[] {
+  const counts = new Map<string, { e: PopularEntry; qty: number; first: number }>();
+  const bump = (e: PopularEntry, qty: number, at: number) => {
+    const key = `${e.type}:${e.id}`;
+    const row = counts.get(key) ?? { e, qty: 0, first: at };
+    row.qty += qty;
+    counts.set(key, row);
+  };
+  for (const o of liveOrders(dayOrders(day, all))) {
+    for (const l of o.lines) {
+      if (l.free) continue;
+      if (l.combo) bump({ type: 'combo', id: l.combo.comboId }, l.qty, o.createdAt);
+      else if (itemById(s, l.itemId)?.category !== 'addons') bump({ type: 'item', id: l.itemId }, l.qty, o.createdAt);
+    }
+  }
+  const ranked = [...counts.values()].sort((a, b) => b.qty - a.qty || a.first - b.first).map((r) => r.e);
+  const active = (e: PopularEntry) => (e.type === 'item' ? !!s.menu.find((m) => m.id === e.id && m.active) : !!s.combos.find((c) => c.id === e.id && c.active));
+  const defaults: PopularEntry[] = [
+    ...s.menu.filter((m) => m.active && m.kind === 'bowl').map((m): PopularEntry => ({ type: 'item', id: m.id })),
+    ...s.combos.filter((c) => c.active).map((c): PopularEntry => ({ type: 'combo', id: c.id })),
+    ...s.menu.filter((m) => m.active && ((m.kind === 'fries' && m.regular) || m.kind === 'slushie')).map((m): PopularEntry => ({ type: 'item', id: m.id })),
+  ];
+  const out: PopularEntry[] = [];
+  for (const e of [...ranked, ...defaults]) {
+    if (out.length >= n) break;
+    if (active(e) && !out.some((x) => x.type === e.type && x.id === e.id)) out.push(e);
+  }
+  return out;
+}

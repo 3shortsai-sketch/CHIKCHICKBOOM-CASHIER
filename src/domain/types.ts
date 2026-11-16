@@ -125,6 +125,8 @@ export type Order = {
   subtotal: number;
   voucher?: { code: string; amount: number };
   cardId?: string;
+  /** Optional first name, shown to the kitchen and called out when ready. */
+  customerName?: string;
   /** Stamps this order adds to the card (1 + double-stamp prizes). */
   stampsEarned: number;
   /** Reward thresholds redeemed in this order, e.g. [5]. */

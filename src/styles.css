@@ -893,6 +893,25 @@ textarea.input {
   padding: 0 0.4rem;
   letter-spacing: 0;
 }
+.tools-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.tools {
+  display: flex;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+}
+.tools .tool-btn {
+  border: 2px solid var(--line) !important;
+  background: var(--paper);
+}
+.tools .tool-btn.danger {
+  border-color: var(--ink) !important;
+}
 .key-help {
   font-size: 0.78rem;
   color: var(--ink-soft);
@@ -2782,6 +2801,97 @@ a.btn {
 }
 .wide-input {
   width: 12rem;
+}
+
+/* ---------- Names and parked orders ---------- */
+.knum-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.kname {
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--red-deep);
+}
+.snum {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.snum-name {
+  font-family: var(--body);
+  font-weight: 800;
+  font-size: 0.24em;
+  letter-spacing: 0.02em;
+  color: #fff;
+  text-shadow: 2px 2px 0 var(--ink);
+  margin-top: 0.2em;
+}
+.name-form {
+  flex: 1 1 100%;
+}
+.btn.parked-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+  background: var(--chick);
+  border-color: var(--ink);
+  border-style: dashed;
+}
+.btn.parked-chip span {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+/* ---------- Getting back to the list of screens ---------- */
+.home-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: 800;
+  font-size: 0.85rem;
+  color: var(--ink);
+  background: var(--cream);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  min-height: 34px;
+  text-decoration: none;
+  box-shadow: var(--comic-sm);
+}
+.home-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+.home-btn span {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.serving-home {
+  position: fixed;
+  top: 0.8rem;
+  left: 0.8rem;
+  z-index: 60;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 3px solid var(--ink);
+  background: var(--cream);
+  color: var(--ink);
+  font-size: 1.6rem;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.serving-home.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+.serving-back {
+  color: #ead8bf !important;
 }
 
 /* ---------- Smaller screens (tablet portrait, phone) ---------- */

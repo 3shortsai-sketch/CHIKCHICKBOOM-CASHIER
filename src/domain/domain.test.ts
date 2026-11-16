@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cashSuggestions, createOrder, nextSeq } from './checkout';
+import { cashSuggestions, cleanName, createOrder, nextSeq } from './checkout';
 import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
 import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
@@ -7,7 +7,7 @@ import { allergenHint, allergenText, itemTags } from './allergens';
 import { isLow, margins, onHand, servingsLeft, waitMinutes } from './inventory';
 import { dayXlsx, daySheets } from './excel';
 import { colName, crc32 } from './xlsx';
-import { bestSellers, kitchenMadeCounts, ordersCsv, pendingSpins, recentWins, stockLeft, summarize } from './reports';
+import { bestSellers, kitchenMadeCounts, ordersCsv, pendingSpins, popularToday, recentWins, stockLeft, summarize } from './reports';
 import { expectedSpinCost, promoStatus } from './promo';
 import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
 import { applyPrize, digitalSpin, undoLastSpin } from './wheel';
@@ -414,5 +414,25 @@ describe('Excel export', () => {
       const fs = (await import(/* @vite-ignore */ 'node:' + 'fs')) as { writeFileSync: (p: string, d: Uint8Array) => void };
       fs.writeFileSync(out, bytes);
     }
+  });
+});
+
+describe('Popular tab and customer names', () => {
+  it('starts from the menu order, then follows what sells today', () => {
+    const empty = popularToday(day, [], s);
+    expect(empty.slice(0, 4).map((e) => e.id)).toEqual(['bowl-original', 'bowl-soygarlic', 'bowl-garlicbutter', 'bowl-alaking']);
+    expect(empty).toHaveLength(8);
+    const a = order([cookie(), cookie(), cookie()]);
+    const forCombo = [bowl(), fries(), slush()];
+    const b = order(applyCombo(forCombo, suggestCombo(forCombo, s)!, s), {}, [a]);
+    const top = popularToday(day, [a, b], s);
+    expect(top[0]).toEqual({ type: 'item', id: 'cookie-choco' });
+    expect(top[1]).toEqual({ type: 'combo', id: 'comboA' });
+  });
+
+  it('keeps only a tidy first name on the order', () => {
+    expect(order([bowl()], { customerName: '  Ana   Marie  ' }).customerName).toBe('Ana Marie');
+    expect(order([bowl()], { customerName: '   ' }).customerName).toBeUndefined();
+    expect(cleanName('x'.repeat(40))).toHaveLength(20);
   });
 });

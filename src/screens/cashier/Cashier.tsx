@@ -4,7 +4,7 @@ import { availableRewards, canRedeem, cardState, checkVoucher, localDate, parseC
 import { applyCombo, itemById, needsPicker, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
 import { allergenText, itemTags } from '../../domain/allergens';
 import { promoStatus } from '../../domain/promo';
-import { isAvailable, pendingSpins, stockLeft, summarize } from '../../domain/reports';
+import { isAvailable, pendingSpins, popularToday, stockLeft, summarize } from '../../domain/reports';
 import type { Category, Combo, MenuItem, Order, OrderLine, PaymentMethod, Reward } from '../../domain/types';
 import { publishCart } from '../../data/live';
 import { modeOrders, openDay, patchDay, patchOrder, putOrder, saveSettings, useDevice, useStore } from '../../data/store';
@@ -13,8 +13,12 @@ import { OpenDayForm } from './OpenDay';
 import { AfterPay, PayModal, StampDots, type AfterPayMode } from './payflow';
 import { ComboPicker, ItemPicker } from './pickers';
 import { CardLookup, WasteLog } from './tools';
+import { minutesAgo } from '../../ui/ui';
 
-const TABS: { id: Category; label: string }[] = [
+type TabId = Category | 'popular';
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'popular', label: '★ Popular' },
   { id: 'bowls', label: 'Bowls' },
   { id: 'fries', label: 'Fries' },
   { id: 'drinks', label: 'Drinks' },
@@ -22,6 +26,26 @@ const TABS: { id: Category; label: string }[] = [
   { id: 'combos', label: 'Combos' },
   { id: 'addons', label: 'Add-ons' },
 ];
+
+/** An undecided customer's order, set aside on this device. */
+type Parked = { id: string; lines: OrderLine[]; cardId?: string; voucher?: { code: string; amount: number }; name?: string; at: number };
+const PARKED_KEY = 'ccb:parked';
+
+function loadParked(): Parked[] {
+  try {
+    return JSON.parse(localStorage.getItem(PARKED_KEY) ?? '[]') as Parked[];
+  } catch {
+    return [];
+  }
+}
+
+function saveParked(p: Parked[]) {
+  try {
+    localStorage.setItem(PARKED_KEY, JSON.stringify(p));
+  } catch {
+    /* parked orders still work for this session */
+  }
+}
 
 type Picking =
   | { type: 'item'; item: MenuItem; free?: OrderLine['free']; initial?: OrderLine }
@@ -37,7 +61,7 @@ export function Cashier() {
   const orders = useMemo(() => modeOrders(state), [state]);
   const left = useMemo(() => stockLeft(day, orders, s), [day, orders, s]);
 
-  const [tab, setTab] = useState<Category>('bowls');
+  const [tab, setTab] = useState<TabId>('popular');
   const [lines, setLines] = useState<OrderLine[]>([]);
   const [picking, setPicking] = useState<Picking>(null);
   const [paying, setPaying] = useState(false);
@@ -54,6 +78,12 @@ export function Cashier() {
   const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
   const [tool, setTool] = useState<'card' | 'waste' | null>(null);
   const [promoDismissed, setPromoDismissed] = useState<string>('');
+  const [customerName, setCustomerName] = useState('');
+  const [parked, setParkedState] = useState<Parked[]>(loadParked);
+  const setParked = (p: Parked[]) => {
+    setParkedState(p);
+    saveParked(p);
+  };
 
   const cartUse = useMemo(() => stockUsage(lines), [lines]);
   const remaining = useCallback((id: string) => (left[id] ?? 0) - (cartUse[id] ?? 0), [left, cartUse]);
@@ -180,11 +210,36 @@ export function Cashier() {
 
   const clearOrder = () => {
     setLines([]);
+    setCustomerName('');
     setCardId(undefined);
     setCardInput('');
     setVoucher(undefined);
     setVoucherInput('');
     setEscArmed(false);
+  };
+
+  // ----- Park an undecided customer's order -----
+  const parkOrder = () => {
+    if (!lines.length) return;
+    const p: Parked = { id: newId('p'), lines, cardId, voucher, name: customerName.trim() || undefined, at: Date.now() };
+    setParked([...parked, p]);
+    clearOrder();
+    flash(`Order parked${p.name ? ` for ${p.name}` : ''}. Tap it below to continue.`);
+  };
+
+  const resumeOrder = (p: Parked) => {
+    let rest = parked.filter((x) => x.id !== p.id);
+    // Whatever is on screen now gets parked, so nothing is lost.
+    if (lines.length) rest = [...rest, { id: newId('p'), lines, cardId, voucher, name: customerName.trim() || undefined, at: Date.now() }];
+    setParked(rest);
+    setLines(p.lines);
+    setCardId(p.cardId);
+    setVoucher(p.voucher);
+    setCustomerName(p.name ?? '');
+    setCardInput('');
+    setVoucherInput('');
+    const short = Object.entries(stockUsage(p.lines)).filter(([id, n]) => (left[id] ?? 0) < n);
+    if (short.length) flash(`Not enough left now: ${short.map(([id]) => itemById(s, id)?.name ?? id).join(', ')}. Check the order.`, true);
   };
 
   // ----- Pay -----
@@ -198,6 +253,7 @@ export function Cashier() {
         prefix: device.orderLetter || 'A',
         cashier: device.cashier || day.openedBy,
         cardId,
+        customerName,
         rewardsRedeemed: rewardsInCart,
         voucher,
         method,
@@ -230,6 +286,7 @@ export function Cashier() {
         change: afterOrder.payment.method === 'cash' ? afterOrder.payment.change : 0,
         paid: afterOrder.payment.due,
         method: afterOrder.payment.method,
+        name: afterOrder.customerName,
       });
       return;
     }
@@ -256,15 +313,33 @@ export function Cashier() {
       due,
       spins,
       method: paying ? payMethod : undefined,
+      name: customerName.trim() || undefined,
     });
-  }, [lines, paying, payMethod, voucher, afterOrder, afterPay?.mode, s, sub, due, spins]);
+  }, [lines, paying, payMethod, voucher, afterOrder, afterPay?.mode, s, sub, due, spins, customerName]);
 
   // ----- Keyboard -----
-  const visible = useMemo(() => {
-    if (tab === 'combos') return [];
-    return s.menu.filter((m) => m.category === tab && m.active && (soldOutMode || !day?.soldOut[m.id]));
-  }, [s.menu, tab, soldOutMode, day]);
-  const combos = s.combos.filter((c) => c.active);
+  type Entry = { type: 'item'; m: MenuItem } | { type: 'combo'; c: Combo };
+  const entries = useMemo((): Entry[] => {
+    const shown = (m: MenuItem) => m.active && (soldOutMode || !day?.soldOut[m.id]);
+    if (tab === 'combos') return s.combos.filter((c) => c.active).map((c) => ({ type: 'combo', c }));
+    if (tab === 'popular') {
+      return popularToday(day, orders, s).flatMap((e): Entry[] => {
+        if (e.type === 'combo') {
+          const c = s.combos.find((x) => x.id === e.id);
+          return c ? [{ type: 'combo', c }] : [];
+        }
+        const m = s.menu.find((x) => x.id === e.id);
+        return m && shown(m) ? [{ type: 'item', m }] : [];
+      });
+    }
+    return s.menu.filter((m) => m.category === tab && shown(m)).map((m) => ({ type: 'item', m }));
+  }, [s, tab, soldOutMode, day, orders]);
+  const activate = (e: Entry) => {
+    if (e.type === 'item') return tapItem(e.m);
+    if (soldOutMode) return;
+    if (comboAvailable(e.c)) setPicking({ type: 'combo', combo: e.c });
+    else flash(`${e.c.name} is sold out.`, true);
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -276,10 +351,7 @@ export function Cashier() {
       const n = Number(e.key);
       if (n >= 1 && n <= 9) {
         e.preventDefault();
-        if (tab === 'combos') {
-          const c = combos[n - 1];
-          if (c) comboAvailable(c) ? setPicking({ type: 'combo', combo: c }) : flash(`${c.name} is sold out.`, true);
-        } else if (visible[n - 1]) tapItem(visible[n - 1]);
+        if (entries[n - 1]) activate(entries[n - 1]);
       } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         const i = TABS.findIndex((t) => t.id === tab);
         setTab(TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length].id);
@@ -311,8 +383,8 @@ export function Cashier() {
   const promo = promoStatus(summarize(day, orders, s), s);
   const promoKey = `${day.id}:${promo.level}`;
   const methods: PaymentMethod[] = ['cash', ...(s.payments.gcash ? (['gcash'] as const) : []), ...(s.payments.maya ? (['maya'] as const) : [])];
-  const tabCount = (id: Category) =>
-    lines.reduce((n, l) => n + (id === 'combos' ? (l.combo ? l.qty : 0) : !l.combo && itemById(s, l.itemId)?.category === id ? l.qty : 0), 0);
+  const tabCount = (id: TabId) =>
+    id === 'popular' ? 0 : lines.reduce((n, l) => n + (id === 'combos' ? (l.combo ? l.qty : 0) : !l.combo && itemById(s, l.itemId)?.category === id ? l.qty : 0), 0);
 
   return (
     <div className="screen cashier">
@@ -347,19 +419,6 @@ export function Cashier() {
                   </button>
                 );
               })}
-              <span className="tabs-spacer" />
-              <button className="btn small ghost tool-btn" title="Check a loyalty card's stamps" onClick={() => setTool('card')}>
-                Card
-              </button>
-              <button className="btn small ghost tool-btn" title="Log dropped or spoiled items" onClick={() => setTool('waste')}>
-                Waste
-              </button>
-              <a className="btn small ghost tool-btn" title="Team page (passcode)" href="#team">
-                Team
-              </a>
-              <button className={`btn small tool-btn ${soldOutMode ? 'danger' : 'ghost'}`} title="Mark items sold out" onClick={() => setSoldOutMode(!soldOutMode)}>
-                {soldOutMode ? 'Done' : `Sold out${soldOutCount ? ` · ${soldOutCount}` : ''}`}
-              </button>
             </nav>
             {!s.wheel.paused && (promo.level === 'warn' || promo.level === 'pause') && promoDismissed !== promoKey && (
               <div className={`promo-alert ${promo.level}`} role="alert">
@@ -382,13 +441,15 @@ export function Cashier() {
             {soldOutMode && <p className="banner warn">Tap an item to mark it sold out. Tap it again to bring it back.</p>}
 
             <div className={`tiles ${soldOutMode ? 'marking' : ''}`}>
-              {tab === 'combos'
-                ? combos.map((c, i) => {
+              {entries.map((e, i) =>
+                e.type === 'combo' ? (
+                  (() => {
+                    const c = e.c;
                     const ok = comboAvailable(c);
                     const save = comboSaving(c);
                     return (
-                      <button key={c.id} className={`tile tile-combos ${ok ? '' : 'out'}`} onClick={() => (ok ? setPicking({ type: 'combo', combo: c }) : flash(`${c.name} is sold out.`, true))}>
-                        <kbd>{i + 1}</kbd>
+                      <button key={`c-${c.id}`} className={`tile tile-combos ${ok ? '' : 'out'}`} onClick={() => activate(e)}>
+                        {i < 9 && <kbd>{i + 1}</kbd>}
                         <span className="tile-name">{c.name}</span>
                         <span className="tile-sub">{c.parts.map((p) => (p === 'fries' ? 'regular fries' : p)).join(' + ')}</span>
                         <span className="tile-foot">
@@ -397,15 +458,17 @@ export function Cashier() {
                         </span>
                       </button>
                     );
-                  })
-                : visible.map((m, i) => {
+                  })()
+                ) : (
+                  (() => {
+                    const m = e.m;
                     const n = remaining(m.id);
-                    const start = day.stockStart[m.id] ?? m.startStock;
+                    const start = day.stockCounts?.[m.id]?.qty ?? day.stockStart[m.id] ?? m.startStock;
                     const marked = !!day.soldOut[m.id];
                     const out = marked || n <= 0;
                     const pct = start > 0 ? Math.max(0, Math.min(100, (n / start) * 100)) : 0;
                     return (
-                      <button key={m.id} className={`tile tile-${m.category} ${out ? 'out' : ''} ${!out && n <= 5 ? 'low' : ''}`} onClick={() => tapItem(m)} aria-label={`${m.name}, ${peso(m.price)}, ${out ? 'sold out' : `${n} left`}`}>
+                      <button key={m.id} className={`tile tile-${m.category} ${out ? 'out' : ''} ${!out && n <= 5 ? 'low' : ''}`} onClick={() => activate(e)} aria-label={`${m.name}, ${peso(m.price)}, ${out ? 'sold out' : `${n} left`}`}>
                         {i < 9 && <kbd>{i + 1}</kbd>}
                         <span className="tile-name">{m.name}</span>
                         {allergenText(itemTags(m), true) && <span className="tile-allergens">{allergenText(itemTags(m), true)}</span>}
@@ -418,10 +481,29 @@ export function Cashier() {
                         </span>
                       </button>
                     );
-                  })}
+                  })()
+                ),
+              )}
             </div>
 
             <div className="orders-bar">
+              {parked.length > 0 && (
+                <div className="orders-group">
+                  <span className="orders-label">⏸ Parked · tap to continue</span>
+                  {parked.map((p, i) => {
+                    const total = amountDue(p.lines, s, p.voucher?.amount ?? 0);
+                    const items = p.lines.reduce((n, l) => n + l.qty, 0);
+                    return (
+                      <button key={p.id} className="btn small parked-chip" onClick={() => resumeOrder(p)} title={p.lines.map((l) => `${l.qty}× ${l.name}`).join(', ')}>
+                        <b>{p.name ?? `Parked ${i + 1}`}</b>
+                        <span>
+                          {items} item{items > 1 ? 's' : ''} · {peso(total)} · {minutesAgo(p.at, Date.now())}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {readyToClaim.length > 0 && (
                 <div className="orders-group">
                   <span className="orders-label">Ready · tap when picked up</span>
@@ -456,10 +538,26 @@ export function Cashier() {
                   ))}
                 </div>
               )}
-              <p className="key-help">
+              <div className="tools-row">
+                <div className="tools" aria-label="Tools">
+              <button className="btn small ghost tool-btn" title="Check a loyalty card's stamps" onClick={() => setTool('card')}>
+                    Card
+                  </button>
+                  <button className="btn small ghost tool-btn" title="Log dropped or spoiled items" onClick={() => setTool('waste')}>
+                    Waste
+                  </button>
+                  <a className="btn small ghost tool-btn" title="Team page (passcode)" href="#team">
+                    Team
+                  </a>
+                  <button className={`btn small tool-btn ${soldOutMode ? 'danger' : 'ghost'}`} title="Mark items sold out" onClick={() => setSoldOutMode(!soldOutMode)}>
+                    {soldOutMode ? 'Done' : `Sold out${soldOutCount ? ` · ${soldOutCount}` : ''}`}
+                  </button>
+                </div>
+                <p className="key-help">
                 <kbd>1</kbd>–<kbd>9</kbd> add · <kbd>←</kbd>
                 <kbd>→</kbd> tab · <kbd>Enter</kbd> pay · <kbd>Esc</kbd>×2 cancel
               </p>
+              </div>
             </div>
           </section>
 
@@ -546,6 +644,17 @@ export function Cashier() {
             </div>
 
             <div className="order-extras">
+              <div className="mini-form name-form">
+                <input
+                  className="input"
+                  value={customerName}
+                  maxLength={20}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), (e.target as HTMLInputElement).blur())}
+                  placeholder="Customer first name (optional, called out when ready)"
+                  aria-label="Customer first name"
+                />
+              </div>
               {card ? (
                 <div className="card-row">
                   <div>
@@ -610,6 +719,9 @@ export function Cashier() {
               <div className="pay-row">
                 <button className="btn ghost" disabled={!lines.length} onClick={clearOrder}>
                   Cancel
+                </button>
+                <button className="btn" disabled={!lines.length} onClick={parkOrder} title="Set this order aside and serve the next customer">
+                  ⏸ Park
                 </button>
                 <button className="btn primary pay-btn" disabled={!lines.length} onClick={() => setPaying(true)}>
                   {lines.length ? `Pay ${peso(due)}` : 'Pay'} <kbd>↵</kbd>
