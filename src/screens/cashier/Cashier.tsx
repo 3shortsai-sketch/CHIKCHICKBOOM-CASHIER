@@ -12,6 +12,7 @@ import { TopBar } from '../../ui/TopBar';
 import { OpenDayForm } from './OpenDay';
 import { AfterPay, PayModal, StampDots, type AfterPayMode } from './payflow';
 import { ComboPicker, ItemPicker } from './pickers';
+import { CardNameField, useCardName } from './CardName';
 import { CardLookup, WasteLog } from './tools';
 import { minutesAgo } from '../../ui/ui';
 
@@ -96,6 +97,13 @@ export function Cashier() {
   );
 
   const card = useMemo(() => (cardId ? cardState(cardId, orders, s) : null), [cardId, orders, s]);
+  // A registered card fills in the customer's first name, so the kitchen and
+  // the monitor can call them (only when the cashier hasn't typed one).
+  const registeredName = useCardName(cardId);
+  useEffect(() => {
+    if (registeredName && !customerName.trim()) setCustomerName(registeredName.split(' ')[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registeredName, cardId]);
   const rewardsInCart = lines.flatMap((l) => (l.free?.reason === 'reward' ? [l.free.stampsAt] : []));
   const sub = subtotal(lines, s);
   const due = amountDue(lines, s, voucher?.amount ?? 0);
@@ -660,6 +668,7 @@ export function Cashier() {
                   <div>
                     <b>{card.cardId}</b> <span className="muted">{card.stamps}/{s.loyalty.cardSize} stamps</span>
                     <StampDots n={card.stamps} size={s.loyalty.cardSize} />
+                    <CardNameField number={card.cardId} by={device.cashier || day.openedBy} onSaved={(n) => !customerName.trim() && setCustomerName(n.split(' ')[0])} />
                   </div>
                   <button className="btn ghost small" aria-label="Remove card" onClick={() => { setCardId(undefined); setLines(lines.filter((l) => l.free?.reason !== 'reward')); }}>
                     ✕
@@ -759,7 +768,7 @@ export function Cashier() {
           }}
         />
       )}
-      {tool === 'card' && <CardLookup s={s} orders={orders} onClose={() => setTool(null)} />}
+      {tool === 'card' && <CardLookup s={s} orders={orders} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
       {tool === 'waste' && <WasteLog s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
     </div>
   );

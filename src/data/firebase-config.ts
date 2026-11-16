@@ -23,4 +23,7 @@ export const firebaseConfig: FirebaseOptions | null = {
  */
 export const useEmulator = import.meta.env.VITE_FIREBASE_EMULATOR === '1';
 
+/** For local testing only: `VITE_LOCAL_ONLY=1 npm run build` ignores Firebase entirely. */
+export const localOnly = import.meta.env.VITE_LOCAL_ONLY === '1';
+
 export const emulatorConfig: FirebaseOptions = { apiKey: 'demo-key', authDomain: 'demo-ccb.firebaseapp.com', projectId: 'demo-ccb', appId: 'demo-app' };

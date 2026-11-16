@@ -4,6 +4,7 @@ import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
 import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
 import { allergenHint, allergenText, itemTags } from './allergens';
+import { cardDocId, cardRows, cleanCardName, searchCards } from './cards';
 import { isLow, margins, onHand, servingsLeft, waitMinutes } from './inventory';
 import { dayXlsx, daySheets } from './excel';
 import { colName, crc32 } from './xlsx';
@@ -434,5 +435,39 @@ describe('Popular tab and customer names', () => {
     expect(order([bowl()], { customerName: '  Ana   Marie  ' }).customerName).toBe('Ana Marie');
     expect(order([bowl()], { customerName: '   ' }).customerName).toBeUndefined();
     expect(cleanName('x'.repeat(40))).toHaveLength(20);
+  });
+});
+
+describe('loyalty card list', () => {
+  const card = (number: string, name: string) => ({ number, mode: 'demo' as const, name, createdAt: 1, updatedAt: 1, by: 'Ana' });
+
+  it('lists named cards and cards used on orders, with stamps and rewards', () => {
+    const orders: Order[] = [];
+    for (let i = 0; i < 5; i++) orders.push({ ...order([bowl()], { cardId: 'CCB-037' }, orders), createdAt: 1000 + i });
+    orders.push({ ...order([bowl()], { cardId: 'CCB-090' }, orders), createdAt: 9000 });
+    const rows = cardRows([card('CCB-037', 'Ana Reyes'), card('CCB-012', 'Ben')], orders, s);
+    expect(rows.map((r) => r.number)).toEqual(['CCB-090', 'CCB-037', 'CCB-012']); // newest activity first
+    const ana = rows.find((r) => r.number === 'CCB-037')!;
+    expect([ana.name, ana.registered, ana.stamps, ana.visits]).toEqual(['Ana Reyes', true, 5, 5]);
+    expect(ana.rewardsReady).toEqual(['Free Regular Fries']);
+    const unnamed = rows.find((r) => r.number === 'CCB-090')!;
+    expect([unnamed.registered, unnamed.name, unnamed.stamps]).toEqual([false, '', 1]);
+    expect(rows.find((r) => r.number === 'CCB-012')!.visits).toBe(0);
+  });
+
+  it('does not count voided orders and finds cards by number or part of the name', () => {
+    const o = { ...order([bowl()], { cardId: 'CCB-005' }), voided: { reason: 'x', at: 1, by: 'm' } };
+    expect(cardRows([], [o], s)).toEqual([]);
+    const rows = cardRows([card('CCB-037', 'Ana Reyes'), card('CCB-112', 'Joana')], [], s);
+    expect(searchCards(rows, '37').map((r) => r.number)).toEqual(['CCB-037']);
+    expect(searchCards(rows, 'ccb-112').map((r) => r.number)).toEqual(['CCB-112']);
+    expect(searchCards(rows, 'ana').map((r) => r.number).sort()).toEqual(['CCB-037', 'CCB-112']);
+    expect(searchCards(rows, '')).toHaveLength(2);
+  });
+
+  it('keeps practice and real cards apart and tidies names', () => {
+    expect(cardDocId('demo', 'CCB-037')).not.toBe(cardDocId('live', 'CCB-037'));
+    expect(cleanCardName('  Ana   Marie  ')).toBe('Ana Marie');
+    expect(cleanCardName('x'.repeat(50))).toHaveLength(30);
   });
 });

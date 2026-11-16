@@ -5,6 +5,7 @@ import { peso, spinnableBowls } from '../../domain/pricing';
 import type { MenuItem, Order, PaymentMethod, PrizeId, Settings } from '../../domain/types';
 import { applyPrize, digitalSpin, PRIZE_LABEL, prizeRefundTotal, undoLastSpin } from '../../domain/wheel';
 import { Modal } from '../../ui/ui';
+import { CardNameField } from './CardName';
 
 export function PayModal({
   due,
@@ -253,7 +254,9 @@ export function AfterPay({
         )}
         {card ? (
           <div className="stamps">
-            <span>{card.cardId}</span>
+            <span>
+              {card.cardId} <CardNameField number={card.cardId} by={order.cashier} />
+            </span>
             <b>
               {card.stamps}/{s.loyalty.cardSize}
             </b>

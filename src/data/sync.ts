@@ -18,7 +18,7 @@ import {
   type SnapshotMetadata,
 } from 'firebase/firestore';
 import { applyRemote, getState, setRemote, type Collection, type Op } from './store';
-import { emulatorConfig, firebaseConfig, useEmulator } from './firebase-config';
+import { emulatorConfig, firebaseConfig, localOnly, useEmulator } from './firebase-config';
 
 /**
  * Sync between devices (laptop ⇄ kitchen tablet ⇄ CFO phone) through
@@ -31,7 +31,7 @@ import { emulatorConfig, firebaseConfig, useEmulator } from './firebase-config';
  *  - Each device signs in once with the shared booth account; the rules in
  *    firestore.rules only let that account read or write.
  *
- * Layout in Firestore: settings/main, days/{dayId}, orders/{orderId}.
+ * Layout in Firestore: settings/main, days/{dayId}, orders/{orderId}, cards/{cardId}.
  */
 
 // ---------- Status shown in the top bar ----------
@@ -150,7 +150,7 @@ function updateStatus() {
   if (writeError) return setSyncStatus({ label: 'Sync problem', detail: writeError, connected: false });
   const all = Object.values(meta);
   const pending = all.some((m) => m?.hasPendingWrites);
-  const offline = all.length < 3 || all.some((m) => m?.fromCache);
+  const offline = all.length < 4 || all.some((m) => m?.fromCache);
   if (offline) setSyncStatus({ label: pending ? 'Offline · will sync' : 'Offline · up to date here', detail: 'Changes are saved on this device and will be sent when the internet is back.', connected: false });
   else if (pending) setSyncStatus({ label: 'Syncing…', detail: 'Sending the latest changes to the other devices.', connected: true });
   else setSyncStatus({ label: 'Synced', detail: `All devices up to date. Signed in as ${authState.email}.`, connected: true });
@@ -163,7 +163,7 @@ function updateStatus() {
  */
 const uploadedOnce: Partial<Record<Collection, boolean>> = {};
 
-function onCollection(col: 'orders' | 'days', snap: QuerySnapshot) {
+function onCollection(col: 'orders' | 'days' | 'cards', snap: QuerySnapshot) {
   meta[col] = snap.metadata;
   const ops: Op[] = [];
   for (const ch of snap.docChanges()) {
@@ -188,6 +188,7 @@ function attach() {
   unsubscribers = [
     onSnapshot(collection(db, 'orders'), opts, (s) => onCollection('orders', s), (e) => onListenError(e)),
     onSnapshot(collection(db, 'days'), opts, (s) => onCollection('days', s), (e) => onListenError(e)),
+    onSnapshot(collection(db, 'cards'), opts, (s) => onCollection('cards', s), (e) => onListenError(e, 'cards')),
     onSnapshot(
       doc(db, 'settings', 'main'),
       opts,
@@ -206,8 +207,13 @@ function attach() {
   ];
 }
 
-function onListenError(e: { code?: string; message?: string }) {
-  writeError = e.code === 'permission-denied' ? 'This login is not allowed to read the booth data. Sign in with the booth account.' : `Sync error: ${e.message ?? e.code}`;
+function onListenError(e: { code?: string; message?: string }, what?: 'cards') {
+  writeError =
+    e.code === 'permission-denied'
+      ? what === 'cards'
+        ? 'Loyalty card names cannot sync yet: the Firebase rules need the "cards" update (see docs/PLAN.md).'
+        : 'This login is not allowed to read the booth data. Sign in with the booth account.'
+      : `Sync error: ${e.message ?? e.code}`;
   console.error('sync listen failed', e);
   updateStatus();
 }
@@ -222,7 +228,7 @@ function detach() {
 }
 
 export function startSync() {
-  const config = useEmulator ? emulatorConfig : firebaseConfig;
+  const config = useEmulator ? emulatorConfig : localOnly ? null : firebaseConfig;
   if (!config) {
     setAuthState({ enabled: false, ready: true, email: null });
     setSyncStatus(LOCAL_ONLY);

@@ -1,4 +1,5 @@
 import { Cashier } from './screens/cashier/Cashier';
+import { Cards } from './screens/Cards';
 import { Dashboard } from './screens/Dashboard';
 import { Inventory } from './screens/Inventory';
 import { Kitchen } from './screens/Kitchen';
@@ -14,6 +15,7 @@ const SCREENS = [
   { hash: 'serving', title: 'Now Serving', who: 'Monitor · customers', text: 'Open this in a 2nd window on the laptop and drag it onto the monitor.' },
   { hash: 'kitchen', title: 'Kitchen', who: 'Tablet · cooks', text: 'Order cards with sides, dips and notes. Cooking → Ready.' },
   { hash: 'inventory', title: 'Inventory', who: 'Kitchen team', text: 'Count what you have (chicken, cookies…), take out broken or spoiled items.' },
+  { hash: 'cards', title: 'Loyalty cards', who: 'Team · passcode', text: 'Every card with its number, name, stamps and rewards. Search, add and edit names.' },
   { hash: 'dashboard', title: 'Dashboard', who: 'CFO · PIN', text: 'Sales vs goal, profit, stock, wheel cost, cash drawer, exports.' },
   { hash: 'setup', title: 'Setup', who: 'CFO · PIN', text: 'Menu, prices, costs, stock, wheel, loyalty, PINs, demo/real data.' },
 ];
@@ -64,6 +66,8 @@ function Screen() {
       return <Inventory />;
     case 'team':
       return <Profit />;
+    case 'cards':
+      return <Cards />;
     case 'setup':
       return <Setup />;
     default:

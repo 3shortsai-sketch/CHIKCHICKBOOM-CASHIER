@@ -1,69 +1,91 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { cardRows, searchCards } from '../../domain/cards';
 import { availableRewards, cardState, parseCard } from '../../domain/loyalty';
 import { newId, peso } from '../../domain/pricing';
 import type { BusinessDay, Order, Settings } from '../../domain/types';
-import { patchDay } from '../../data/store';
+import { modeCards, patchDay, useStore } from '../../data/store';
 import { Modal } from '../../ui/ui';
+import { CardNameField } from './CardName';
 import { StampDots } from './payflow';
 
-/** "How many stamps do I have?": look up a card without starting an order. */
-export function CardLookup({ s, orders, onClose }: { s: Settings; orders: Order[]; onClose: () => void }) {
+/**
+ * Look up a loyalty card by number or by name: stamps, rewards, visits.
+ * Also where a card's name is typed in the first time.
+ */
+export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; orders: Order[]; cashier: string; onClose: () => void }) {
+  const cards = useStore((st) => modeCards(st));
+  const rows = useMemo(() => cardRows(cards, orders, s), [cards, orders, s]);
   const [input, setInput] = useState('');
-  const [cardId, setCardId] = useState<string | null>(null);
-  const [error, setError] = useState('');
+  const [picked, setPicked] = useState<string | null>(null);
 
-  const look = () => {
-    const id = parseCard(input, s);
-    if (!id) {
-      setCardId(null);
-      setError(`Unknown card number. Cards run ${s.loyalty.prefix}${String(s.loyalty.first).padStart(3, '0')} to ${s.loyalty.prefix}${s.loyalty.last}.`);
-      return;
-    }
-    setError('');
-    setCardId(id);
-  };
-
-  const state = cardId ? cardState(cardId, orders, s) : null;
-  const visits = cardId
-    ? orders
-        .filter((o) => o.cardId === cardId && !o.voided)
-        .sort((a, b) => b.createdAt - a.createdAt)
-    : [];
-  const rewards = state ? availableRewards(state, s) : [];
-  const next = state ? s.loyalty.rewards.find((r) => r.at > state.stamps && !state.used.includes(r.at)) : undefined;
+  const typedNumber = parseCard(input, s);
+  const matches = useMemo(() => (input.trim() ? searchCards(rows, input).slice(0, 6) : []), [rows, input]);
+  // A valid number that nobody has registered or used yet is still a real card.
+  const number = picked ?? (typedNumber && /\d/.test(input) ? typedNumber : (matches.length === 1 ? matches[0].number : null));
+  const row = number ? (rows.find((r) => r.number === number) ?? cardRows([], [], s)[0]) : undefined;
+  const st = number ? cardState(number, orders, s) : null;
+  const rewards = st ? availableRewards(st, s) : [];
+  const next = st ? s.loyalty.rewards.find((r) => r.at > st.stamps && !st.used.includes(r.at)) : undefined;
+  const visits = number ? orders.filter((o) => o.cardId === number && !o.voided).sort((a, b) => b.createdAt - a.createdAt) : [];
+  const nameLookupFailed = input.trim() && !typedNumber && matches.length === 0;
 
   return (
-    <Modal title="Check a loyalty card" onClose={onClose}>
+    <Modal title="Loyalty cards" onClose={onClose}>
       <div className="mini-form">
-        <input className="input" autoFocus value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), look())} placeholder="Card number, e.g. 37" aria-label="Card number" />
-        <button className="btn primary" onClick={look} disabled={!input.trim()}>
-          Check
-        </button>
+        <input
+          className="input"
+          autoFocus
+          value={input}
+          onChange={(e) => {
+            setInput(e.target.value);
+            setPicked(null);
+          }}
+          placeholder="Card number (37) or name (Ana)"
+          aria-label="Card number or name"
+        />
       </div>
-      {error && <p className="error">{error}</p>}
-      {state && (
+      {nameLookupFailed && <p className="muted">No card with that number or name yet. Type the card number to register it.</p>}
+      {matches.length > 1 && !picked && (
+        <ul className="card-matches">
+          {matches.map((m) => (
+            <li key={m.number}>
+              <button className="btn small" onClick={() => setPicked(m.number)}>
+                <b>{m.number}</b> {m.name || <span className="muted">(no name)</span>} <span className="muted">{m.stamps}/{m.size}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {number && st && (
         <div className="lookup">
           <div className="lookup-head">
-            <span className="lookup-id">{state.cardId}</span>
+            <span className="lookup-id">{number}</span>
             <b className="display">
-              {state.stamps}/{s.loyalty.cardSize}
+              {st.stamps}/{s.loyalty.cardSize}
             </b>
           </div>
-          <StampDots n={state.stamps} size={s.loyalty.cardSize} />
+          <div className="lookup-name">
+            <span className="muted small">Name:</span> <CardNameField number={number} by={cashier} />
+          </div>
+          <StampDots n={st.stamps} size={s.loyalty.cardSize} />
           {rewards.length > 0 ? (
             <p className="ok-note">Reward ready: {rewards.map((r) => r.label).join(', ')}. Add the card to an order to use it.</p>
           ) : next ? (
             <p className="muted">
-              {next.at - state.stamps} more stamp{next.at - state.stamps === 1 ? '' : 's'} to {next.label}.
+              {next.at - st.stamps} more stamp{next.at - st.stamps === 1 ? '' : 's'} to {next.label}.
             </p>
           ) : null}
           <p className="muted small">
             {visits.length} visit{visits.length === 1 ? '' : 's'}
-            {state.cardsCompleted > 0 && ` · ${state.cardsCompleted} full card${state.cardsCompleted === 1 ? '' : 's'} completed`}
+            {st.cardsCompleted > 0 && ` · ${st.cardsCompleted} full card${st.cardsCompleted === 1 ? '' : 's'} completed`}
             {visits[0] && ` · last visit ${new Date(visits[0].createdAt).toLocaleDateString()} (${visits[0].number})`}
+            {row && !row.registered && visits.length === 0 && ' · not used yet'}
           </p>
         </div>
       )}
+      <p className="muted small">
+        <a href="#cards">See all cards →</a> (team passcode)
+      </p>
     </Modal>
   );
 }
