@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { newId } from '../domain/pricing';
-import type { MenuItem, Settings } from '../domain/types';
+import { ALLERGENS, type MenuItem, type Settings } from '../domain/types';
 import { clearDemoData, openDay, resetSettings, saveSettings, setDevice, useDevice, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 import { PinGate } from '../ui/ui';
@@ -152,6 +152,56 @@ function SetupInner() {
           </div>
           <button className="btn small" onClick={addItem}>+ Add item</button>
           <p className="muted small">Starting stock is copied into each new day when the cashier opens it.</p>
+        </section>
+
+        <section className="panel wide">
+          <h2>What customers see</h2>
+          <p className="muted small">
+            One-line description and allergens, shown on the customer monitor (and allergens on the cashier tiles). Only tick an allergen if you know the item contains it. Leave it blank if unsure, and ask the cook.
+          </p>
+          <div className="table-scroll">
+            <table className="edit-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Description</th>
+                  <th>Contains</th>
+                </tr>
+              </thead>
+              <tbody>
+                {s.menu
+                  .filter((m) => m.category !== 'addons')
+                  .map((m) => (
+                    <tr key={m.id}>
+                      <td>
+                        <b>{m.short ?? m.name}</b>
+                      </td>
+                      <td>
+                        <input className="input" defaultValue={m.description ?? ''} maxLength={70} onBlur={(e) => setItem(m.id, { description: e.target.value.trim() || undefined })} placeholder="e.g. Crispy chicken in honey garlic glaze" />
+                      </td>
+                      <td>
+                        <div className="allergen-chips">
+                          {ALLERGENS.map((a) => {
+                            const on = m.allergens?.includes(a) ?? false;
+                            return (
+                              <label key={a} className={on ? 'on' : ''}>
+                                <input
+                                  type="checkbox"
+                                  checked={on}
+                                  onChange={(e) => setItem(m.id, { allergens: e.target.checked ? [...(m.allergens ?? []), a] : (m.allergens ?? []).filter((x) => x !== a) })}
+                                />
+                                {a}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted small">Photos: send them over and they'll be added to the menu.</p>
         </section>
 
         <section className="panel">

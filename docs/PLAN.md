@@ -42,10 +42,10 @@ but the kitchen tablet is not.
 - Order numbers (A-001, A-002…) restart each business day, not at midnight.
 - Each device has an order letter (laptop = A). A backup cashier device uses B so numbers never clash.
 
-### Spin-to-Win: the customer spins **after paying**
-1. Cashier takes the order and the payment. The order goes to the kitchen.
-2. Customer spins once per bowl that isn't in a combo.
-3. Cashier taps what the wheel landed on (or uses the digital backup wheel).
+### Spin-to-Win: the customer spins **after paying, at the pickup spot**
+1. Cashier takes the order and the payment, and moves on to the next customer straight away. The order goes to the kitchen.
+2. The customer spins the wheel at the pickup spot, once per bowl that isn't in a combo.
+3. The wheel person calls out the prize. The cashier taps the order in **Spins waiting** and taps the prize (or uses the digital backup wheel). Spins stay waiting for 45 minutes.
 
 | Prize | What the app does |
 | --- | --- |
@@ -94,6 +94,18 @@ but the kitchen tablet is not.
 - When the cashier picks GCash, the monitor shows the GCash QR and the amount (and the GCash number, if typed in Setup).
 - After payment it shows "Thank you! Your number A-012" and reminds the customer to spin.
 - This works with no internet, because both windows run on the laptop.
+
+- After payment the monitor shows **"✓ Payment received, ₱393 · GCash"** with the order number.
+- When an order is ready the monitor plays a **hen's cluck** ("buk-buk-buk-buk ba-GAWK!") and says **"Order A, 12 is ready!"** using the device's built-in voice. A "Test the sound" button is on the monitor's start screen.
+- **Recent winners** ("A-012 FREE MEAL 🎉") replace the prize list on the wheel panel once someone wins; a FREE MEAL also fills the screen with a burst for 7 seconds.
+- The menu shows a one-line **description** per item, **★ Best seller** badges (top 2 items today, once they've sold at least 3), and **allergens**.
+
+### Allergens
+- Ticked per item in Setup ("What customers see"). Shown on the cashier tile, in the item picker and on the monitor menu ("Contains: Milk, Wheat").
+- Nothing is pre-ticked. Only tick what you know the item contains; the monitor also says "Food allergy? Please ask our cashier."
+
+### Photos
+- Each menu item can have a photo (`public/menu/…`). They will be added when the photos are ready.
 
 ### Payments
 - Cash and GCash. Maya is off (switch in Setup).

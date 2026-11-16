@@ -247,3 +247,46 @@ export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Setting
   }
   return out.map((r) => r.map(csvCell).join(',')).join('\n');
 }
+
+// ---------- Customer monitor ----------
+
+/**
+ * Today's best sellers by pieces sold (combo parts count for their item).
+ * Only items that sold at least `min` qualify, so one early sale doesn't
+ * crown a "best seller".
+ */
+export function bestSellers(day: BusinessDay | undefined, all: Order[], s: Settings, top = 2, min = 3): string[] {
+  const sold: Record<string, number> = {};
+  for (const o of liveOrders(dayOrders(day, all))) {
+    for (const l of o.lines) {
+      if (l.free) continue;
+      const ids = l.combo ? l.combo.parts.map((p) => p.itemId) : [l.itemId];
+      for (const id of ids) sold[id] = (sold[id] ?? 0) + l.qty;
+    }
+  }
+  return Object.entries(sold)
+    .filter(([id, n]) => n >= min && itemById(s, id)?.category !== 'addons')
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, top)
+    .map(([id]) => id);
+}
+
+export type Win = { orderId: string; number: string; prize: PrizeId; at: number };
+
+/** Latest wheel wins today, newest first ("Try again" is not a win). */
+export function recentWins(day: BusinessDay | undefined, all: Order[], n = 5): Win[] {
+  const wins: Win[] = [];
+  for (const o of liveOrders(dayOrders(day, all))) {
+    for (const sp of o.spins) {
+      if (sp.prize !== 'tryAgain') wins.push({ orderId: o.id, number: o.number, prize: sp.prize, at: sp.at });
+    }
+  }
+  return wins.sort((a, b) => b.at - a.at).slice(0, n);
+}
+
+/** Paid orders whose customer has not spun yet (wheel is at the pickup spot). */
+export function pendingSpins(day: BusinessDay | undefined, all: Order[], now: number, maxAgeMin = 45): Order[] {
+  return liveOrders(dayOrders(day, all))
+    .filter((o) => o.spinsEarned > o.spins.length && now - o.createdAt < maxAgeMin * 60000)
+    .sort((a, b) => a.createdAt - b.createdAt);
+}

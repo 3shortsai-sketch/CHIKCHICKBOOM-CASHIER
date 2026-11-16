@@ -3,7 +3,7 @@ import { cashSuggestions, createOrder, nextSeq } from './checkout';
 import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
 import { applyCombo, lineTotal, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
-import { ordersCsv, stockLeft, summarize } from './reports';
+import { bestSellers, ordersCsv, pendingSpins, recentWins, stockLeft, summarize } from './reports';
 import { expectedSpinCost, promoStatus } from './promo';
 import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
 import { applyPrize, digitalSpin, undoLastSpin } from './wheel';
@@ -264,5 +264,27 @@ describe('prize limit', () => {
     expect(at(10000, 700).level).toBe('warn');
     expect(at(10000, 800).level).toBe('pause');
     expect(at(10000, 800).pct).toBe(8);
+  });
+});
+
+describe('customer monitor', () => {
+  it('names best sellers only after a few sales, counting combo parts', () => {
+    const a = order([bowl(2)]);
+    expect(bestSellers(day, [a], s)).toEqual([]);
+    const forCombo = [bowl(), fries(), slush()];
+    const b = order(applyCombo(forCombo, suggestCombo(forCombo, s)!, s), {}, [a]);
+    expect(bestSellers(day, [a, b], s)).toEqual(['bowl-alaking']);
+  });
+
+  it('lists recent wins without "Try again", and spins still waiting', () => {
+    const o = order([bowl(2, { id: 'b1' })]);
+    expect(pendingSpins(day, [o], o.createdAt + 60000).map((x) => x.id)).toEqual([o.id]);
+    const r1 = applyPrize(o, { lineId: 'b1', unit: 0 }, 'tryAgain', ctx);
+    if (!r1.ok) throw new Error();
+    const r2 = applyPrize(r1.order, { lineId: 'b1', unit: 1 }, 'freeMeal', { ...ctx, now: ctx.now + 1 });
+    if (!r2.ok) throw new Error();
+    expect(recentWins(day, [r2.order]).map((w) => w.prize)).toEqual(['freeMeal']);
+    expect(pendingSpins(day, [r2.order], o.createdAt + 60000)).toEqual([]);
+    expect(pendingSpins(day, [o], o.createdAt + 50 * 60000)).toEqual([]);
   });
 });

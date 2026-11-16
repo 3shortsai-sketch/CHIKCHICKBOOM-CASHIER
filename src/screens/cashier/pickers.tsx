@@ -171,6 +171,7 @@ export function ItemPicker({
 
   return (
     <Modal title={title} onClose={onClose} wide={isBowl}>
+      {item.allergens && item.allergens.length > 0 && <p className="allergen-note">Contains: {item.allergens.join(', ')}</p>}
       {isBowl && (
         <div className="bowl-mods">
           <h3 className="pick-sub">Extras (optional, set before the side)</h3>

@@ -86,6 +86,106 @@ export function chime(kind: 'ready' | 'new' = 'ready') {
   });
 }
 
+/**
+ * A hen's "buk-buk-buk-buk ba-GAWK!", built from oscillators so it works
+ * offline with no sound file. Each note is a buzzy tone that drops in pitch,
+ * shaped by two filters (the "beak" formants), with a short click at the end.
+ * Returns how long it lasts, in seconds.
+ */
+export function cluck(target: BaseAudioContext | null = audio): number {
+  if (!target) return 0;
+  const ctx = target;
+  const out = ctx.createGain();
+  out.gain.value = 0.85;
+  out.connect(ctx.destination);
+  const t0 = ctx.currentTime + 0.02;
+
+  const note = (start: number, dur: number, pitch: number[], rough: number, level: number, endClick = true) => {
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(pitch[0], start);
+    pitch.slice(1).forEach((f, i) => osc.frequency.linearRampToValueAtTime(f, start + (dur * (i + 1)) / (pitch.length - 1)));
+
+    // Two formant bands give it a throaty, beaky colour instead of a pure buzz.
+    const f1 = ctx.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.frequency.value = 1200;
+    f1.Q.value = 3;
+    const f2 = ctx.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.frequency.value = 2600;
+    f2.Q.value = 5;
+
+    // Fast flutter makes it sound like a bird, not a synth.
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, start);
+    env.gain.exponentialRampToValueAtTime(level, start + 0.008);
+    env.gain.setValueAtTime(level, start + dur * 0.6);
+    env.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    // Flutter goes through the envelope, so it fades out with the note.
+    const am = ctx.createGain();
+    am.gain.value = 1 - rough / 2;
+    const flutter = ctx.createOscillator();
+    flutter.frequency.value = 55;
+    const depth = ctx.createGain();
+    depth.gain.value = rough / 2;
+    flutter.connect(depth).connect(am.gain);
+
+    osc.connect(f1).connect(env);
+    osc.connect(f2).connect(env);
+    env.connect(am).connect(out);
+    osc.start(start);
+    osc.stop(start + dur + 0.02);
+    flutter.start(start);
+    flutter.stop(start + dur + 0.02);
+
+    // Little "k" click at the end of the note.
+    if (!endClick) return;
+    const len = Math.floor(ctx.sampleRate * 0.012);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const click = ctx.createBufferSource();
+    click.buffer = buf;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 2500;
+    const cg = ctx.createGain();
+    cg.gain.value = level * 0.5;
+    click.connect(hp).connect(cg).connect(out);
+    click.start(start + dur - 0.01);
+  };
+
+  // buk, buk, buk, buk ... ba-GAWK!
+  note(t0, 0.07, [430, 330], 0.35, 0.7);
+  note(t0 + 0.16, 0.07, [450, 340], 0.35, 0.7);
+  note(t0 + 0.32, 0.07, [440, 330], 0.35, 0.7);
+  note(t0 + 0.48, 0.08, [460, 350], 0.35, 0.75);
+  note(t0 + 0.66, 0.06, [520, 470], 0.3, 0.7);
+  note(t0 + 0.75, 0.42, [650, 1050, 980, 620], 0.5, 1, false);
+  return 1.25;
+}
+
+/** Say something out loud through the speakers (browser's built-in voice). */
+export function announce(text: string) {
+  if (!('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  // Prefer a voice installed on the device, so it also works offline.
+  const voices = speechSynthesis.getVoices();
+  const voice = voices.find((v) => v.localService && v.lang.startsWith('en')) ?? voices.find((v) => v.lang.startsWith('en'));
+  if (voice) u.voice = voice;
+  u.lang = voice?.lang ?? 'en-US';
+  u.rate = 0.92;
+  u.volume = 1;
+  speechSynthesis.speak(u);
+}
+
+/** "A-012" → "A 12", which voices read more naturally. */
+export function spokenNumber(n: string): string {
+  const [letter, digits] = n.split('-');
+  return digits ? `${letter}, ${Number(digits)}` : n;
+}
+
 export function minutesAgo(ts: number, now: number): string {
   const m = Math.floor((now - ts) / 60000);
   if (m < 1) return 'just now';

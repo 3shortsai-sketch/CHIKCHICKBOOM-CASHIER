@@ -668,6 +668,40 @@ textarea.input {
   padding-right: 1.6rem;
   font-weight: 800;
 }
+.tile-allergens {
+  position: relative;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--red-deep);
+}
+.allergen-note {
+  margin: -0.3rem 0 0.7rem;
+  font-weight: 800;
+  color: var(--red-deep);
+}
+.allergen-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.allergen-chips label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.allergen-chips label.on {
+  border-color: var(--red-deep);
+  background: var(--danger-soft);
+}
+.allergen-chips input {
+  margin: 0;
+}
 .tile-sub {
   font-size: 0.85rem;
   color: var(--ink-soft);
@@ -1826,7 +1860,7 @@ textarea.input {
 }
 .serving-menu {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: 2fr repeat(4, 1fr);
   gap: 1.5vw;
   font-size: clamp(0.8rem, 1.1vw, 1.1rem);
 }
@@ -1874,7 +1908,7 @@ textarea.input {
   color: var(--red);
   text-shadow: 2px 2px 0 var(--ink);
 }
-.serving-wheel ul {
+.serving-wheel .prize-list {
   margin: 0.4rem 0;
   padding-left: 1.2rem;
   columns: 2;
@@ -2349,6 +2383,183 @@ button.extra-chip.extra-chip-main.on {
   margin: 0;
   color: var(--ink-soft);
   font-size: 0.85em;
+}
+
+/* ---------- Monitor: menu details, payment, winners ---------- */
+.serving-menu .menu-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.25rem 0;
+}
+.serving-menu .menu-row.out {
+  text-decoration: none;
+  opacity: 0.45;
+}
+.serving-menu .menu-row.out .menu-name {
+  text-decoration: line-through;
+}
+.menu-photo {
+  width: 3.4em;
+  height: 3.4em;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 2px solid var(--ink);
+  flex: none;
+}
+.menu-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.menu-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.menu-name {
+  font-weight: 700;
+}
+.menu-line b {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 1.15em;
+  white-space: nowrap;
+}
+.menu-desc {
+  color: var(--ink-soft);
+  font-size: 0.85em;
+  line-height: 1.25;
+}
+.menu-allergens {
+  color: var(--red-deep);
+  font-size: 0.8em;
+  font-weight: 700;
+}
+.best-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.72em;
+  font-weight: 800;
+  background: var(--yellow);
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  padding: 0 0.45rem;
+  vertical-align: 0.1em;
+  white-space: nowrap;
+}
+.menu-allergy-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.82em;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.paid-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  background: var(--green-soft);
+  border: 2px solid var(--green);
+  border-radius: 14px;
+  padding: 0.5rem 0.8rem;
+  margin-bottom: 0.6rem;
+  text-align: left;
+}
+.paid-check b {
+  display: block;
+  color: #0d5c31;
+  font-size: 1.2em;
+}
+.paid-check span {
+  font-weight: 700;
+}
+.paid-tick {
+  display: grid;
+  place-items: center;
+  width: 2.2em;
+  height: 2.2em;
+  border-radius: 50%;
+  background: var(--green);
+  color: #fff;
+  font-size: 1.4em;
+  font-weight: 900;
+  flex: none;
+}
+.winners {
+  margin: 0.5rem 0;
+}
+.winners-label {
+  font-size: 0.8em;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.winners ul {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+}
+.winners li {
+  padding: 0.12rem 0;
+  border-bottom: 1.5px dashed rgb(59 35 20 / 25%);
+}
+.winners li b {
+  font-family: var(--display);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  margin-right: 0.3rem;
+}
+.winners li.big {
+  font-weight: 800;
+  color: var(--red-deep);
+}
+.win-banner {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(59 35 20 / 55%);
+  z-index: 40;
+  animation: modal-in 0.2s ease-out;
+}
+.win-banner .burst {
+  position: absolute;
+  inset: auto;
+  width: min(80vw, 1100px);
+  height: min(60vh, 620px);
+}
+.win-text {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: rotate(-4deg);
+  text-align: center;
+}
+.win-text b {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(5rem, 12vw, 11rem);
+  line-height: 0.9;
+  color: var(--red);
+  text-shadow: -3px -3px 0 var(--ink), 3px -3px 0 var(--ink), -3px 3px 0 var(--ink), 3px 3px 0 var(--ink), 7px 7px 0 var(--ink);
+}
+.win-text span {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(2rem, 4.5vw, 4.2rem);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.btn.spin-waiting {
+  background: var(--yellow);
+  border-color: var(--ink);
+}
+.center {
+  text-align: center;
 }
 
 /* ---------- Smaller screens (tablet portrait, phone) ---------- */

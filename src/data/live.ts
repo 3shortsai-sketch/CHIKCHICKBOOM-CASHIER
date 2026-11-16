@@ -17,7 +17,7 @@ export type LiveCart =
       spins: number;
       method?: PaymentMethod;
     }
-  | { stage: 'paid'; number: string; spins: number; change: number };
+  | { stage: 'paid'; number: string; spins: number; change: number; paid: number; method: PaymentMethod };
 
 type Msg = { type: 'cart'; cart: LiveCart } | { type: 'hello' };
 

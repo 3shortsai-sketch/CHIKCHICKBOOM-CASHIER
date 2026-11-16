@@ -18,7 +18,16 @@ export type MenuItem = {
   /** Regular fries come with a free dip; the combos use them. */
   regular?: boolean;
   active: boolean;
+  /** One line for customers on the monitor menu. */
+  description?: string;
+  /** Allergens the item contains (see ALLERGENS). Empty = none recorded. */
+  allergens?: string[];
+  /** Photo file in public/menu/, e.g. "menu/ala-king.jpg". */
+  photo?: string;
 };
+
+/** Common food allergens the booth can tag an item with. */
+export const ALLERGENS = ['Egg', 'Milk', 'Wheat', 'Soy', 'Peanut', 'Tree nut', 'Shellfish', 'Fish', 'Sesame'] as const;
 
 export type Combo = {
   id: 'comboA' | 'comboB';

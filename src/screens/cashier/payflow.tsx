@@ -101,9 +101,15 @@ export function PayModal({
 
 const PRIZE_ORDER: PrizeId[] = ['freeMeal', 'freeCookie', 'freeWater', 'freeSauce', 'doubleStamp', 'tenOff', 'voucher', 'tryAgain'];
 
+/**
+ * fresh: just paid (show change). spin: reopened to log a spin called out
+ * at the wheel. past: looking back at an old order (read-only for money).
+ */
+export type AfterPayMode = 'fresh' | 'spin' | 'past';
+
 /** Shown after payment: log each bowl's spin, then show the order number. */
 export function AfterPay({
-  past,
+  mode,
   order,
   orders,
   s,
@@ -111,7 +117,7 @@ export function AfterPay({
   onUpdate,
   onDone,
 }: {
-  past?: boolean;
+  mode: AfterPayMode;
   order: Order;
   orders: Order[];
   s: Settings;
@@ -120,11 +126,14 @@ export function AfterPay({
   onDone: () => void;
 }) {
   const bowls = useMemo(() => spinnableBowls(order.lines, s), [order.lines, s]);
+  const past = mode === 'past';
   const [message, setMessage] = useState<{ text: string; bad?: boolean } | null>(null);
   const [cardInput, setCardInput] = useState('');
   const spinsLeft = order.spinsEarned - order.spins.length;
   const nextBowl = bowls.find((b) => !order.spins.some((x) => x.lineId === b.lineId && x.unit === b.unit));
-  const refund = prizeRefundTotal(order);
+  // Only prizes logged since this screen opened are still to be paid out.
+  const [spinsAtOpen] = useState(() => (mode === 'fresh' ? 0 : order.spins.length));
+  const refund = past ? prizeRefundTotal(order) : order.spins.slice(spinsAtOpen).reduce((n, x) => n + x.refund, 0);
   const card = order.cardId ? cardState(order.cardId, orders.filter((o) => o.id !== order.id).concat(order), s) : null;
   const vouchers = order.spins.filter((x) => x.voucherCode);
 
@@ -147,7 +156,7 @@ export function AfterPay({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
-      if (e.key === 'Enter' && spinsLeft <= 0) {
+      if (e.key === 'Enter') {
         e.preventDefault();
         onDone();
       }
@@ -173,7 +182,7 @@ export function AfterPay({
             Past order, paid at {new Date(order.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Change and cash give-backs were already handled then.
           </p>
         )}
-        {!past && order.payment.method === 'cash' && order.payment.change > 0 && (
+        {mode === 'fresh' && order.payment.method === 'cash' && order.payment.change > 0 && (
           <div className="change big-change">
             <span>Change</span>
             <b className="display">{peso(order.payment.change)}</b>
@@ -185,7 +194,9 @@ export function AfterPay({
             <h2>
               🎡 Spin {order.spins.length + 1} of {order.spinsEarned} <span className="muted">for {nextBowl.name}</span>
             </h2>
-            <p className="muted">Tap what the wheel landed on (or keys 1–8).</p>
+            <p className="muted">
+              The customer spins at the pickup wheel. Tap the prize when it's called out, here or later from <b>Spins waiting</b> (keys 1–8).
+            </p>
             <div className="prize-grid">
               {PRIZE_ORDER.map((p, i) => (
                 <button key={p} className={`prize prize-${p}`} onClick={() => log(p, 'physical')}>
@@ -205,7 +216,7 @@ export function AfterPay({
         )}
 
         {message && <p className={message.bad ? 'error' : 'ok-note'}>{message.text}</p>}
-        {!past && order.spins.length > 0 && (
+        {!past && order.spins.length > spinsAtOpen && (
           <button className="btn ghost small" onClick={() => { onUpdate(undoLastSpin(order)); setMessage({ text: 'Last spin undone.' }); }}>
             Undo last spin
           </button>
@@ -215,7 +226,7 @@ export function AfterPay({
       <aside className="afterpay-side">
         {refund > 0 && (
           <div className={`giveback ${past ? 'past' : ''}`}>
-            <span>{past ? 'Cash given back' : 'Give back cash'}</span>
+            <span>{past ? 'Cash given back (all spins)' : 'Give back cash'}</span>
             <b className="display">{peso(refund)}</b>
           </div>
         )}
@@ -258,13 +269,13 @@ export function AfterPay({
             <button className="btn small" onClick={attachCard}>Add card</button>
           </div>
         )}
-        <button className="btn primary big full" disabled={spinsLeft > 0} onClick={onDone}>
-          {spinsLeft > 0 ? `${spinsLeft} spin${spinsLeft > 1 ? 's' : ''} left` : past ? 'Back to orders ↵' : 'Next order ↵'}
+        <button className="btn primary big full" onClick={onDone}>
+          {past ? 'Back to orders ↵' : 'Next order ↵'}
         </button>
-        {spinsLeft > 0 && (
-          <button className="btn ghost small" onClick={onDone}>
-            Customer skipped the spin
-          </button>
+        {spinsLeft > 0 && !past && (
+          <p className="muted small center">
+            {spinsLeft} spin{spinsLeft > 1 ? 's' : ''} waiting. They stay in <b>Spins waiting</b> for 45 minutes.
+          </p>
         )}
       </aside>
     </div>
