@@ -6,9 +6,16 @@ import type { FirebaseOptions } from 'firebase/app';
  * which Firebase project the app talks to. Access is protected by the booth
  * login and the rules in firestore.rules.
  *
- * While this is null the app runs on this device only (no sync).
+ * Set to null to run on this device only (no sync).
  */
-export const firebaseConfig: FirebaseOptions | null = null;
+export const firebaseConfig: FirebaseOptions | null = {
+  apiKey: 'AIzaSyDP2NHk6Sn3SKEr2I9ZADTl7XJK2pWyRuw',
+  authDomain: 'chick-chick-boom.firebaseapp.com',
+  projectId: 'chick-chick-boom',
+  storageBucket: 'chick-chick-boom.firebasestorage.app',
+  messagingSenderId: '325983973659',
+  appId: '1:325983973659:web:c494eeedde42d0aa2aa3be',
+};
 
 /**
  * For local testing only: `VITE_FIREBASE_EMULATOR=1 npm run build` talks to
