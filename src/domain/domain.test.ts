@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { cashSuggestions, createOrder, nextSeq } from './checkout';
 import { defaultSettings } from './defaults';
 import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
-import { applyCombo, lineTotal, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
+import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
+import { allergenHint, allergenText, itemTags } from './allergens';
 import { bestSellers, kitchenMadeCounts, ordersCsv, pendingSpins, recentWins, stockLeft, summarize } from './reports';
 import { expectedSpinCost, promoStatus } from './promo';
 import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
@@ -11,11 +12,11 @@ import { applyPrize, digitalSpin, undoLastSpin } from './wheel';
 const s = defaultSettings();
 
 function bowl(qty = 1, extra: Partial<OrderLine> = {}): OrderLine {
-  return { id: 'b' + Math.random(), itemId: 'bowl-alaking', name: 'Ala King', qty, unitPrice: 179, choices: { side: 'Corn' }, ...extra };
+  return { id: 'b' + Math.random(), itemId: 'bowl-alaking', name: 'Ala King Chicken Rice Bowl', qty, unitPrice: 169, choices: { side: 'Butter Corn Carrot' }, ...extra };
 }
 const fries = (): OrderLine => ({ id: 'f' + Math.random(), itemId: 'fries-reg', name: 'Regular Fries', qty: 1, unitPrice: 79, choices: { dip: 'Ranch' } });
-const slush = (): OrderLine => ({ id: 's' + Math.random(), itemId: 'slush-blue', name: 'Blue', qty: 1, unitPrice: 89 });
-const cookie = (): OrderLine => ({ id: 'c' + Math.random(), itemId: 'cookie-choco', name: 'Cookie', qty: 1, unitPrice: 85 });
+const slush = (): OrderLine => ({ id: 's' + Math.random(), itemId: 'slush-watermelon', name: 'Watermelon Slushie', qty: 1, unitPrice: 129 });
+const cookie = (): OrderLine => ({ id: 'c' + Math.random(), itemId: 'cookie-choco', name: 'Choco Chip Cookie', qty: 1, unitPrice: 89 });
 
 const day: BusinessDay = {
   id: 'demo-2026-11-15',
@@ -38,15 +39,15 @@ const ctx = { settings: s, pickFree: pick, via: 'physical' as const, now: Date.p
 
 describe('pricing', () => {
   it('charges ₱20 per extra side and ₱10 per extra sauce', () => {
-    const l = bowl(2, { choices: { side: 'Corn', extraSides: ['Egg'], extraSauce: 1 } });
-    expect(lineTotal(l, s)).toBe((179 + 20 + 10) * 2);
+    const l = bowl(2, { choices: { side: 'Butter Corn Carrot', extraSides: ['Shredded Cabbage'], extraSauce: 1 } });
+    expect(lineTotal(l, s)).toBe((169 + 20 + 10) * 2);
   });
 
   it('counts stock used, including combo parts and extras', () => {
-    const lines = [bowl(1, { choices: { side: 'Corn', extraSauce: 2 } }), fries(), slush()];
+    const lines = [bowl(1, { choices: { side: 'Butter Corn Carrot', extraSauce: 2 } }), fries(), slush()];
     const combo = applyCombo(lines, suggestCombo(lines, s)!, s);
     expect(combo).toHaveLength(1);
-    expect(stockUsage(combo)).toEqual({ 'bowl-alaking': 1, 'fries-reg': 1, 'slush-blue': 1, 'extra-sauce': 2 });
+    expect(stockUsage(combo)).toEqual({ 'bowl-alaking': 1, 'fries-reg': 1, 'slush-watermelon': 1, 'extra-sauce': 2 });
   });
 });
 
@@ -55,15 +56,15 @@ describe('combo prompt', () => {
     const lines = [bowl(), fries(), slush()];
     const sug = suggestCombo(lines, s)!;
     expect(sug.combo.id).toBe('comboA');
-    expect(sug.saving).toBe(179 + 79 + 89 - 329);
+    expect(sug.saving).toBe(169 + 79 + 129 - 329);
     const after = applyCombo(lines, sug, s);
     expect(after).toHaveLength(1);
     expect(subtotal(after, s)).toBe(329);
-    expect(after[0].combo!.parts.map((p) => p.dip ?? p.side)).toEqual(['Corn', 'Ranch', undefined]);
+    expect(after[0].combo!.parts.map((p) => p.dip ?? p.side)).toEqual(['Butter Corn Carrot', 'Ranch', undefined]);
   });
 
-  it('does not offer a combo for large fries', () => {
-    const lg: OrderLine = { ...fries(), itemId: 'fries-lg', unitPrice: 109 };
+  it('does not offer a combo for Overload Fries', () => {
+    const lg: OrderLine = { ...fries(), itemId: 'fries-overload', unitPrice: 109 };
     expect(suggestCombo([bowl(), lg, slush()], s)).toBeNull();
   });
 
@@ -96,9 +97,9 @@ describe('spins', () => {
 
 describe('prizes (spin after paying)', () => {
   it('FREE MEAL pays back the bowl, extras included', () => {
-    const o = order([bowl(1, { id: 'b1', choices: { side: 'Corn', extraSauce: 1 } })]);
+    const o = order([bowl(1, { id: 'b1', choices: { side: 'Butter Corn Carrot', extraSauce: 1 } })]);
     const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'freeMeal', ctx);
-    expect(r.ok && r.spin.refund).toBe(189);
+    expect(r.ok && r.spin.refund).toBe(179);
   });
 
   it('blocks a second prize on the same bowl, and spins beyond what was earned', () => {
@@ -214,14 +215,14 @@ describe('day summary', () => {
     if (!r.ok) throw new Error();
     const b = order([fries()], { method: 'gcash', reference: '1234' }, [a]);
     const c = { ...order([bowl()], {}, [a, b]), voided: { reason: 'mistake', at: 1, by: 'Boss' } };
-    const sum = summarize({ ...day, countedCash: 2000 + 179 - 10 - 5 }, [r.order, b, c], s);
+    const sum = summarize({ ...day, countedCash: 2000 + 169 - 10 - 5 }, [r.order, b, c], s);
     expect(sum.orders).toBe(2);
-    expect(sum.net).toBe(179 - 10 + 79);
-    expect(sum.cash.expected).toBe(2000 + 179 - 10);
+    expect(sum.net).toBe(169 - 10 + 79);
+    expect(sum.cash.expected).toBe(2000 + 169 - 10);
     expect(sum.cash.overShort).toBe(-5);
     expect(sum.wheel.find((w) => w.prize === 'tenOff')!.cost).toBe(10);
     expect(sum.voids).toHaveLength(1);
-    expect(stockLeft(day, [r.order, b, c], s)['bowl-alaking']).toBe(79);
+    expect(stockLeft(day, [r.order, b, c], s)['bowl-alaking']).toBe(59);
 
     const csv = ordersCsv(day, [r.order, b, c], s).split('\n').slice(1).map((row) => row.split(','));
     const net = csv.filter((row) => row[14] === 'no').reduce((n, row) => n + Number(row[12]), 0);
@@ -242,10 +243,10 @@ describe('cash buttons', () => {
 describe('waste log', () => {
   it('takes stock out and counts as cost', () => {
     const d = { ...day, waste: [{ id: 'w1', itemId: 'bowl-alaking', qty: 2, reason: 'dropped', at: 1, by: 'Ana' }] };
-    expect(stockLeft(d, [], s)['bowl-alaking']).toBe(78);
+    expect(stockLeft(d, [], s)['bowl-alaking']).toBe(58);
     const sum = summarize(d, [], s);
-    expect(sum.waste.cost).toBe(144);
-    expect(sum.profit).toBe(-144);
+    expect(sum.waste.cost).toBeCloseTo(215.86, 2);
+    expect(sum.profit).toBeCloseTo(-215.86, 2);
   });
 });
 
@@ -293,12 +294,40 @@ describe('one name per item', () => {
   it('uses the same menu name on every screen and in the export', () => {
     const names = s.menu.map((m) => m.name);
     expect(new Set(names).size).toBe(names.length);
-    expect(s.menu.filter((m) => m.kind === 'bowl').map((m) => m.name)).toEqual(['Ala King', 'Honey Garlic', 'Boom Sauce', 'Salted Egg']);
+    expect(s.menu.filter((m) => m.kind === 'bowl').map((m) => m.name)).toEqual(['Regular (Original) Chicken Rice Bowl', 'Soy Garlic Chicken Rice Bowl', 'Garlic Butter Chicken Rice Bowl', 'Ala King Chicken Rice Bowl']);
     const forCombo = [bowl(), fries(), slush()];
     const combo = applyCombo(forCombo, suggestCombo(forCombo, s)!, s);
-    expect(combo[0].name).toBe('Combo A: Ala King + Regular Fries + Blue Lemonade Slushie');
+    expect(combo[0].name).toBe('Combo A: Ala King Chicken Rice Bowl + Regular Fries + Watermelon Slushie');
     const o = { ...order(combo), status: 'ready' as const };
-    expect(kitchenMadeCounts(day, [o], s).map((r) => r.name)).toEqual(['Ala King', 'Regular Fries', 'Blue Lemonade Slushie']);
-    expect(ordersCsv(day, [o], s)).toContain('Ala King + Regular Fries + Blue Lemonade Slushie');
+    expect(kitchenMadeCounts(day, [o], s).map((r) => r.name)).toEqual(['Ala King Chicken Rice Bowl', 'Regular Fries', 'Watermelon Slushie']);
+    expect(ordersCsv(day, [o], s)).toContain('Ala King Chicken Rice Bowl + Regular Fries + Watermelon Slushie');
+  });
+});
+
+describe('real menu and allergens', () => {
+  const item = (id: string) => s.menu.find((m) => m.id === id)!;
+
+  it('labels contains and may-contain separately', () => {
+    expect(allergenText(itemTags(item('bowl-original')))).toBe('Contains: Egg, Wheat · May contain: Milk, Soy');
+    expect(allergenText(itemTags(item('bowl-soygarlic')))).toBe('Contains: Egg, Wheat, Milk, Soy, Sesame, Shellfish');
+    expect(allergenText(itemTags(item('fries-overload')))).toContain('Pork');
+    expect(allergenText(itemTags(item('slush-mango')))).toBeNull();
+    expect(allergenHint(s.sideAllergens['Cucumber Salad'])).toBe('soy, wheat, sesame');
+    expect(allergenHint(s.sideAllergens['Shredded Cabbage'])).toBeUndefined();
+    expect(allergenHint(s.dipAllergens['Ranch'])).toBe('egg, milk');
+  });
+
+  it('asks for a dip on Regular Fries only, and the 10-stamp reward is the Original bowl', () => {
+    expect(needsPicker(item('fries-reg'))).toBe(true);
+    expect(needsPicker(item('fries-overload'))).toBe(false);
+    expect(needsPicker(item('bowl-alaking'))).toBe(true);
+    expect(s.loyalty.rewards.find((r) => r.at === 10)?.itemId).toBe('bowl-original');
+  });
+
+  it('formats unit costs with centavos and whole prices without', () => {
+    expect(peso(96.04)).toBe('₱96.04');
+    expect(peso(215.86000000000001)).toBe('₱215.86');
+    expect(peso(1234)).toBe('₱1,234');
+    expect(peso(-10)).toBe('−₱10');
   });
 });

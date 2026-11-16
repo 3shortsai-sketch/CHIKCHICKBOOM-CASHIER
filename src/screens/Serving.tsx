@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { allergenHint, allergenText, itemTags } from '../domain/allergens';
 import { peso } from '../domain/pricing';
 import { bestSellers, isAvailable, recentWins, stockLeft, type Win } from '../domain/reports';
-import type { MenuItem } from '../domain/types';
+import type { MenuItem, Settings } from '../domain/types';
 import { PRIZE_LABEL } from '../domain/wheel';
 import { useLiveCart, type LiveCart } from '../data/live';
 import { modeOrders, openDay, useStore } from '../data/store';
@@ -102,9 +103,27 @@ function MenuRow({ m, available, best }: { m: MenuItem; available: boolean; best
           <b>{available ? peso(m.price) : 'SOLD OUT'}</b>
         </div>
         {m.description && <small className="menu-desc">{m.description}</small>}
-        {m.allergens && m.allergens.length > 0 && <small className="menu-allergens">Contains: {m.allergens.join(', ')}</small>}
+        {allergenText(itemTags(m)) && <small className="menu-allergens">{allergenText(itemTags(m))}</small>}
       </div>
     </li>
+  );
+}
+
+function ChoiceLine({ label, options, tags }: { label: string; options: string[]; tags: Settings['sideAllergens'] }) {
+  return (
+    <p className="menu-choices">
+      <b>{label}:</b>{' '}
+      {options.map((o, i) => {
+        const h = allergenHint(tags[o]);
+        return (
+          <span key={o}>
+            {i > 0 && ' · '}
+            {o}
+            {h && <span className="menu-choice-allergens"> ({h})</span>}
+          </span>
+        );
+      })}
+    </p>
   );
 }
 
@@ -245,6 +264,8 @@ export function Serving() {
                     <MenuRow key={m.id} m={m} available={isAvailable(m, day, left)} best={best.has(m.id)} />
                   ))}
               </ul>
+              {c.id === 'bowls' && <ChoiceLine label="Free side" options={s.sides} tags={s.sideAllergens} />}
+              {c.id === 'fries' && <ChoiceLine label="Free dip (Regular Fries)" options={s.dips} tags={s.dipAllergens} />}
             </div>
           ))}
           <div className="menu-col">
@@ -264,7 +285,7 @@ export function Serving() {
                   </li>
                 ))}
             </ul>
-            <p className="menu-allergy-note">Food allergy? Please ask our cashier.</p>
+            <p className="menu-allergy-note">Food allergy? Please ask our cashier. Brand ingredients can vary.</p>
           </div>
         </section>
         <section className="serving-wheel">

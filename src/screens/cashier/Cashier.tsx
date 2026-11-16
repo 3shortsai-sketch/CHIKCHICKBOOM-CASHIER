@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { amountDue, createOrder, nextSeq, orderNumber } from '../../domain/checkout';
 import { availableRewards, canRedeem, cardState, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
-import { applyCombo, itemById, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
+import { applyCombo, itemById, needsPicker, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
+import { allergenText, itemTags } from '../../domain/allergens';
 import { promoStatus } from '../../domain/promo';
 import { isAvailable, pendingSpins, stockLeft, summarize } from '../../domain/reports';
 import type { Category, Combo, MenuItem, Order, OrderLine, PaymentMethod, Reward } from '../../domain/types';
@@ -108,7 +109,7 @@ export function Cashier() {
       return;
     }
     if (!canUse(item.id)) return flash(`${item.name} is sold out.`, true);
-    if (item.kind === 'bowl' || item.kind === 'fries' || item.kind === 'extraSide') setPicking({ type: 'item', item });
+    if (needsPicker(item)) setPicking({ type: 'item', item });
     else addLine({ id: newId('l'), itemId: item.id, name: item.name, qty: 1, unitPrice: item.price });
   };
 
@@ -122,7 +123,7 @@ export function Cashier() {
   const editLine = (l: OrderLine) => {
     if (l.combo) return flash('To change a combo, remove it and add it again.');
     const item = itemById(s, l.itemId);
-    if (!item || !(item.kind === 'bowl' || item.kind === 'fries' || item.kind === 'extraSide')) return;
+    if (!item || !needsPicker(item)) return;
     setPicking({ type: 'item', item, initial: l });
   };
 
@@ -404,7 +405,7 @@ export function Cashier() {
                       <button key={m.id} className={`tile tile-${m.category} ${out ? 'out' : ''} ${!out && n <= 5 ? 'low' : ''}`} onClick={() => tapItem(m)} aria-label={`${m.name}, ${peso(m.price)}, ${out ? 'sold out' : `${n} left`}`}>
                         {i < 9 && <kbd>{i + 1}</kbd>}
                         <span className="tile-name">{m.name}</span>
-                        {m.allergens && m.allergens.length > 0 && <span className="tile-allergens">Contains: {m.allergens.join(', ')}</span>}
+                        {allergenText(itemTags(m), true) && <span className="tile-allergens">{allergenText(itemTags(m), true)}</span>}
                         <span className="tile-foot">
                           <span className="tile-price">{peso(m.price)}</span>
                           <span className="tile-left">{marked ? 'sold out' : n <= 0 ? '0 left' : `${n} left`}</span>
@@ -473,7 +474,8 @@ export function Cashier() {
               ) : (
                 <ul className="lines">
                   {lines.map((l) => {
-                    const editable = !l.combo && ['bowl', 'fries', 'extraSide'].includes(itemById(s, l.itemId)?.kind ?? '');
+                    const lineItem = itemById(s, l.itemId);
+                    const editable = !l.combo && !!lineItem && needsPicker(lineItem);
                     return (
                       <li key={l.id} className={`line ${l.free ? 'free' : ''}`}>
                         <div className="line-main">

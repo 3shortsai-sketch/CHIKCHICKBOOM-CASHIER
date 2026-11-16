@@ -138,7 +138,20 @@ export function applyCombo(lines: OrderLine[], sug: ComboSuggestion, s: Settings
   return next;
 }
 
+/** ₱1,234 for whole pesos, ₱96.04 when there are centavos (unit costs). */
 export function peso(n: number): string {
-  const sign = n < 0 ? '−' : '';
-  return `${sign}₱${Math.abs(n).toLocaleString('en-PH')}`;
+  const v = Math.round(Math.abs(n) * 100) / 100;
+  const sign = n < 0 && v > 0 ? '−' : '';
+  const cents = Number.isInteger(v) ? 0 : 2;
+  return `${sign}₱${v.toLocaleString('en-PH', { minimumFractionDigits: cents, maximumFractionDigits: 2 })}`;
+}
+
+/** Round to centavos for exports (avoids 215.86000000000001). */
+export function money2(n: number): string {
+  return String(Math.round(n * 100) / 100);
+}
+
+/** Items the cashier picks options for: bowls (side), regular fries (dip), extra side. */
+export function needsPicker(item: MenuItem): boolean {
+  return item.kind === 'bowl' || (item.kind === 'fries' && !!item.regular) || item.kind === 'extraSide';
 }

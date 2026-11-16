@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { defaultSettings } from '../domain/defaults';
-import type { BusinessDay, MenuItem, Order, Settings } from '../domain/types';
+import { defaultSettings, MENU_VERSION } from '../domain/defaults';
+import type { BusinessDay, Order, Settings } from '../domain/types';
 
 /**
  * Local-first store.
@@ -41,33 +41,28 @@ function read<T>(key: string, fallback: T): T {
   }
 }
 
-/**
- * Older versions gave each bowl a long name plus a short one. Items now have
- * one name used everywhere, so the old default names are renamed. Names the
- * team typed themselves are left alone.
- */
-const OLD_DEFAULT_NAMES: Record<string, string> = {
-  'Ala King Chicken Rice Bowl': 'Ala King',
-  'Honey Garlic Chicken Rice Bowl': 'Honey Garlic',
-  'Spicy Boom Chicken Rice Bowl': 'Boom Sauce',
-  'Boom Sauce Chicken Rice Bowl': 'Boom Sauce',
-  'Salted Egg Chicken Rice Bowl': 'Salted Egg',
-};
-
-export function migrateMenu(menu: MenuItem[]): MenuItem[] {
-  return menu.map((m) => {
-    const { short: _short, ...rest } = m as MenuItem & { short?: string };
-    void _short;
-    return OLD_DEFAULT_NAMES[rest.name] ? { ...rest, name: OLD_DEFAULT_NAMES[rest.name] } : rest;
-  });
-}
-
 function loadSettings(): Settings {
   const saved = read<Partial<Settings> | null>(KEY.settings, null);
   if (!saved) return defaultSettings();
   // New settings fields get their default value.
   const merged = { ...defaultSettings(), ...saved };
-  return { ...merged, menu: migrateMenu(merged.menu) };
+  // A device saved before the real menu was added still has the placeholder
+  // menu: give it the real menu, sides, dips and rewards. Everything else
+  // (PINs, goal, wheel, cashiers...) is kept.
+  if ((saved.menuVersion ?? 1) < MENU_VERSION) {
+    const fresh = defaultSettings();
+    return {
+      ...merged,
+      menu: fresh.menu,
+      sides: fresh.sides,
+      dips: fresh.dips,
+      sideAllergens: fresh.sideAllergens,
+      dipAllergens: fresh.dipAllergens,
+      loyalty: { ...merged.loyalty, rewards: fresh.loyalty.rewards },
+      menuVersion: MENU_VERSION,
+    };
+  }
+  return merged;
 }
 
 let state: State = {

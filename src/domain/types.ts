@@ -21,12 +21,16 @@ export type MenuItem = {
   description?: string;
   /** Allergens the item contains (see ALLERGENS). Empty = none recorded. */
   allergens?: string[];
+  /** Allergens that may be present (brand ingredients vary: "check the label"). */
+  mayContain?: string[];
   /** Photo file in public/menu/, e.g. "menu/ala-king.jpg". */
   photo?: string;
 };
 
 /** Common food allergens the booth can tag an item with. */
-export const ALLERGENS = ['Egg', 'Milk', 'Wheat', 'Soy', 'Peanut', 'Tree nut', 'Shellfish', 'Fish', 'Sesame'] as const;
+export const ALLERGENS = ['Egg', 'Milk', 'Wheat', 'Soy', 'Sesame', 'Shellfish', 'Fish', 'Peanut', 'Tree nut', 'Pork'] as const;
+
+export type AllergenTags = { contains?: string[]; may?: string[] };
 
 export type Combo = {
   id: 'comboA' | 'comboB';
@@ -166,6 +170,11 @@ export type Settings = {
   combos: Combo[];
   sides: string[];
   dips: string[];
+  /** Allergens of each free side and dip, since customers pick them. */
+  sideAllergens: Record<string, AllergenTags>;
+  dipAllergens: Record<string, AllergenTags>;
+  /** Bumped when the built-in menu changes, so devices with an old saved menu get the new one. */
+  menuVersion: number;
   extraSidePrice: number;
   extraSaucePrice: number;
   wheel: { paused: boolean; slots: WheelSlot[] };

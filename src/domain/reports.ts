@@ -1,4 +1,4 @@
-import { itemById, lineTotal, stockUsage } from './pricing';
+import { itemById, lineTotal, money2, stockUsage } from './pricing';
 import { PRIZE_LABEL, prizeRefundTotal } from './wheel';
 import type { BusinessDay, MenuItem, Order, OrderLine, PaymentMethod, PrizeId, Settings } from './types';
 
@@ -233,7 +233,7 @@ export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Setting
       ]
         .filter(Boolean)
         .join('; ');
-      out.push([...base, 'item', l.combo ? (s.combos.find((c) => c.id === l.combo!.comboId)?.name ?? l.itemId) : (itemById(s, l.itemId)?.name ?? l.name), details, String(l.qty), String(l.unitPrice), String(lineTotal(l, s)), String(lineCost(l, s)), ...tail]);
+      out.push([...base, 'item', l.combo ? (s.combos.find((c) => c.id === l.combo!.comboId)?.name ?? l.itemId) : (itemById(s, l.itemId)?.name ?? l.name), details, String(l.qty), String(l.unitPrice), String(lineTotal(l, s)), money2(lineCost(l, s)), ...tail]);
     }
     if (o.voucher) out.push([...base, 'voucher', o.voucher.code, '', '1', '', String(-o.voucher.amount), '0', ...tail]);
     for (const sp of o.spins) {
@@ -243,7 +243,7 @@ export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Setting
   }
   for (const w of day?.waste ?? []) {
     const item = itemById(s, w.itemId);
-    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, String(w.qty), '0', '0', String((item?.unitCost ?? 0) * w.qty), 'no', '']);
+    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, String(w.qty), '0', '0', money2((item?.unitCost ?? 0) * w.qty), 'no', '']);
   }
   return out.map((r) => r.map(csvCell).join(',')).join('\n');
 }
