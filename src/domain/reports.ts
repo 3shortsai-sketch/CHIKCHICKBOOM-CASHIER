@@ -1,4 +1,4 @@
-import { itemById, lineTotal, stockUsage } from './pricing';
+import { itemById, lineTotal, money2, stockUsage } from './pricing';
 import { PRIZE_LABEL, prizeRefundTotal } from './wheel';
 import type { BusinessDay, MenuItem, Order, OrderLine, PaymentMethod, PrizeId, Settings } from './types';
 
@@ -182,7 +182,7 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
   };
 }
 
-/** Bowls, fries, etc. finished by the kitchen today, by short name. */
+/** Bowls, fries, etc. finished by the kitchen today, by menu name. */
 export function kitchenMadeCounts(day: BusinessDay | undefined, all: Order[], s: Settings): { name: string; made: number; waiting: number }[] {
   const made = new Map<string, { name: string; made: number; waiting: number }>();
   for (const o of liveOrders(dayOrders(day, all))) {
@@ -190,7 +190,7 @@ export function kitchenMadeCounts(day: BusinessDay | undefined, all: Order[], s:
     for (const [id, n] of Object.entries(stockUsage(o.lines))) {
       const item = itemById(s, id);
       if (!item || item.category === 'addons') continue;
-      const row = made.get(id) ?? { name: item.short ?? item.name, made: 0, waiting: 0 };
+      const row = made.get(id) ?? { name: item.name, made: 0, waiting: 0 };
       if (done) row.made += n;
       else row.waiting += n;
       made.set(id, row);
@@ -227,13 +227,13 @@ export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Setting
         l.choices?.extraSides?.length && `extra sides: ${l.choices.extraSides.join('/')}`,
         l.choices?.extraSauce && `extra sauce x${l.choices.extraSauce}`,
         l.choices?.dip && `dip: ${l.choices.dip}`,
-        l.combo && l.combo.parts.map((p) => itemById(s, p.itemId)?.short ?? p.itemId).join(' + '),
+        l.combo && l.combo.parts.map((p) => itemById(s, p.itemId)?.name ?? p.itemId).join(' + '),
         l.free && (l.free.reason === 'prize' ? `wheel: ${PRIZE_LABEL[l.free.prize]}` : `reward: ${l.free.stampsAt} stamps`),
         l.notes,
       ]
         .filter(Boolean)
         .join('; ');
-      out.push([...base, 'item', l.combo ? (s.combos.find((c) => c.id === l.combo!.comboId)?.name ?? l.itemId) : (itemById(s, l.itemId)?.name ?? l.name), details, String(l.qty), String(l.unitPrice), String(lineTotal(l, s)), String(lineCost(l, s)), ...tail]);
+      out.push([...base, 'item', l.combo ? (s.combos.find((c) => c.id === l.combo!.comboId)?.name ?? l.itemId) : (itemById(s, l.itemId)?.name ?? l.name), details, String(l.qty), String(l.unitPrice), String(lineTotal(l, s)), money2(lineCost(l, s)), ...tail]);
     }
     if (o.voucher) out.push([...base, 'voucher', o.voucher.code, '', '1', '', String(-o.voucher.amount), '0', ...tail]);
     for (const sp of o.spins) {
@@ -243,7 +243,50 @@ export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Setting
   }
   for (const w of day?.waste ?? []) {
     const item = itemById(s, w.itemId);
-    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, String(w.qty), '0', '0', String((item?.unitCost ?? 0) * w.qty), 'no', '']);
+    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, String(w.qty), '0', '0', money2((item?.unitCost ?? 0) * w.qty), 'no', '']);
   }
   return out.map((r) => r.map(csvCell).join(',')).join('\n');
+}
+
+// ---------- Customer monitor ----------
+
+/**
+ * Today's best sellers by pieces sold (combo parts count for their item).
+ * Only items that sold at least `min` qualify, so one early sale doesn't
+ * crown a "best seller".
+ */
+export function bestSellers(day: BusinessDay | undefined, all: Order[], s: Settings, top = 2, min = 3): string[] {
+  const sold: Record<string, number> = {};
+  for (const o of liveOrders(dayOrders(day, all))) {
+    for (const l of o.lines) {
+      if (l.free) continue;
+      const ids = l.combo ? l.combo.parts.map((p) => p.itemId) : [l.itemId];
+      for (const id of ids) sold[id] = (sold[id] ?? 0) + l.qty;
+    }
+  }
+  return Object.entries(sold)
+    .filter(([id, n]) => n >= min && itemById(s, id)?.category !== 'addons')
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, top)
+    .map(([id]) => id);
+}
+
+export type Win = { orderId: string; number: string; prize: PrizeId; at: number };
+
+/** Latest wheel wins today, newest first ("Try again" is not a win). */
+export function recentWins(day: BusinessDay | undefined, all: Order[], n = 5): Win[] {
+  const wins: Win[] = [];
+  for (const o of liveOrders(dayOrders(day, all))) {
+    for (const sp of o.spins) {
+      if (sp.prize !== 'tryAgain') wins.push({ orderId: o.id, number: o.number, prize: sp.prize, at: sp.at });
+    }
+  }
+  return wins.sort((a, b) => b.at - a.at).slice(0, n);
+}
+
+/** Paid orders whose customer has not spun yet (wheel is at the pickup spot). */
+export function pendingSpins(day: BusinessDay | undefined, all: Order[], now: number, maxAgeMin = 45): Order[] {
+  return liveOrders(dayOrders(day, all))
+    .filter((o) => o.spinsEarned > o.spins.length && now - o.createdAt < maxAgeMin * 60000)
+    .sort((a, b) => a.createdAt - b.createdAt);
 }

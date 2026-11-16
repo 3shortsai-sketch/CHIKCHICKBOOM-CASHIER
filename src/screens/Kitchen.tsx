@@ -17,7 +17,7 @@ function partText(p: ComboPart | OrderLine['choices']): string[] {
 }
 
 function KitchenLine({ line, s }: { line: OrderLine; s: Settings }) {
-  const name = (id: string) => itemById(s, id)?.short ?? itemById(s, id)?.name ?? id;
+  const name = (id: string) => itemById(s, id)?.name ?? id;
   if (line.combo) {
     return (
       <li className={line.addedAfterPay ? 'added' : ''}>

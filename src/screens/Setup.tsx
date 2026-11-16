@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { newId } from '../domain/pricing';
-import type { MenuItem, Settings } from '../domain/types';
+import { ALLERGENS, type AllergenTags, type MenuItem, type Settings } from '../domain/types';
 import { clearDemoData, openDay, resetSettings, saveSettings, setDevice, useDevice, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 import { PinGate } from '../ui/ui';
@@ -29,6 +29,29 @@ function ListEditor({ label, values, onChange }: { label: string; values: string
         onBlur={() => onChange(text.split('\n').map((x) => x.trim()).filter(Boolean))}
       />
     </label>
+  );
+}
+
+/** Each allergen chip cycles: off → Contains → May contain → off. */
+function AllergenPicker({ value, onChange }: { value: AllergenTags | undefined; onChange: (v: AllergenTags) => void }) {
+  const contains = value?.contains ?? [];
+  const may = value?.may ?? [];
+  const cycle = (a: string) => {
+    if (contains.includes(a)) onChange({ contains: contains.filter((x) => x !== a), may: [...may, a] });
+    else if (may.includes(a)) onChange({ contains, may: may.filter((x) => x !== a) });
+    else onChange({ contains: [...contains, a], may });
+  };
+  return (
+    <div className="allergen-chips">
+      {ALLERGENS.map((a) => {
+        const state = contains.includes(a) ? 'on' : may.includes(a) ? 'may' : '';
+        return (
+          <button key={a} type="button" className={`allergen-chip ${state}`} onClick={() => cycle(a)} aria-label={`${a}: ${state === 'on' ? 'contains' : state === 'may' ? 'may contain' : 'not present'}`}>
+            {state === 'may' ? `may: ${a}` : a}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -96,8 +119,7 @@ function SetupInner() {
               <thead>
                 <tr>
                   <th>On menu</th>
-                  <th>Name</th>
-                  <th>Short name</th>
+                  <th>Name (shown everywhere)</th>
                   <th>Tab</th>
                   <th>Type</th>
                   <th>Price ₱</th>
@@ -113,9 +135,6 @@ function SetupInner() {
                     </td>
                     <td>
                       <input className="input" defaultValue={m.name} onBlur={(e) => setItem(m.id, { name: e.target.value })} />
-                    </td>
-                    <td>
-                      <input className="input" defaultValue={m.short ?? ''} onBlur={(e) => setItem(m.id, { short: e.target.value || undefined })} />
                     </td>
                     <td>
                       <select className="input" value={m.category} onChange={(e) => { const category = e.target.value as MenuItem['category']; setItem(m.id, { category, kind: KIND_FOR[category][0] }); }}>
@@ -152,6 +171,66 @@ function SetupInner() {
           </div>
           <button className="btn small" onClick={addItem}>+ Add item</button>
           <p className="muted small">Starting stock is copied into each new day when the cashier opens it.</p>
+        </section>
+
+        <section className="panel wide">
+          <h2>What customers see</h2>
+          <p className="muted small">
+            One-line description and allergens, shown on the customer monitor, cashier tiles and pickers. Tap an allergen to cycle: <b>off → Contains → May contain</b>. Use "May contain" for brand products whose label you still need to check (Knorr, bread crumbs, oil, Oreo, Biscoff…).
+          </p>
+          <div className="table-scroll">
+            <table className="edit-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Description</th>
+                  <th>Allergens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {s.menu
+                  .filter((m) => m.category !== 'addons')
+                  .map((m) => (
+                    <tr key={m.id}>
+                      <td>
+                        <b>{m.name}</b>
+                      </td>
+                      <td>
+                        <input className="input" defaultValue={m.description ?? ''} maxLength={70} onBlur={(e) => setItem(m.id, { description: e.target.value.trim() || undefined })} placeholder="e.g. Crispy chicken in garlic butter" />
+                      </td>
+                      <td>
+                        <AllergenPicker value={{ contains: m.allergens, may: m.mayContain }} onChange={(v) => setItem(m.id, { allergens: v.contains, mayContain: v.may })} />
+                      </td>
+                    </tr>
+                  ))}
+                {s.sides.map((side) => (
+                  <tr key={`side-${side}`}>
+                    <td>
+                      <b>{side}</b>
+                      <div className="muted small">free side</div>
+                    </td>
+                    <td></td>
+                    <td>
+                      <AllergenPicker value={s.sideAllergens[side]} onChange={(v) => save({ sideAllergens: { ...s.sideAllergens, [side]: v } })} />
+                    </td>
+                  </tr>
+                ))}
+                {s.dips.map((dip) => (
+                  <tr key={`dip-${dip}`}>
+                    <td>
+                      <b>{dip}</b>
+                      <div className="muted small">free dip</div>
+                    </td>
+                    <td></td>
+                    <td>
+                      <AllergenPicker value={s.dipAllergens[dip]} onChange={(v) => save({ dipAllergens: { ...s.dipAllergens, [dip]: v } })} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted small">Photos: send them over and they'll be added to the menu.</p>
         </section>
 
         <section className="panel">

@@ -1,7 +1,48 @@
 # Chick Chick Boom POS: build plan and house rules
 
-This is the plan the app follows. Anything marked **(placeholder)** is waiting on Step 2
+This is the plan the app follows. Anything marked **(placeholder)** is still to be decided
 and can be changed in `#setup` without touching code.
+
+## Menu
+
+| Item | Price | Unit cost |
+| --- | ---: | ---: |
+| Regular (Original) Chicken Rice Bowl | ₱149 | ₱96.04 |
+| Soy Garlic Chicken Rice Bowl | ₱159 | ₱108.22 |
+| Garlic Butter Chicken Rice Bowl | ₱159 | ₱99.56 |
+| Ala King Chicken Rice Bowl | ₱169 | ₱107.93 |
+| Regular Fries (crinkle cut, 1 free dip) | ₱79 | ₱44.98 |
+| Overload Fries | ₱109 | ₱79.21 |
+| Watermelon Slushie | ₱129 | ₱88.87 |
+| Mango Slushie | ₱129 | ₱90.49 |
+| Bottled Water | ₱29 | ₱13.00 |
+| Choco Chip Cookie | ₱89 | ₱34.08 |
+| Cookie Monster Velvet Cookie | ₱99 | ₱26.16 |
+| Biscoff Cookie | ₱89 | ₱37.02 |
+
+- Bowls: 1 free side: Butter Corn Carrot, Shredded Cabbage or Cucumber Salad.
+- Regular Fries: 1 free dip: Ketchup, Ketchup-Mayo or Ranch. Overload Fries comes with ranch, no dip choice.
+- Combo A ₱329 (any bowl + Regular Fries + any slushie), Combo B ₱339 (any bowl + any slushie + any cookie).
+
+### Allergens (from the ingredient list)
+"Contains" = in the recipe. "May contain" = depends on a brand product (Knorr, bread crumbs, frying oil, HyFun fries, choco chips): check the label and update Setup.
+
+| Item | Contains | May contain |
+| --- | --- | --- |
+| Regular (Original) bowl | Egg, Wheat | Milk, Soy |
+| Soy Garlic bowl | Egg, Wheat, Milk, Soy, Sesame, Shellfish (oyster) | |
+| Garlic Butter bowl | Egg, Wheat, Milk | Soy |
+| Ala King bowl | Egg, Wheat, Milk | Soy |
+| Regular Fries | | Wheat, Soy |
+| Overload Fries | Milk, Wheat, Egg, Pork | Soy |
+| Slushies, water | | |
+| Choco Chip Cookie | Milk, Egg, Wheat | Soy |
+| Cookie Monster Velvet Cookie | Milk, Egg, Wheat, Soy | |
+| Biscoff Cookie | Milk, Egg, Wheat, Soy | |
+| Side: Butter Corn Carrot | Milk | |
+| Side: Cucumber Salad | Soy, Wheat, Sesame | |
+| Dip: Ketchup-Mayo | Egg | |
+| Dip: Ranch | Egg, Milk | |
 
 ## Screens (one link)
 
@@ -42,10 +83,10 @@ but the kitchen tablet is not.
 - Order numbers (A-001, A-002…) restart each business day, not at midnight.
 - Each device has an order letter (laptop = A). A backup cashier device uses B so numbers never clash.
 
-### Spin-to-Win: the customer spins **after paying**
-1. Cashier takes the order and the payment. The order goes to the kitchen.
-2. Customer spins once per bowl that isn't in a combo.
-3. Cashier taps what the wheel landed on (or uses the digital backup wheel).
+### Spin-to-Win: the customer spins **after paying, at the pickup spot**
+1. Cashier takes the order and the payment, and moves on to the next customer straight away. The order goes to the kitchen.
+2. The customer spins the wheel at the pickup spot, once per bowl that isn't in a combo.
+3. The wheel person calls out the prize. The cashier taps the order in **Spins waiting** and taps the prize (or uses the digital backup wheel). Spins stay waiting for 45 minutes.
 
 | Prize | What the app does |
 | --- | --- |
@@ -64,7 +105,7 @@ but the kitchen tablet is not.
 ### Loyalty card
 - Cards CCB-001 to CCB-500. The cashier can type just `37`.
 - 1 stamp per order (+1 for each double-stamp prize).
-- 5 stamps: Free Regular Fries **(placeholder)**. 10 stamps: Free Regular Chicken Rice Bowl, any flavor **(placeholder)**.
+- 5 stamps: Free Regular Fries. 10 stamps: Free Regular (Original) Chicken Rice Bowl.
 - Each reward works once per card. After the 10-stamp reward the card starts again at 0.
 - An order that uses a reward still earns its stamp (switch in Setup).
 - Unknown card numbers are refused. Voiding an order takes its stamps back.
@@ -95,12 +136,24 @@ but the kitchen tablet is not.
 - After payment it shows "Thank you! Your number A-012" and reminds the customer to spin.
 - This works with no internet, because both windows run on the laptop.
 
+- After payment the monitor shows **"✓ Payment received, ₱393 · GCash"** with the order number.
+- When an order is ready the monitor plays a **hen's cluck** ("buk-buk-buk-buk ba-GAWK!") and says **"Order A, 12 is ready!"** using the device's built-in voice. A "Test the sound" button is on the monitor's start screen.
+- **Recent winners** ("A-012 FREE MEAL 🎉") replace the prize list on the wheel panel once someone wins; a FREE MEAL also fills the screen with a burst for 7 seconds.
+- The menu shows a one-line **description** per item, **★ Best seller** badges (top 2 items today, once they've sold at least 3), and **allergens**.
+
+### Allergens
+- Ticked per item in Setup ("What customers see"). Shown on the cashier tile, in the item picker and on the monitor menu ("Contains: Milk, Wheat").
+- Nothing is pre-ticked. Only tick what you know the item contains; the monitor also says "Food allergy? Please ask our cashier."
+
+### Photos
+- Each menu item can have a photo (`public/menu/…`). They will be added when the photos are ready.
+
 ### Payments
 - Cash and GCash. Maya is off (switch in Setup).
 
 ### Prize limit
 - Wheel prizes (cash given back + ingredient cost of free items) plus vouchers used, as a % of what customers paid today.
-- A normal day is about 4–5% (about ₱14 per spin with the placeholder menu).
+- A normal day is about 4–5% (about ₱14 per spin with the real menu; bowls earn 32–37% after ingredients, so the wheel takes roughly 15% of bowl profit).
 - At **6.5%** the cashier sees a warning; at **8%** the cashier is asked to pause the wheel. Not checked until sales reach **₱5,000**, so one early FREE MEAL doesn't trigger it. All three numbers are in Setup.
 
 ### Waste
@@ -110,8 +163,9 @@ but the kitchen tablet is not.
 - The "Card" button shows a card's stamps, rewards ready and visits, without starting an order.
 
 ## Still to decide
-- Real menu, prices, costs and stock (Step 2).
-- Real loyalty rewards (Step 2).
+- Starting stock per item (placeholder numbers in Setup).
+- Unit cost of Extra Side and Extra Sauce (placeholders ₱7 and ₱3).
+- Check brand labels for the "May contain" allergens, then update Setup.
 - Senior citizen / PWD discount: the team decided it is not needed.
 - Receipts: the app's screen is not a BIR official receipt. Check with whoever handles permits.
 

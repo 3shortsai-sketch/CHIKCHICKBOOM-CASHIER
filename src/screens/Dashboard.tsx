@@ -242,7 +242,7 @@ function DashboardInner() {
             )}
             {(day.waste?.length ?? 0) > 0 && (
               <p className="muted small">
-                {day.waste!.map((w) => `${w.qty}× ${s.menu.find((m) => m.id === w.itemId)?.short ?? w.itemId}: ${w.reason} (${w.by}, ${new Date(w.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})`).join(' · ')}
+                {day.waste!.map((w) => `${w.qty}× ${s.menu.find((m) => m.id === w.itemId)?.name ?? w.itemId}: ${w.reason} (${w.by}, ${new Date(w.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})`).join(' · ')}
               </p>
             )}
             <p className="muted small">Waste is included in ingredient cost and profit.</p>

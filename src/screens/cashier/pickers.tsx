@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { allergenHint, allergenText, itemTags } from '../../domain/allergens';
 import { makeComboLine, newId, peso } from '../../domain/pricing';
 import type { Choices, Combo, ComboPart, MenuItem, OrderLine, Settings } from '../../domain/types';
 import { Modal } from '../../ui/ui';
@@ -20,14 +21,32 @@ function useNumberKeys(count: number, onPick: (i: number) => void) {
   }, [count, onPick]);
 }
 
-function Options({ options, value, onPick, keys = true, big }: { options: string[]; value?: string; onPick: (v: string) => void; keys?: boolean; big?: boolean }) {
+function Options({
+  options,
+  value,
+  onPick,
+  keys = true,
+  big,
+  hint,
+}: {
+  options: string[];
+  value?: string;
+  onPick: (v: string) => void;
+  keys?: boolean;
+  big?: boolean;
+  /** Small text under an option, e.g. its allergens. */
+  hint?: (o: string) => string | undefined;
+}) {
   useNumberKeys(keys ? options.length : 0, (i) => onPick(options[i]));
   return (
     <div className={`option-grid ${big ? 'big' : ''}`}>
       {options.map((o, i) => (
         <button key={o} className={`option ${value === o ? 'selected' : ''}`} onClick={() => onPick(o)}>
           {keys && i < 9 && <kbd>{i + 1}</kbd>}
-          {o}
+          <span className="option-label">
+            {o}
+            {hint?.(o) && <small className="option-hint">{hint(o)}</small>}
+          </span>
         </button>
       ))}
     </div>
@@ -86,7 +105,7 @@ function BowlChoices({ s, value, onChange }: { s: Settings; value: Choices; onCh
     <div className="stack">
       <div>
         <h3 className="pick-title">1 free side</h3>
-        <Options options={s.sides} value={value.side} onPick={(side) => onChange({ ...value, side })} />
+        <Options options={s.sides} value={value.side} onPick={(side) => onChange({ ...value, side })} hint={(o) => allergenHint(s.sideAllergens[o])} />
       </div>
       <div>
         <h3 className="pick-sub">Extras (optional)</h3>
@@ -171,6 +190,7 @@ export function ItemPicker({
 
   return (
     <Modal title={title} onClose={onClose} wide={isBowl}>
+      {allergenText(itemTags(item)) && <p className="allergen-note">{allergenText(itemTags(item))}</p>}
       {isBowl && (
         <div className="bowl-mods">
           <h3 className="pick-sub">Extras (optional, set before the side)</h3>
@@ -186,6 +206,7 @@ export function ItemPicker({
         options={options}
         value={isFries ? choices.dip : choices.side}
         onPick={(v) => pick(isFries ? { ...choices, dip: v } : { ...choices, side: v })}
+        hint={(o) => allergenHint(isFries ? s.dipAllergens[o] : s.sideAllergens[o])}
       />
       {editing && isBowl && (
         <div className="modal-foot">
@@ -240,13 +261,13 @@ export function ComboPicker({
     onAdd(makeComboLine(combo, ordered.map((x) => ({ ...x, ...clean(x) })), s));
   };
 
-  const options: { label: string; onPick: () => void; disabled?: boolean }[] = [];
+  const options: { label: string; hint?: string; onPick: () => void; disabled?: boolean }[] = [];
   if (!step.sub) {
     if (step.kind === 'fries') {
       const fries = itemsFor('fries')[0];
-      for (const dip of s.dips) options.push({ label: dip, onPick: () => setPart('fries', { itemId: fries.id, dip }), disabled: !fries || !canUse(fries.id) });
+      for (const dip of s.dips) options.push({ label: dip, hint: allergenHint(s.dipAllergens[dip]), onPick: () => setPart('fries', { itemId: fries.id, dip }), disabled: !fries || !canUse(fries.id) });
     } else {
-      for (const it of itemsFor(step.kind)) options.push({ label: it.short ?? it.name, onPick: () => setPart(step.kind, { itemId: it.id }), disabled: !canUse(it.id) });
+      for (const it of itemsFor(step.kind)) options.push({ label: it.name, hint: allergenText(itemTags(it), true) ?? undefined, onPick: () => setPart(step.kind, { itemId: it.id }), disabled: !canUse(it.id) });
     }
   }
   useNumberKeys(step.sub ? 0 : options.length, (i) => !options[i].disabled && options[i].onPick());
@@ -268,7 +289,10 @@ export function ComboPicker({
             {options.map((o, i) => (
               <button key={o.label} className="option" disabled={o.disabled} onClick={o.onPick}>
                 {i < 9 && <kbd>{i + 1}</kbd>}
-                {o.label}
+                <span className="option-label">
+                  {o.label}
+                  {o.hint && <small className="option-hint">{o.hint}</small>}
+                </span>
                 {o.disabled && <span className="tag">sold out</span>}
               </button>
             ))}

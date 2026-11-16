@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { defaultSettings } from '../domain/defaults';
+import { defaultSettings, MENU_VERSION } from '../domain/defaults';
 import type { BusinessDay, Order, Settings } from '../domain/types';
 
 /**
@@ -43,8 +43,26 @@ function read<T>(key: string, fallback: T): T {
 
 function loadSettings(): Settings {
   const saved = read<Partial<Settings> | null>(KEY.settings, null);
+  if (!saved) return defaultSettings();
   // New settings fields get their default value.
-  return saved ? { ...defaultSettings(), ...saved } : defaultSettings();
+  const merged = { ...defaultSettings(), ...saved };
+  // A device saved before the real menu was added still has the placeholder
+  // menu: give it the real menu, sides, dips and rewards. Everything else
+  // (PINs, goal, wheel, cashiers...) is kept.
+  if ((saved.menuVersion ?? 1) < MENU_VERSION) {
+    const fresh = defaultSettings();
+    return {
+      ...merged,
+      menu: fresh.menu,
+      sides: fresh.sides,
+      dips: fresh.dips,
+      sideAllergens: fresh.sideAllergens,
+      dipAllergens: fresh.dipAllergens,
+      loyalty: { ...merged.loyalty, rewards: fresh.loyalty.rewards },
+      menuVersion: MENU_VERSION,
+    };
+  }
+  return merged;
 }
 
 let state: State = {

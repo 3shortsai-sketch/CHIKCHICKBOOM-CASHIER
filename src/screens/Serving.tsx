@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { allergenHint, allergenText, itemTags } from '../domain/allergens';
 import { peso } from '../domain/pricing';
-import { isAvailable, stockLeft } from '../domain/reports';
+import { bestSellers, isAvailable, recentWins, stockLeft, type Win } from '../domain/reports';
+import type { MenuItem, Settings } from '../domain/types';
+import { PRIZE_LABEL } from '../domain/wheel';
 import { useLiveCart, type LiveCart } from '../data/live';
 import { modeOrders, openDay, useStore } from '../data/store';
-import { chime, unlockSound, useNow, useWakeLock } from '../ui/ui';
+import { announce, cluck, spokenNumber, unlockSound, useNow, useWakeLock } from '../ui/ui';
 
 const CATS = [
   { id: 'bowls', label: 'Rice Bowls' },
@@ -11,6 +14,8 @@ const CATS = [
   { id: 'drinks', label: 'Drinks' },
   { id: 'cookies', label: 'Cookies' },
 ] as const;
+
+const METHOD_LABEL = { cash: 'Cash', gcash: 'GCash', maya: 'Maya' } as const;
 
 function formatPhone(n: string): string {
   const d = n.replace(/\D/g, '');
@@ -23,11 +28,21 @@ function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string 
   if (cart.stage === 'paid') {
     return (
       <section className="your-order paid" aria-live="polite">
-        <h2>Thank you!</h2>
+        <div className="paid-check">
+          <span className="paid-tick" aria-hidden="true">
+            ✓
+          </span>
+          <div>
+            <b>Payment received</b>
+            <span>
+              {peso(cart.paid)} · {METHOD_LABEL[cart.method]}
+            </span>
+          </div>
+        </div>
         <p>Your number</p>
         <b className="your-number">{cart.number}</b>
-        {cart.spins > 0 && <p className="your-spin">🎡 Spin the wheel! {cart.spins > 1 ? `${cart.spins} spins` : '1 spin'}</p>}
         {cart.change > 0 && <p className="your-change">Change: {peso(cart.change)}</p>}
+        {cart.spins > 0 && <p className="your-spin">🎡 Spin the wheel at the pickup counter! {cart.spins > 1 ? `(${cart.spins} spins)` : ''}</p>}
       </section>
     );
   }
@@ -75,6 +90,43 @@ function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string 
   );
 }
 
+function MenuRow({ m, available, best }: { m: MenuItem; available: boolean; best: boolean }) {
+  return (
+    <li className={`menu-row ${available ? '' : 'out'}`}>
+      {m.photo && <img className="menu-photo" src={`./${m.photo}`} alt="" loading="lazy" />}
+      <div className="menu-text">
+        <div className="menu-line">
+          <span className="menu-name">
+            {m.name}
+            {best && available && <span className="best-badge">★ Best seller</span>}
+          </span>
+          <b>{available ? peso(m.price) : 'SOLD OUT'}</b>
+        </div>
+        {m.description && <small className="menu-desc">{m.description}</small>}
+        {allergenText(itemTags(m)) && <small className="menu-allergens">{allergenText(itemTags(m))}</small>}
+      </div>
+    </li>
+  );
+}
+
+function ChoiceLine({ label, options, tags }: { label: string; options: string[]; tags: Settings['sideAllergens'] }) {
+  return (
+    <p className="menu-choices">
+      <b>{label}:</b>{' '}
+      {options.map((o, i) => {
+        const h = allergenHint(tags[o]);
+        return (
+          <span key={o}>
+            {i > 0 && ' · '}
+            {o}
+            {h && <span className="menu-choice-allergens"> ({h})</span>}
+          </span>
+        );
+      })}
+    </p>
+  );
+}
+
 export function Serving() {
   const state = useStore((s) => s);
   const s = state.settings;
@@ -84,28 +136,52 @@ export function Serving() {
   const [started, setStarted] = useState(false);
   useWakeLock(started);
 
-  const orders = useMemo(() => modeOrders(state).filter((o) => o.dayId === day?.id && !o.voided), [state, day]);
-  const left = useMemo(() => stockLeft(day, modeOrders(state), s), [day, state, s]);
+  const all = useMemo(() => modeOrders(state), [state]);
+  const orders = useMemo(() => all.filter((o) => o.dayId === day?.id && !o.voided), [all, day]);
+  const left = useMemo(() => stockLeft(day, all, s), [day, all, s]);
+  const best = useMemo(() => new Set(bestSellers(day, all, s)), [day, all, s]);
+  const wins = useMemo(() => recentWins(day, all, 4), [day, all]);
   const clearMs = s.servingClearMinutes * 60000;
   const serving = orders
     .filter((o) => o.status === 'ready' && now - (o.readyAt ?? 0) < clearMs)
     .sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0));
   const preparing = orders.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt);
 
+  // A new "ready" number: cluck, then say it out loud.
   const seen = useRef<Set<string> | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   useEffect(() => {
     const ids = new Set(serving.map((o) => o.id));
     if (seen.current) {
-      const fresh = serving.find((o) => !seen.current!.has(o.id));
-      if (fresh) {
-        chime('ready');
-        setFlash(fresh.id);
+      const fresh = serving.filter((o) => !seen.current!.has(o.id));
+      fresh.forEach((o, i) => {
+        setTimeout(() => {
+          const secs = cluck();
+          setTimeout(() => announce(`Order ${spokenNumber(o.number)} is ready!`), secs * 1000 + 150);
+        }, i * 3500);
+      });
+      if (fresh[0]) {
+        setFlash(fresh[0].id);
         setTimeout(() => setFlash(null), 4000);
       }
     }
     seen.current = ids;
   }, [serving]);
+
+  // A new FREE MEAL: big celebration banner for a few seconds.
+  const seenWins = useRef<Set<string> | null>(null);
+  const [celebrate, setCelebrate] = useState<Win | null>(null);
+  useEffect(() => {
+    const keys = new Set(wins.map((w) => `${w.orderId}:${w.at}`));
+    if (seenWins.current) {
+      const big = wins.find((w) => w.prize === 'freeMeal' && !seenWins.current!.has(`${w.orderId}:${w.at}`));
+      if (big) {
+        setCelebrate(big);
+        setTimeout(() => setCelebrate(null), 7000);
+      }
+    }
+    seenWins.current = keys;
+  }, [wins]);
 
   const start = () => {
     unlockSound();
@@ -119,7 +195,17 @@ export function Serving() {
         <button className="btn primary huge" onClick={start}>
           Tap to start the customer screen
         </button>
-        <p>Drag this window onto the monitor first. Tapping turns on the chime and goes full screen.</p>
+        <p>Drag this window onto the monitor first. Tapping turns on the sound and goes full screen.</p>
+        <button
+          className="btn"
+          onClick={() => {
+            unlockSound();
+            const secs = cluck();
+            setTimeout(() => announce('Order A, 1, is ready!'), secs * 1000 + 150);
+          }}
+        >
+          🔊 Test the sound
+        </button>
       </div>
     );
   }
@@ -128,6 +214,15 @@ export function Serving() {
   return (
     <div className="serving">
       {s.mode === 'demo' && <div className="demo-banner">DEMO</div>}
+      {celebrate && (
+        <div className="win-banner" role="status">
+          <div className="burst" aria-hidden="true" />
+          <div className="win-text">
+            <b>{celebrate.number}</b>
+            <span>won a FREE MEAL! 🎉</span>
+          </div>
+        </div>
+      )}
       <div className="serving-top">
         <section className="now-serving">
           <div className="serving-brand">
@@ -135,9 +230,15 @@ export function Serving() {
             <h1>NOW SERVING</h1>
           </div>
           <div className="serving-numbers">
-            {serving.length === 0 ? <span className="serving-empty">Your number will show here</span> : serving.slice(0, 6).map((o, i) => (
-              <span key={o.id} className={`snum ${i === 0 ? 'first' : ''} ${flash === o.id ? 'flash' : ''}`}>{o.number}</span>
-            ))}
+            {serving.length === 0 ? (
+              <span className="serving-empty">Your number will show here</span>
+            ) : (
+              serving.slice(0, 6).map((o, i) => (
+                <span key={o.id} className={`snum ${i === 0 ? 'first' : ''} ${flash === o.id ? 'flash' : ''}`}>
+                  {o.number}
+                </span>
+              ))
+            )}
           </div>
         </section>
         <section className={`preparing ${cart.stage !== 'idle' ? 'with-order' : ''} ${cart.stage === 'paying' && cart.method === 'gcash' ? 'with-qr' : ''}`}>
@@ -154,34 +255,37 @@ export function Serving() {
       <div className="serving-bottom">
         <section className="serving-menu">
           {CATS.map((c) => (
-            <div key={c.id}>
+            <div key={c.id} className={`menu-col menu-col-${c.id}`}>
               <h3>{c.label}</h3>
               <ul>
                 {s.menu
                   .filter((m) => m.category === c.id && m.active)
                   .map((m) => (
-                    <li key={m.id} className={isAvailable(m, day, left) ? '' : 'out'}>
-                      <span>{m.name}</span>
-                      <b>{isAvailable(m, day, left) ? peso(m.price) : 'SOLD OUT'}</b>
-                    </li>
+                    <MenuRow key={m.id} m={m} available={isAvailable(m, day, left)} best={best.has(m.id)} />
                   ))}
               </ul>
+              {c.id === 'bowls' && <ChoiceLine label="Free side" options={s.sides} tags={s.sideAllergens} />}
+              {c.id === 'fries' && <ChoiceLine label="Free dip (Regular Fries)" options={s.dips} tags={s.dipAllergens} />}
             </div>
           ))}
-          <div>
+          <div className="menu-col">
             <h3>Combos</h3>
             <ul>
               {s.combos
                 .filter((c) => c.active)
                 .map((c) => (
-                  <li key={c.id}>
-                    <span>
-                      {c.name}: {c.parts.map((p) => (p === 'fries' ? 'regular fries' : p)).join(' + ')}
-                    </span>
-                    <b>{peso(c.price)}</b>
+                  <li key={c.id} className="menu-row">
+                    <div className="menu-text">
+                      <div className="menu-line">
+                        <span className="menu-name">{c.name}</span>
+                        <b>{peso(c.price)}</b>
+                      </div>
+                      <small className="menu-desc">{c.parts.map((p) => (p === 'fries' ? 'regular fries' : p)).join(' + ')}</small>
+                    </div>
                   </li>
                 ))}
             </ul>
+            <p className="menu-allergy-note">Food allergy? Please ask our cashier. Brand ingredients can vary.</p>
           </div>
         </section>
         <section className="serving-wheel">
@@ -190,12 +294,26 @@ export function Serving() {
             <p>The wheel is taking a break today.</p>
           ) : (
             <>
-              <p>Every rice bowl (not in a combo) gets 1 spin after paying!</p>
-              <ul>
-                {prizes.map((p) => (
-                  <li key={p.prize}>{p.label}</li>
-                ))}
-              </ul>
+              <p>Every rice bowl (not in a combo) gets 1 spin. Spin at the pickup counter!</p>
+              {wins.length > 0 ? (
+                <div className="winners">
+                  <span className="winners-label">Recent winners</span>
+                  <ul>
+                    {wins.map((w) => (
+                      <li key={`${w.orderId}:${w.at}`} className={w.prize === 'freeMeal' ? 'big' : ''}>
+                        <b>{w.number}</b> {PRIZE_LABEL[w.prize]}
+                        {w.prize === 'freeMeal' ? ' 🎉' : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <ul className="prize-list">
+                  {prizes.map((p) => (
+                    <li key={p.prize}>{p.label}</li>
+                  ))}
+                </ul>
+              )}
               <p className="small">One prize per meal. Combos and voucher orders don't spin.</p>
             </>
           )}

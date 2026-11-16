@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { amountDue, createOrder, nextSeq, orderNumber } from '../../domain/checkout';
 import { availableRewards, canRedeem, cardState, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
-import { applyCombo, itemById, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
+import { applyCombo, itemById, needsPicker, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
+import { allergenText, itemTags } from '../../domain/allergens';
 import { promoStatus } from '../../domain/promo';
-import { isAvailable, stockLeft, summarize } from '../../domain/reports';
+import { isAvailable, pendingSpins, stockLeft, summarize } from '../../domain/reports';
 import type { Category, Combo, MenuItem, Order, OrderLine, PaymentMethod, Reward } from '../../domain/types';
 import { publishCart } from '../../data/live';
 import { modeOrders, openDay, patchDay, patchOrder, putOrder, saveSettings, useDevice, useStore } from '../../data/store';
 import { TopBar } from '../../ui/TopBar';
 import { OpenDayForm } from './OpenDay';
-import { AfterPay, PayModal, StampDots } from './payflow';
+import { AfterPay, PayModal, StampDots, type AfterPayMode } from './payflow';
 import { ComboPicker, ItemPicker } from './pickers';
 import { CardLookup, WasteLog } from './tools';
 
@@ -40,7 +41,7 @@ export function Cashier() {
   const [lines, setLines] = useState<OrderLine[]>([]);
   const [picking, setPicking] = useState<Picking>(null);
   const [paying, setPaying] = useState(false);
-  const [afterPay, setAfterPay] = useState<{ id: string; past: boolean } | null>(null);
+  const [afterPay, setAfterPay] = useState<{ id: string; mode: AfterPayMode } | null>(null);
   const [soldOutMode, setSoldOutMode] = useState(false);
   const [cardInput, setCardInput] = useState('');
   const [cardId, setCardId] = useState<string | undefined>();
@@ -108,7 +109,7 @@ export function Cashier() {
       return;
     }
     if (!canUse(item.id)) return flash(`${item.name} is sold out.`, true);
-    if (item.kind === 'bowl' || item.kind === 'fries' || item.kind === 'extraSide') setPicking({ type: 'item', item });
+    if (needsPicker(item)) setPicking({ type: 'item', item });
     else addLine({ id: newId('l'), itemId: item.id, name: item.name, qty: 1, unitPrice: item.price });
   };
 
@@ -122,7 +123,7 @@ export function Cashier() {
   const editLine = (l: OrderLine) => {
     if (l.combo) return flash('To change a combo, remove it and add it again.');
     const item = itemById(s, l.itemId);
-    if (!item || !(item.kind === 'bowl' || item.kind === 'fries' || item.kind === 'extraSide')) return;
+    if (!item || !needsPicker(item)) return;
     setPicking({ type: 'item', item, initial: l });
   };
 
@@ -208,7 +209,7 @@ export function Cashier() {
       putOrder(o);
       setPaying(false);
       setPayMethod('cash');
-      setAfterPay({ id: o.id, past: false });
+      setAfterPay({ id: o.id, mode: 'fresh' });
       clearOrder();
     } catch (e) {
       flash((e as Error).message, true);
@@ -221,8 +222,15 @@ export function Cashier() {
   // ----- Customer monitor: show the order as it is rung up -----
   const afterOrder = afterPay ? state.orders[afterPay.id] : undefined;
   useEffect(() => {
-    if (afterOrder && !afterPay?.past) {
-      publishCart({ stage: 'paid', number: afterOrder.number, spins: afterOrder.spinsEarned - afterOrder.spins.length, change: afterOrder.payment.method === 'cash' ? afterOrder.payment.change : 0 });
+    if (afterOrder && afterPay?.mode === 'fresh') {
+      publishCart({
+        stage: 'paid',
+        number: afterOrder.number,
+        spins: afterOrder.spinsEarned - afterOrder.spins.length,
+        change: afterOrder.payment.method === 'cash' ? afterOrder.payment.change : 0,
+        paid: afterOrder.payment.due,
+        method: afterOrder.payment.method,
+      });
       return;
     }
     if (!lines.length) {
@@ -249,7 +257,7 @@ export function Cashier() {
       spins,
       method: paying ? payMethod : undefined,
     });
-  }, [lines, paying, payMethod, voucher, afterOrder, afterPay?.past, s, sub, due, spins]);
+  }, [lines, paying, payMethod, voucher, afterOrder, afterPay?.mode, s, sub, due, spins]);
 
   // ----- Keyboard -----
   const visible = useMemo(() => {
@@ -297,6 +305,7 @@ export function Cashier() {
   const readyToClaim = todays.filter((o) => o.status === 'ready').sort((a, b) => (a.readyAt ?? 0) - (b.readyAt ?? 0));
   const inKitchen = todays.filter((o) => o.status === 'new' || o.status === 'cooking').length;
   const recent = [...todays].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
+  const waitingSpins = pendingSpins(day, orders, Date.now());
   const nextNumber = orderNumber(device.orderLetter || 'A', nextSeq(day, orders, device.orderLetter || 'A'));
   const soldOutCount = s.menu.filter((m) => m.active && day.soldOut[m.id]).length;
   const promo = promoStatus(summarize(day, orders, s), s);
@@ -324,7 +333,7 @@ export function Cashier() {
         </div>
       </TopBar>
       {after ? (
-        <AfterPay past={afterPay?.past} order={after} orders={orders} s={s} pickFree={pickFree} onUpdate={putOrder} onDone={() => setAfterPay(null)} />
+        <AfterPay mode={afterPay?.mode ?? 'fresh'} order={after} orders={orders} s={s} pickFree={pickFree} onUpdate={putOrder} onDone={() => setAfterPay(null)} />
       ) : (
         <div className="cashier-body">
           <section className="menu-side">
@@ -395,7 +404,8 @@ export function Cashier() {
                     return (
                       <button key={m.id} className={`tile tile-${m.category} ${out ? 'out' : ''} ${!out && n <= 5 ? 'low' : ''}`} onClick={() => tapItem(m)} aria-label={`${m.name}, ${peso(m.price)}, ${out ? 'sold out' : `${n} left`}`}>
                         {i < 9 && <kbd>{i + 1}</kbd>}
-                        <span className="tile-name">{m.short && m.category === 'bowls' ? m.short : m.name}</span>
+                        <span className="tile-name">{m.name}</span>
+                        {allergenText(itemTags(m), true) && <span className="tile-allergens">{allergenText(itemTags(m), true)}</span>}
                         <span className="tile-foot">
                           <span className="tile-price">{peso(m.price)}</span>
                           <span className="tile-left">{marked ? 'sold out' : n <= 0 ? '0 left' : `${n} left`}</span>
@@ -419,18 +429,28 @@ export function Cashier() {
                   ))}
                 </div>
               )}
-              {recent.length > 0 && (
+              {waitingSpins.length > 0 && (
                 <div className="orders-group">
-                  <span className="orders-label">Recent · tap to see spin, voucher, stamps</span>
-                  {recent.map((o) => {
-                    const spinsLeft = o.spinsEarned - o.spins.length;
+                  <span className="orders-label">🎡 Spins waiting · tap to log the prize</span>
+                  {waitingSpins.map((o) => {
+                    const left = o.spinsEarned - o.spins.length;
                     return (
-                      <button key={o.id} className="btn small recent" onClick={() => setAfterPay({ id: o.id, past: true })}>
+                      <button key={o.id} className="btn small recent spin-waiting" onClick={() => setAfterPay({ id: o.id, mode: 'spin' })}>
                         {o.number}
-                        {spinsLeft > 0 && <span className="recent-spin">{spinsLeft} spin</span>}
+                        {left > 1 && <span className="recent-spin">×{left}</span>}
                       </button>
                     );
                   })}
+                </div>
+              )}
+              {recent.length > 0 && (
+                <div className="orders-group">
+                  <span className="orders-label">Recent · tap to see voucher, stamps</span>
+                  {recent.map((o) => (
+                    <button key={o.id} className="btn small recent" onClick={() => setAfterPay({ id: o.id, mode: 'past' })}>
+                      {o.number}
+                    </button>
+                  ))}
                 </div>
               )}
               <p className="key-help">
@@ -454,7 +474,8 @@ export function Cashier() {
               ) : (
                 <ul className="lines">
                   {lines.map((l) => {
-                    const editable = !l.combo && ['bowl', 'fries', 'extraSide'].includes(itemById(s, l.itemId)?.kind ?? '');
+                    const lineItem = itemById(s, l.itemId);
+                    const editable = !l.combo && !!lineItem && needsPicker(lineItem);
                     return (
                       <li key={l.id} className={`line ${l.free ? 'free' : ''}`}>
                         <div className="line-main">
@@ -654,7 +675,7 @@ function RewardBowlPicker({ items, canUse, onPick, onClose }: { items: MenuItem[
         <div className="option-grid">
           {items.map((m) => (
             <button key={m.id} className="option" disabled={!canUse(m.id)} onClick={() => onPick(m)}>
-              {m.short ?? m.name}
+              {m.name}
             </button>
           ))}
         </div>
