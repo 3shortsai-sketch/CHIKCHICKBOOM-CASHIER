@@ -1,7 +1,7 @@
 import { usedAfterCount, usesStock } from './inventory';
 import { itemById, lineCostEach, lineTotal, money2, stockUsage } from './pricing';
 import { paidSoFar, PRIZE_LABEL, prizeRefundTotal } from './wheel';
-import type { BusinessDay, MenuItem, Order, OrderLine, PaymentMethod, PrizeId, Settings } from './types';
+import type { BusinessDay, CashMove, MenuItem, Order, OrderLine, PaymentMethod, PrizeId, Settings } from './types';
 
 export function dayOrders(day: BusinessDay | undefined, orders: Order[]): Order[] {
   if (!day) return [];
@@ -100,6 +100,10 @@ export type DaySummary = {
   average: number;
   cost: number;
   profit: number;
+  /** Things bought with drawer cash today (ice, LPG). An operating cost, not ingredients. */
+  expenses: number;
+  /** profit − expenses. */
+  netAfterExpenses: number;
   goal: number;
   goalPct: number;
   /** wheel is at cost (free meal = cost of the bowl); cashBack is the prize cash handed back. */
@@ -110,12 +114,33 @@ export type DaySummary = {
   hours: { hour: number; orders: number; sales: number }[];
   wheel: { prize: PrizeId; label: string; count: number; cost: number }[];
   spins: number;
-  /** voidReturns: money handed back from the drawer for voided GCash/Maya orders. */
-  cash: { float: number; cashSales: number; paidOut: number; voidReturns: number; expected: number; counted?: number; overShort?: number };
+  /**
+   * voidReturns: money handed back from the drawer for voided GCash/Maya orders.
+   * drops: taken out to the safe; added: change put in; expenses: paid out for something.
+   */
+  cash: {
+    float: number;
+    cashSales: number;
+    paidOut: number;
+    voidReturns: number;
+    drops: number;
+    added: number;
+    expenses: number;
+    expected: number;
+    counted?: number;
+    overShort?: number;
+  };
   voids: Order[];
 };
 
-export function summarize(day: BusinessDay | undefined, all: Order[], s: Settings): DaySummary {
+/** Cash moves of this day that were not cancelled, added up by type. */
+export function cashMoveTotals(day: BusinessDay | undefined, moves: CashMove[]): { drops: number; added: number; expenses: number } {
+  const mine = moves.filter((m) => day && m.dayId === day.id && !m.cancelled);
+  const sum = (type: CashMove['type']) => mine.filter((m) => m.type === type).reduce((n, m) => n + m.amount, 0);
+  return { drops: sum('drop'), added: sum('add'), expenses: sum('expense') };
+}
+
+export function summarize(day: BusinessDay | undefined, all: Order[], s: Settings, cashMoves: CashMove[] = []): DaySummary {
   const todays = dayOrders(day, all);
   const live = liveOrders(todays);
 
@@ -228,7 +253,9 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
   const cashSales = live.filter((o) => o.payment.method === 'cash').reduce((n, o) => n + o.payment.due, 0);
   const paidOut = prizeRefunds + manualRefunds;
   const voidReturns = todays.filter((o) => o.voided && o.payment.method !== 'cash').reduce((n, o) => n + o.payment.due, 0);
-  const expected = float + cashSales - paidOut - voidReturns;
+  // Drops and expenses leave the drawer; change added goes in.
+  const { drops, added, expenses } = cashMoveTotals(day, cashMoves);
+  const expected = float + cashSales - paidOut - voidReturns - drops - expenses + added;
   const counted = day?.countedCash;
 
   return {
@@ -244,6 +271,8 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
     average: live.length ? Math.round(net / live.length) : 0,
     cost,
     profit: net - cost,
+    expenses,
+    netAfterExpenses: net - cost - expenses,
     goal: s.dailyGoal,
     goalPct: s.dailyGoal ? Math.round((net / s.dailyGoal) * 100) : 0,
     promo: { wheel: wheelCost, vouchers, rewards, total: wheelCost + vouchers + rewards, cashBack: prizeRefunds },
@@ -253,7 +282,7 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
     hours,
     wheel,
     spins,
-    cash: { float, cashSales, paidOut, voidReturns, expected, counted, overShort: counted === undefined ? undefined : counted - expected },
+    cash: { float, cashSales, paidOut, voidReturns, drops, added, expenses, expected, counted, overShort: counted === undefined ? undefined : counted - expected },
     voids: todays.filter((o) => o.voided),
   };
 }

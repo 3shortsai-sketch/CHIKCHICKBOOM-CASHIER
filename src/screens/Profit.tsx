@@ -4,7 +4,7 @@ import { margins } from '../domain/inventory';
 import { XLSX_MIME } from '../domain/xlsx';
 import { peso } from '../domain/pricing';
 import { summarize } from '../domain/reports';
-import { latestDay, modeOrders, openDay, useStore } from '../data/store';
+import { latestDay, modeCards, modeCashMoves, modeOrders, openDay, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 import { download, PinGate } from '../ui/ui';
 
@@ -44,7 +44,9 @@ function ProfitInner() {
   const s = state.settings;
   const day = openDay(state) ?? latestDay(state);
   const orders = useMemo(() => modeOrders(state), [state]);
-  const sum = useMemo(() => summarize(day, orders, s), [day, orders, s]);
+  const allMoves = useMemo(() => modeCashMoves(state), [state]);
+  const cards = useMemo(() => modeCards(state), [state]);
+  const sum = useMemo(() => summarize(day, orders, s, allMoves), [day, orders, s, allMoves]);
   const m = useMemo(() => margins(s), [s]);
   // Profit after ingredients, prizes and waste. Prize cash is already out of
   // "net"; free prize items and waste are in "cost".
@@ -81,7 +83,7 @@ function ProfitInner() {
           {shown ? 'Hide numbers' : 'Show numbers'}
         </button>
         {day && (
-          <button className="btn small" onClick={() => download(xlsxFileName(day), dayXlsx(day, orders, s), XLSX_MIME)}>
+          <button className="btn small" onClick={() => download(xlsxFileName(day), dayXlsx(day, orders, s, allMoves, cards), XLSX_MIME)}>
             Download Excel
           </button>
         )}
@@ -122,6 +124,18 @@ function ProfitInner() {
               <span>= Profit</span>
               <b>{peso(Math.round(profit * 100) / 100)}</b>
             </div>
+            {sum.expenses > 0 && (
+              <>
+                <div>
+                  <span>− Paid out from the drawer</span>
+                  <b>{peso(sum.expenses)}</b>
+                </div>
+                <div className="strong">
+                  <span>= After expenses</span>
+                  <b>{peso(Math.round(sum.netAfterExpenses * 100) / 100)}</b>
+                </div>
+              </>
+            )}
           </div>
         </section>
 

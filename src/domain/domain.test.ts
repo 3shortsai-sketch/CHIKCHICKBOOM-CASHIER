@@ -6,11 +6,12 @@ import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subt
 import { allergenHint, allergenText, itemTags } from './allergens';
 import { cardDocId, cardRows, cardStateFor, cleanCardName, searchCards } from './cards';
 import { isLow, margins, onHand, servingsLeft, waitMinutes } from './inventory';
-import { dayXlsx, daySheets } from './excel';
+import { allDaysSheets, dayXlsx, daySheets } from './excel';
+import { liabilities } from './liabilities';
 import { colName, crc32 } from './xlsx';
 import { bestSellers, csvCell, kitchenMadeCounts, orderCost, ordersCsv, pendingSpins, popularToday, recentWins, stockLeft, summarize, voidReturnAmount } from './reports';
 import { expectedSpinCost, promoStatus } from './promo';
-import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
+import type { BusinessDay, Card, CashMove, MenuItem, Order, OrderLine, SpinResult } from './types';
 import { applyPrize, digitalSpin, makeVoucherCode, undoLastSpin } from './wheel';
 
 const s = defaultSettings();
@@ -909,5 +910,113 @@ describe('recount after a void', () => {
     // Voided after the count: the food was in the counted stock and is now gone.
     const later: Order = { ...o, voided: { reason: 'left', at: 9000, by: 'Boss' } };
     expect(stockLeft(counted, [later], s)[item]).toBe(29);
+  });
+});
+
+describe('cash drawer with cash in/out', () => {
+  const move = (type: CashMove['type'], amount: number, over: Partial<CashMove> = {}): CashMove => ({ id: 'm' + Math.random(), dayId: day.id, mode: 'demo', type, amount, note: '', by: 'Ana', at: 1, ...over });
+
+  it('takes drops and expenses out, adds change put in, skips cancelled and other days', () => {
+    const a = order([bowl(1, { id: 'b1' })]);
+    const r = applyPrize(a, { lineId: 'b1', unit: 0 }, 'tenOff', ctx);
+    if (!r.ok) throw new Error();
+    const b = { ...order([fries()], { method: 'gcash', reference: '77' }, [a]), voided: { reason: 'wrong', at: 2, by: 'Boss' } };
+    const c = { ...order([cookie()], {}, [a, b]), refunds: [{ amount: 20, reason: 'cold', at: 3, by: 'Boss' }] };
+    const moves = [
+      move('drop', 500),
+      move('add', 300),
+      move('expense', 150, { note: 'ice' }),
+      move('expense', 99, { cancelled: { at: 4, by: 'Boss', reason: 'typo' } }),
+      move('drop', 1000, { dayId: 'other-day' }),
+    ];
+    const sum = summarize({ ...day, countedCash: 1800 }, [r.order, b, c], s, moves);
+    // 2000 float + 258 cash sales − 30 paybacks − 79 void return − 500 drop − 150 expense + 300 added
+    expect(sum.cash.drops).toBe(500);
+    expect(sum.cash.added).toBe(300);
+    expect(sum.cash.expenses).toBe(150);
+    expect(sum.cash.expected).toBe(1799);
+    expect(sum.cash.overShort).toBe(1);
+    expect(sum.expenses).toBe(150);
+    expect(sum.netAfterExpenses).toBeCloseTo(sum.profit - 150, 6);
+    // Without moves, nothing changes for old callers.
+    const plain = summarize(day, [r.order, b, c], s);
+    expect(plain.cash.expected).toBe(2000 + 258 - 30 - 79);
+    expect(plain.expenses).toBe(0);
+    expect(plain.profit).toBe(sum.profit);
+  });
+
+  it('Excel: lists cash in/out and the money still owed', () => {
+    const sheets = daySheets(day, [], s, [move('drop', 500, { note: 'to safe' }), move('expense', 40, { cancelled: { at: 4, by: 'Boss', reason: 'typo' } })], [], '2026-11-15');
+    const cash = sheets.find((x) => x.name === 'Cash in out')!;
+    expect(cash.rows).toHaveLength(3);
+    const labels = sheets[0].rows.map((r) => {
+      const c = r[0] as string | { v: string | number } | undefined;
+      return typeof c === 'object' ? c.v : c;
+    });
+    for (const label of ['− Taken out (drops)', '+ Change added', '− Paid out (expenses)', 'Vouchers not used yet', 'Rewards ready', 'Stamps building up']) expect(labels).toContain(label);
+  });
+});
+
+describe('what we still owe', () => {
+  const at = (date: string) => Date.parse(`${date}T12:00:00`);
+  const voucherSpin = (code: string, date: string): SpinResult => ({ lineId: 'x', unit: 0, prize: 'voucher', refund: 0, voucherCode: code, via: 'physical', at: at(date) });
+  const won = (id: string, code: string, date: string, over: Partial<Order> = {}): Order => ({ ...order([bowl()]), id, spins: [voucherSpin(code, date)], ...over });
+  const card = (number: string, delta: number, mode: Card['mode'] = 'demo'): Card => ({ number, mode, name: 'X', createdAt: 0, updatedAt: 0, by: 'Ana', adjustments: [{ delta, reason: 'paper', at: 0, by: 'Ana' }] });
+
+  it('counts open vouchers, rewards ready and stamps at cost', () => {
+    const orders: Order[] = [
+      won('o1', 'V-AAAA', '2026-11-23'), // valid Nov 24: owed
+      won('o2', 'V-BBBB', '2026-11-23'), // used below
+      { ...order([bowl()]), id: 'o3', number: 'A-050', voucher: { code: 'V-BBBB', amount: 20 } },
+      won('o4', 'V-CCCC', '2026-11-22'), // before the bazaar: valid Nov 23 only, expired
+      won('o5', 'V-DDDD', '2026-11-23', { voided: { reason: 'x', at: 1, by: 'Boss' } }), // voided: never issued
+      won('o6', 'V-EEEE', '2026-11-24'), // valid Nov 25: owed
+      { ...order([bowl()]), id: 'o7', cardId: 'CCB-001', stampsEarned: 6 },
+      { ...order([bowl()]), id: 'o8', cardId: 'CCB-004', stampsEarned: 2 },
+    ];
+    const cards = [card('CCB-002', 10), card('CCB-003', 3, 'live')];
+    const l = liabilities(orders, cards, s, '2026-11-24');
+    expect(l.vouchers).toEqual({ count: 2, amount: 40 });
+    const fries = l.rewards.rows.find((r) => r.at === 5)!;
+    const bowlR = l.rewards.rows.find((r) => r.at === 10)!;
+    expect(fries.count).toBe(2); // CCB-001 (6 stamps) and CCB-002 (10)
+    expect(fries.cost).toBeCloseTo(2 * 44.98, 6);
+    expect(bowlR.count).toBe(1);
+    expect(bowlR.cost).toBeCloseTo(96.04, 6);
+    expect(l.rewards.count).toBe(3);
+    expect(l.stamps.stamps).toBe(18); // 6 + 10 + 2; the live card is left out
+    // CCB-001: 6/10 of a bowl; CCB-002: everything ready, nothing more; CCB-004: 2/5 fries + 2/10 bowl.
+    const accrual = 0.6 * 96.04 + 0.4 * 44.98 + 0.2 * 96.04;
+    expect(l.stamps.cost).toBeCloseTo(accrual, 6);
+    expect(l.total).toBeCloseTo(40 + 89.96 + 96.04 + accrual, 6);
+  });
+
+  it('prices a reward with no item at the average of its category', () => {
+    const s2 = { ...s, loyalty: { ...s.loyalty, rewards: [{ at: 5, label: 'Any fries', category: 'fries' as const }] } };
+    const l = liabilities([{ ...order([bowl()]), cardId: 'CCB-009', stampsEarned: 5 }], [], s2, '2026-11-24');
+    expect(l.rewards.rows[0].cost).toBeCloseTo((44.98 + 79.21) / 2, 6);
+    expect(l.stamps.cost).toBe(0); // the only reward is ready: counted once, above
+  });
+});
+
+describe('all days export', () => {
+  it('has one row per day of the current mode and a totals row', () => {
+    const d2: BusinessDay = { ...day, id: 'demo-2026-11-16', date: '2026-11-16', countedCash: 2100 };
+    const live: BusinessDay = { ...day, id: 'live-1', mode: 'live', date: '2026-11-17' };
+    const a = order([bowl()]);
+    const b = { ...order([cookie()], { day: d2 }), dayId: d2.id };
+    const moves: CashMove[] = [{ id: 'm1', dayId: d2.id, mode: 'demo', type: 'expense', amount: 50, note: 'ice', by: 'Ana', at: 1 }];
+    const [sheet] = allDaysSheets([d2, day, live], [a, b], s, moves, [], '2026-11-16');
+    const text = (c: unknown) => (typeof c === 'object' && c ? (c as { v: unknown }).v : c);
+    const firstCol = sheet.rows.map((r) => text(r[0]));
+    expect(firstCol).toContain('2026-11-15');
+    expect(firstCol).toContain('2026-11-16');
+    expect(firstCol).not.toContain('2026-11-17');
+    expect(firstCol.indexOf('2026-11-15')).toBeLessThan(firstCol.indexOf('2026-11-16'));
+    const total = sheet.rows.find((r) => text(r[0]) === 'Total')!;
+    expect(text(total[1])).toBe(2);
+    expect(text(total[2])).toBe(169 + 89);
+    expect(text(total[5])).toBe(50);
+    expect(firstCol).toContain('Vouchers not used yet');
   });
 });

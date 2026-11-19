@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
 import { peso } from '../domain/pricing';
-import { dayXlsx, xlsxFileName } from '../domain/excel';
+import { allDaysFileName, allDaysXlsx, dayXlsx, xlsxFileName } from '../domain/excel';
+import { liabilities, type Liabilities } from '../domain/liabilities';
+import { localDate } from '../domain/loyalty';
 import { expectedSpinCost, promoStatus } from '../domain/promo';
 import { XLSX_MIME } from '../domain/xlsx';
 import { ordersCsv, orderNet, pendingSpins, stockLeft, summarize, voidReturnAmount } from '../domain/reports';
-import type { Order, Refund } from '../domain/types';
-import { appendToOrder, exportBackup, importBackup, latestDay, modeOrders, openDay, patchDay, patchOrder, useDevice, useStore } from '../data/store';
+import type { CashMove, Order, Refund } from '../domain/types';
+import { appendToOrder, exportBackup, importBackup, latestDay, modeCards, modeCashMoves, modeOrders, openDay, patchDay, patchOrder, useDevice, useStore } from '../data/store';
 import { useAuthState, useSyncStatus } from '../data/sync';
 import { TopBar } from '../ui/TopBar';
 import { download, ManagerConfirm, PinGate } from '../ui/ui';
@@ -154,6 +156,77 @@ function WalletCheck({ dayList, all }: { dayList: Order[]; all: Order[] }) {
   );
 }
 
+const MOVE_NAME: Record<CashMove['type'], string> = { drop: 'Taken out', add: 'Change added', expense: 'Paid out' };
+
+/** Read-only list of the day's drops, change added and expenses. Cancelled ones are crossed out. */
+function CashMovesPanel({ moves }: { moves: CashMove[] }) {
+  return (
+    <section className="panel">
+      <h2>Cash in/out today</h2>
+      {moves.length === 0 ? (
+        <p className="muted">No cash taken out or put in yet.</p>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Type</th>
+                <th>Amount</th>
+                <th>Note</th>
+                <th>By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {moves.map((m) => (
+                <tr key={m.id} className={m.cancelled ? 'voided' : ''}>
+                  <td>{clock(m.at)}</td>
+                  <td>{MOVE_NAME[m.type]}</td>
+                  <td>
+                    {m.type === 'add' ? '+' : '−'}
+                    {peso(m.amount)}
+                  </td>
+                  <td>
+                    {m.note}
+                    {m.cancelled && (
+                      <div className="error">
+                        Cancelled: {m.cancelled.reason} ({m.cancelled.by})
+                      </div>
+                    )}
+                  </td>
+                  <td>{m.by}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted small">The cashier records these. Crossed-out entries were cancelled and do not count.</p>
+    </section>
+  );
+}
+
+/** Vouchers, rewards and stamps customers can still claim, at what they cost us. */
+function OwePanel({ owe, voucherAmount }: { owe: Liabilities; voucherAmount: number }) {
+  const rewardText = owe.rewards.rows.filter((r) => r.count > 0).map((r) => `${r.count}× ${r.label}`).join(', ');
+  return (
+    <section className="panel owe-panel">
+      <h2>What we still owe</h2>
+      <div className="owe-stats">
+        <Stat label="Vouchers not used yet" value={peso(owe.vouchers.amount)} sub={`${owe.vouchers.count} ${owe.vouchers.count === 1 ? 'code' : 'codes'}`} />
+        <Stat label="Rewards ready" value={peso(Math.round(owe.rewards.cost))} sub={`${owe.rewards.count} ${owe.rewards.count === 1 ? 'reward' : 'rewards'}`} />
+        <Stat label="Stamps building up" value={peso(Math.round(owe.stamps.cost))} sub={`${owe.stamps.stamps} stamps`} />
+        <Stat label="Total" value={peso(Math.round(owe.total))} />
+      </div>
+      <ul className="owe-notes muted small">
+        <li>Vouchers: codes won on the wheel that nobody has used and that have not expired. Each one takes {peso(voucherAmount)} off a later order.</li>
+        <li>Rewards ready: free items customers can claim right now with their stamp cards{rewardText ? ` (${rewardText})` : ''}, at ingredient cost.</li>
+        <li>Stamps: a card part-way to a reward already stands for part of it (3 of 5 stamps counts as 3/5 of the fries). Rewards already ready are not counted twice.</li>
+      </ul>
+    </section>
+  );
+}
+
 function DashboardInner() {
   const state = useStore((s) => s);
   const s = state.settings;
@@ -163,7 +236,12 @@ function DashboardInner() {
   const [dayId, setDayId] = useState<string | undefined>(undefined);
   const day = (dayId && state.days[dayId]) || openDay(state) || latestDay(state);
   const orders = useMemo(() => modeOrders(state), [state]);
-  const sum = useMemo(() => summarize(day, orders, s), [day, orders, s]);
+  const allMoves = useMemo(() => modeCashMoves(state), [state]);
+  const cards = useMemo(() => modeCards(state), [state]);
+  const moves = useMemo(() => allMoves.filter((m) => m.dayId === day?.id).sort((a, b) => a.at - b.at), [allMoves, day]);
+  const sum = useMemo(() => summarize(day, orders, s, moves), [day, orders, s, moves]);
+  const today = localDate();
+  const owe = useMemo(() => liabilities(orders, cards, s, today), [orders, cards, s, today]);
   const left = useMemo(() => stockLeft(day, orders, s), [day, orders, s]);
   const [counted, setCounted] = useState('');
   const [action, setAction] = useState<{ type: 'void' | 'refund'; orderId: string } | null>(null);
@@ -232,8 +310,11 @@ function DashboardInner() {
             </select>
           </label>
           <span className="spacer" />
-          <button className="btn primary" onClick={() => download(xlsxFileName(day), dayXlsx(day, orders, s), XLSX_MIME)}>
+          <button className="btn primary" onClick={() => download(xlsxFileName(day), dayXlsx(day, orders, s, allMoves, cards, today), XLSX_MIME)}>
             Export to Excel
+          </button>
+          <button className="btn" onClick={() => download(allDaysFileName(s), allDaysXlsx(days, orders, s, allMoves, cards, today), XLSX_MIME)}>
+            Export all days
           </button>
           <button className="btn" onClick={() => download(`ccb-${day.date}-orders.csv`, ordersCsv(day, orders, s), 'text/csv')}>Export CSV</button>
           <button className="btn" onClick={() => print()}>Print day-end report</button>
@@ -265,6 +346,12 @@ function DashboardInner() {
             sub={`food sold ${peso(Math.round(sum.cogsSold))} · giveaways ${peso(Math.round(sum.giveawaysAtCost))} · waste ${peso(Math.round(sum.waste.cost))}`}
           />
           <Stat label="Profit after ingredients" value={peso(Math.round(sum.profit))} tone={sum.profit >= 0 ? 'good' : 'bad'} />
+          <Stat
+            label="Profit after expenses"
+            value={peso(Math.round(sum.netAfterExpenses))}
+            sub={`paid out from the drawer ${peso(sum.expenses)}`}
+            tone={sum.netAfterExpenses >= 0 ? 'good' : 'bad'}
+          />
           <Stat
             label="Promo cost (at cost)"
             value={peso(Math.round(sum.promo.total))}
@@ -451,22 +538,35 @@ function DashboardInner() {
                   <td>{peso(sum.cash.cashSales)}</td>
                 </tr>
                 <tr>
-                  <td>− Prize cash handed back</td>
-                  <td>{peso(sum.promo.cashBack)}</td>
-                </tr>
-                <tr>
-                  <td>− Refunds</td>
-                  <td>{peso(sum.manualRefunds)}</td>
+                  <td>− Paybacks (prize cash and refunds)</td>
+                  <td>{peso(sum.cash.paidOut)}</td>
                 </tr>
                 <tr>
                   <td>− Cash handed back for voided GCash or Maya orders</td>
                   <td>{peso(sum.cash.voidReturns)}</td>
                 </tr>
+                <tr>
+                  <td>− Taken out to the safe</td>
+                  <td>{peso(sum.cash.drops)}</td>
+                </tr>
+                <tr>
+                  <td>+ Change added</td>
+                  <td>{peso(sum.cash.added)}</td>
+                </tr>
+                <tr>
+                  <td>− Paid out for things we bought</td>
+                  <td>{peso(sum.cash.expenses)}</td>
+                </tr>
                 <tr className="strong">
                   <td>Should be in the drawer</td>
                   <td>{peso(sum.cash.expected)}</td>
                 </tr>
-                {sum.cash.counted !== undefined && (
+                {sum.cash.counted === undefined ? (
+                  <tr>
+                    <td>Counted at close</td>
+                    <td className="muted">not yet</td>
+                  </tr>
+                ) : (
                   <>
                     <tr>
                       <td>Counted at close</td>
@@ -529,6 +629,10 @@ function DashboardInner() {
               </>
             )}
           </section>
+
+          <CashMovesPanel moves={moves} />
+
+          <OwePanel owe={owe} voucherAmount={s.voucher.amount} />
 
           <section className="panel wide">
             <h2>Orders, voids and refunds</h2>
