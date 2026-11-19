@@ -1,11 +1,15 @@
 import type { Order, Reward, Settings, StampAdjustment } from './types';
 
-/** Accepts "37", "037", "ccb37", "CCB-037". Returns "CCB-037", or null if not a real card. */
+/**
+ * Accepts "37", "037", "ccb37", "CCB-037", "ccb 37". Returns "CCB-037", or null
+ * if it is not a real card. Anything else around the number ("3.7", "Ana 7") is refused.
+ */
 export function parseCard(input: string, s: Settings): string | null {
-  const digits = input.trim().toUpperCase().replace(s.loyalty.prefix.toUpperCase().replace('-', ''), '').replace(/[^0-9]/g, '');
-  if (!digits) return null;
-  const n = Number(digits);
-  if (!Number.isInteger(n) || n < s.loyalty.first || n > s.loyalty.last) return null;
+  const letters = s.loyalty.prefix.replace(/-/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`^\\s*(?:${letters})?[\\s-]*(\\d{1,6})\\s*$`, 'i').exec(input);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (n < s.loyalty.first || n > s.loyalty.last) return null;
   const width = String(s.loyalty.last).length;
   return `${s.loyalty.prefix}${String(n).padStart(Math.max(3, width), '0')}`;
 }
@@ -32,7 +36,10 @@ export function cardState(cardId: string, orders: Order[], s: Settings, excludeO
   ].sort((a, b) => a.at - b.at);
   for (const ev of events) {
     if ('adj' in ev) {
-      state.stamps = Math.min(s.loyalty.cardSize, Math.max(0, state.stamps + ev.adj.delta));
+      // Only limit the direction of the edit: a card already over a full card
+      // (stamps not redeemed yet) must not drop when one stamp is added or removed.
+      const d = ev.adj.delta;
+      state.stamps = d > 0 ? Math.max(state.stamps, Math.min(s.loyalty.cardSize, state.stamps + d)) : Math.max(0, state.stamps + d);
       continue;
     }
     const o = ev.order;
@@ -69,7 +76,7 @@ export function baseStamps(cardId: string | undefined, rewardsRedeemed: number[]
   return 1;
 }
 
-// ---------- Vouchers (₱20 off tomorrow) ----------
+// ---------- Vouchers (₱20 off on the next selling day) ----------
 
 export function addDays(date: string, days: number): string {
   const [y, m, d] = date.split('-').map(Number);
@@ -81,6 +88,35 @@ export function localDate(ts: number = Date.now()): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function sellingDays(s: Settings): string[] {
+  return [...(s.sellingDays ?? [])].sort();
+}
+
+/** The first selling day after `date`, or null when there is none left. */
+export function nextSellingDay(date: string, s: Settings): string | null {
+  return sellingDays(s).find((d) => d > date) ?? null;
+}
+
+/** True on (or after) the last selling day: a voucher won now could never be used. */
+export function isLastSellingDay(date: string, s: Settings): boolean {
+  const days = sellingDays(s);
+  return days.length > 0 && date >= days[days.length - 1];
+}
+
+/**
+ * The days a voucher won on `issuedDate` can be used: from the next selling
+ * day, for `validDays` selling days (holidays in between do not eat the voucher).
+ * With no selling days set, none left, or before the bazaar starts (practice
+ * runs), it is the plain calendar rule: tomorrow.
+ */
+export function voucherWindow(issuedDate: string, s: Settings): { validFrom: string; validTo: string } {
+  const days = sellingDays(s);
+  const after = days.filter((d) => d > issuedDate);
+  if (after.length === 0 || issuedDate < days[0]) return { validFrom: addDays(issuedDate, 1), validTo: addDays(issuedDate, s.voucher.validDays) };
+  const n = Math.min(after.length, Math.max(1, s.voucher.validDays));
+  return { validFrom: after[0], validTo: after[n - 1] };
 }
 
 export type VoucherInfo = { code: string; issuedOrder: string; issuedDate: string; validFrom: string; validTo: string; usedBy?: string };
@@ -97,17 +133,17 @@ export function findVoucher(code: string, orders: Order[], s: Settings): Voucher
       code: want,
       issuedOrder: o.number,
       issuedDate,
-      validFrom: addDays(issuedDate, 1),
-      validTo: addDays(issuedDate, s.voucher.validDays),
+      ...voucherWindow(issuedDate, s),
       usedBy,
     };
   }
   return null;
 }
 
+/** "v-abcd", "VABCD" and "abcd" are all the code V-ABCD (the 4 letters may themselves start with V). */
 export function normalizeVoucher(code: string): string {
-  const c = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return c.startsWith('V') ? `V-${c.slice(1)}` : `V-${c}`;
+  const c = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return c.length === 5 && c.startsWith('V') ? `V-${c.slice(1)}` : `V-${c}`;
 }
 
 export function checkVoucher(
@@ -120,7 +156,7 @@ export function checkVoucher(
   const v = findVoucher(code, orders, s);
   if (!v) return { ok: false, message: 'Unknown voucher code.' };
   if (v.usedBy) return { ok: false, message: `Already used on order ${v.usedBy}.` };
-  if (today < v.validFrom) return { ok: false, message: `Valid from ${v.validFrom} (starts the day after it was won).` };
+  if (today < v.validFrom) return { ok: false, message: `Valid from ${v.validFrom}.` };
   if (today > v.validTo) return { ok: false, message: `Expired on ${v.validTo}.` };
   if (orderSubtotal < s.voucher.minOrder) return { ok: false, message: `Order must be at least ₱${s.voucher.minOrder}.` };
   return { ok: true, amount: s.voucher.amount, code: v.code };

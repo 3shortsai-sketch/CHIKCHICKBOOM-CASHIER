@@ -69,6 +69,14 @@ export type OrderLine = {
   free?: LineFree;
   /** Added after payment (wheel prizes). Kitchen highlights these. */
   addedAfterPay?: boolean;
+  // Snapshots taken when the order is paid, so changing prices or unit costs
+  // in Setup later does not rewrite this order. Old lines may not have them.
+  /** Price of one extra side when this was sold. */
+  extraSidePrice?: number;
+  /** Price of one extra sauce when this was sold. */
+  extraSaucePrice?: number;
+  /** Ingredient cost of one unit of the line (item or all combo parts, plus extras) when sold. */
+  costEach?: number;
 };
 
 export type PrizeId =
@@ -219,7 +227,10 @@ export type Settings = {
   extraSaucePrice: number;
   wheel: { paused: boolean; slots: WheelSlot[] };
   loyalty: { prefix: string; first: number; last: number; cardSize: number; rewards: Reward[]; rewardOrderEarnsStamp: boolean };
-  voucher: { amount: number; minOrder: number; validDays: number };
+  /** lastDayPrize: what a "voucher" spin gives on the last selling day (no tomorrow to use it). */
+  voucher: { amount: number; minOrder: number; validDays: number; lastDayPrize: PrizeId };
+  /** The days the booth sells (YYYY-MM-DD, sorted). A voucher starts on the next one. */
+  sellingDays: string[];
   dailyGoal: number;
   /** Which e-wallets the booth accepts. The GCash number is typed in Setup, not stored in code. */
   payments: { gcash: boolean; maya: boolean; gcashNumber: string };

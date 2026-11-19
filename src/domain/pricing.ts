@@ -9,15 +9,21 @@ export function itemById(settings: Settings, id: string): MenuItem | undefined {
   return settings.menu.find((m) => m.id === id);
 }
 
-function extrasFor(c: { extraSides?: string[]; extraSauce?: number } | undefined, s: Settings): number {
+type ExtraPrices = { side: number; sauce: number };
+
+function extrasFor(c: { extraSides?: string[]; extraSauce?: number } | undefined, p: ExtraPrices): number {
   if (!c) return 0;
-  return (c.extraSides?.length ?? 0) * s.extraSidePrice + (c.extraSauce ?? 0) * s.extraSaucePrice;
+  return (c.extraSides?.length ?? 0) * p.side + (c.extraSauce ?? 0) * p.sauce;
 }
 
-/** Price of one unit of the line, including paid extras. */
+/**
+ * Price of one unit of the line, including paid extras. A paid order's line
+ * keeps the extras prices it was sold at; a cart line uses today's prices.
+ */
 export function lineUnitTotal(line: OrderLine, s: Settings): number {
-  let extras = extrasFor(line.choices, s);
-  if (line.combo) extras += line.combo.parts.reduce((sum, p) => sum + extrasFor(p, s), 0);
+  const p: ExtraPrices = { side: line.extraSidePrice ?? s.extraSidePrice, sauce: line.extraSaucePrice ?? s.extraSaucePrice };
+  let extras = extrasFor(line.choices, p);
+  if (line.combo) extras += line.combo.parts.reduce((sum, part) => sum + extrasFor(part, p), 0);
   return line.unitPrice + extras;
 }
 
@@ -51,6 +57,18 @@ export function stockUsage(lines: OrderLine[]): Record<string, number> {
     }
   }
   return used;
+}
+
+/** Ingredient cost of one unit of the line, from today's unit costs (combo parts and extras included). */
+export function lineCostEach(line: OrderLine, s: Settings): number {
+  let cost = 0;
+  for (const [id, n] of Object.entries(stockUsage([{ ...line, qty: 1 }]))) cost += (itemById(s, id)?.unitCost ?? 0) * n;
+  return Math.round(cost * 100) / 100;
+}
+
+/** A copy of the line that remembers today's extras prices and unit cost (see OrderLine). */
+export function snapshotLine(line: OrderLine, s: Settings): OrderLine {
+  return { ...line, extraSidePrice: s.extraSidePrice, extraSaucePrice: s.extraSaucePrice, costEach: lineCostEach(line, s) };
 }
 
 /**

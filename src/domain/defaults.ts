@@ -70,7 +70,9 @@ export function defaultSettings(): Settings {
       ],
       rewardOrderEarnsStamp: true,
     },
-    voucher: { amount: 20, minOrder: 150, validDays: 1 },
+    voucher: { amount: 20, minOrder: 150, validDays: 1, lastDayPrize: 'tenOff' },
+    // The bazaar's selling days. Nov 26 is a holiday.
+    sellingDays: ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-27'],
     dailyGoal: 66800,
     payments: { gcash: true, maya: false, gcashNumber: '' },
     promoLimits: { warnPct: 6.5, pausePct: 8, minSales: 5000 },
