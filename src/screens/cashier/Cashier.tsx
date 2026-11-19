@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { amountDue, checkCart, createOrder, duplicateReference, nextSeq, orderNumber } from '../../domain/checkout';
 import { cardStateFor } from '../../domain/cards';
 import { availableRewards, canRedeem, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
@@ -15,6 +15,7 @@ import { AfterPay, PayModal, StampDots, type AfterPayMode } from './payflow';
 import { ComboPicker, ItemPicker } from './pickers';
 import { CardNameField, useCardName } from './CardName';
 import { CardLookup, WasteLog } from './tools';
+import { CashMoves } from './CashMoves';
 import { minutesAgo } from '../../ui/ui';
 
 type TabId = Category | 'popular';
@@ -79,6 +80,48 @@ function saveParked(p: Parked[]) {
   }
 }
 
+/** The order being rung up, kept so a reload (F5) or a wrong tap on another screen does not lose it. */
+const DRAFT_KEY = 'ccb:draft';
+
+function loadDraft(): Parked | null {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? 'null') as Parked | null;
+    return d && Array.isArray(d.lines) && d.lines.length ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(d: Parked | null) {
+  try {
+    if (d) localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    /* the order still works, it just won't survive a reload */
+  }
+}
+
+/** The change screen of the order just paid, kept for this browser tab so a reload comes back to it. */
+const AFTERPAY_KEY = 'ccb:afterpay';
+
+function loadAfterPay(exists: (id: string) => boolean): { id: string; mode: AfterPayMode } | null {
+  try {
+    const a = JSON.parse(sessionStorage.getItem(AFTERPAY_KEY) ?? 'null') as { id?: unknown; mode?: unknown } | null;
+    return a && typeof a.id === 'string' && a.mode === 'fresh' && exists(a.id) ? { id: a.id, mode: 'fresh' } : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAfterPay(a: { id: string; mode: AfterPayMode } | null) {
+  try {
+    if (a?.mode === 'fresh') sessionStorage.setItem(AFTERPAY_KEY, JSON.stringify(a));
+    else sessionStorage.removeItem(AFTERPAY_KEY);
+  } catch {
+    /* the change screen still works until a reload */
+  }
+}
+
 type Picking =
   | { type: 'item'; item: MenuItem; free?: OrderLine['free']; initial?: OrderLine }
   | { type: 'combo'; combo: Combo }
@@ -97,7 +140,7 @@ export function Cashier() {
   const [lines, setLines] = useState<OrderLine[]>([]);
   const [picking, setPicking] = useState<Picking>(null);
   const [paying, setPaying] = useState(false);
-  const [afterPay, setAfterPay] = useState<{ id: string; mode: AfterPayMode } | null>(null);
+  const [afterPay, setAfterPay] = useState<{ id: string; mode: AfterPayMode } | null>(() => loadAfterPay((id) => !!state.orders[id]));
   const [soldOutMode, setSoldOutMode] = useState(false);
   const [cardInput, setCardInput] = useState('');
   const [cardId, setCardId] = useState<string | undefined>();
@@ -108,7 +151,7 @@ export function Cashier() {
   const [comboDismissed, setComboDismissed] = useState<string>('');
   const [escArmed, setEscArmed] = useState(false);
   const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
-  const [tool, setTool] = useState<'card' | 'waste' | null>(null);
+  const [tool, setTool] = useState<'card' | 'waste' | 'cash' | null>(null);
   const [promoDismissed, setPromoDismissed] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
   /** The name the loyalty card filled in (empty when the cashier typed it). */
@@ -306,14 +349,12 @@ export function Cashier() {
     flash(`Order parked${p.name ? ` for ${p.name}` : ''}. Tap it below to continue.`);
   };
 
-  const resumeOrder = (p: Parked) => {
-    if (!day) return;
-    let rest = parked.filter((x) => x.id !== p.id);
-    // Whatever is on screen now gets parked, so nothing is lost.
-    if (lines.length) rest = [...rest, parkCurrent(day)];
-    setParked(rest);
-
-    // Things may have changed while it was parked: check the reward and the voucher again.
+  /**
+   * Put a set-aside order (parked, or kept over a reload) back on screen.
+   * Things may have changed meanwhile: the reward, the voucher and the stock
+   * are checked again. Returns the problems found (already fixed where it can).
+   */
+  const bringBack = (p: Parked): string[] => {
     const problems: string[] = [];
     const cardNow = p.cardId ? cardStateFor(p.cardId, orders, s, cardList) : null;
     const seen: number[] = [];
@@ -343,8 +384,42 @@ export function Cashier() {
     setCardFilledName(p.nameFromCard ? (p.name ?? '') : '');
     setCardInput('');
     setVoucherInput('');
+    return problems;
+  };
+
+  const resumeOrder = (p: Parked) => {
+    if (!day) return;
+    let rest = parked.filter((x) => x.id !== p.id);
+    // Whatever is on screen now gets parked, so nothing is lost.
+    if (lines.length) rest = [...rest, parkCurrent(day)];
+    setParked(rest);
+    const problems = bringBack(p);
     if (problems.length) flash(problems.join(' '), true);
   };
+
+  // ----- Keep the order over a reload -----
+  // Once, when the day is known: bring back the order that was on screen,
+  // but only on the same day and the same kind of data (demo or real).
+  const draftChecked = useRef(false);
+  useEffect(() => {
+    if (draftChecked.current || !day) return;
+    draftChecked.current = true;
+    const d = loadDraft();
+    if (!d || d.mode !== s.mode || d.dayId !== day.id) {
+      saveDraft(null);
+      return;
+    }
+    const problems = bringBack(d);
+    flash(['Order brought back after a reload.', ...problems].join(' '), problems.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayId]);
+  // Every change is saved; an empty order removes it (paying, Cancel and Park all empty it).
+  useEffect(() => {
+    if (!draftChecked.current || !day) return;
+    saveDraft(lines.length ? parkCurrent(day) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, cardId, voucher, customerName, cardFilledName, s.mode, dayId]);
+  useEffect(() => saveAfterPay(afterPay), [afterPay]);
 
   // ----- Pay -----
   /** Returns the problem (also shown as a notice) when the order could not be saved. */
@@ -705,6 +780,9 @@ export function Cashier() {
                   <button className="btn small ghost tool-btn" title="Log dropped or spoiled items" onClick={() => setTool('waste')}>
                     Waste
                   </button>
+                  <button className="btn small ghost tool-btn" title="Cash taken out, added or paid out (manager PIN)" onClick={() => setTool('cash')}>
+                    Cash
+                  </button>
                   <a className="btn small ghost tool-btn" title="Team page (passcode)" href="#team">
                     Team
                   </a>
@@ -921,6 +999,7 @@ export function Cashier() {
         />
       )}
       {tool === 'card' && <CardLookup s={s} orders={orders} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
+      {tool === 'cash' && <CashMoves s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
       {tool === 'waste' && <WasteLog s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
     </div>
   );
