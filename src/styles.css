@@ -3444,3 +3444,246 @@ th:first-child {
 .crash-screen .row {
   flex-wrap: wrap;
 }
+
+/* ---- cashier: cash in/out ---- */
+.cash-totals {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+.cash-moves {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+.cash-moves li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.cash-move-main {
+  flex: 1;
+  min-width: 0;
+}
+.cash-moves li.cancelled .cash-move-main > :not(.cash-move-why) {
+  text-decoration: line-through;
+}
+.cash-moves li.cancelled .cash-move-main {
+  color: var(--ink-soft);
+}
+.cash-move-why {
+  display: block;
+  color: var(--red-deep);
+}
+
+/* ---- customer order page (#track) and monitor QR ---- */
+.trk {
+  min-height: 100vh;
+  max-width: 30rem;
+  margin: 0 auto;
+  padding: 16px 16px 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  font-size: 1.15rem;
+  background: var(--cream);
+}
+.trk-demo {
+  background: var(--ink);
+  color: var(--yellow);
+  font-weight: 800;
+  text-align: center;
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.95rem;
+}
+.trk-head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.trk-head img {
+  border-radius: 50%;
+  border: 3px solid var(--ink);
+  box-shadow: var(--comic-sm);
+}
+.trk-head h1 {
+  font-family: var(--display);
+  font-size: 2.1rem;
+  letter-spacing: 0.03em;
+  color: var(--red);
+  margin: 0;
+}
+.trk-panel,
+.trk-card,
+.trk-booth {
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--comic);
+  padding: 1rem;
+}
+.trk-form label {
+  display: block;
+  font-weight: 800;
+  margin-bottom: 0.4rem;
+}
+.trk-form-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.trk-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 1.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.trk-form p {
+  margin: 0.5rem 0 0;
+}
+.trk-offline {
+  margin: 0;
+  background: var(--danger-soft);
+  color: var(--red-deep);
+  border: 2px solid var(--red-deep);
+  border-radius: 12px;
+  padding: 0.6rem 0.8rem;
+  font-weight: 700;
+}
+.trk-card p {
+  margin: 0.3rem 0 0;
+}
+.trk-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.trk-number {
+  font-family: var(--display);
+  font-size: 2.6rem;
+  line-height: 1;
+}
+.trk-remove {
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  border-radius: 50%;
+  width: 2.6rem;
+  height: 2.6rem;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: var(--ink);
+}
+.trk-state {
+  font-weight: 900;
+  font-size: 1.6rem;
+}
+.trk-line {
+  font-size: 1.2rem;
+}
+.trk-msg {
+  margin: 0.4rem 0 0;
+  line-height: 1.4;
+}
+.trk-preparing {
+  background: var(--chick);
+}
+.trk-ready {
+  background: var(--green);
+  color: #fff;
+  animation: trk-pulse 1.2s ease-in-out infinite alternate;
+}
+.trk-ready .trk-remove {
+  background: transparent;
+  color: #fff;
+  border-color: #fff;
+}
+.trk-big {
+  font-family: var(--display);
+  font-size: 4.5rem;
+  line-height: 1;
+  letter-spacing: 0.05em;
+}
+.trk-claimed {
+  background: var(--green-soft);
+}
+.trk-voided {
+  background: var(--danger-soft);
+}
+.trk-spin {
+  font-weight: 800;
+}
+.trk-note {
+  margin: 0;
+  text-align: center;
+}
+.trk-booth h2 {
+  margin: 0 0 0.3rem;
+}
+.trk-booth p {
+  margin: 0.3rem 0 0;
+}
+@keyframes trk-pulse {
+  from {
+    box-shadow: var(--comic);
+  }
+  to {
+    box-shadow: 0 0 0 8px var(--yellow), var(--comic);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trk-ready {
+    animation: none;
+  }
+}
+.serving-track {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.8vw;
+  max-width: 34%;
+  min-width: 0;
+}
+.serving-brand .serving-track img {
+  height: min(8vw, 12vh);
+  width: auto;
+  border-radius: 6px;
+  border: 3px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  background: #fff;
+  padding: 4px;
+}
+.serving-track span {
+  font-weight: 800;
+  font-size: min(1.5vw, 2.6vh);
+  line-height: 1.15;
+  color: #fff;
+  text-shadow: 1px 1px 0 var(--ink);
+}
+.trk-nowrap {
+  white-space: nowrap;
+}
+
+/* ---- money: what we still owe (Dashboard) ---- */
+.owe-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.6rem;
+}
+.owe-notes {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}

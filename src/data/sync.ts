@@ -232,26 +232,40 @@ let lastBooth = '';
 const BOOTH_EVERY_MS = 20000;
 
 /** Sold out, queue, ready numbers and wait time for the customer page, at most every 20 seconds. */
+let boothSentAt = 0;
+
 function scheduleBoothSummary() {
   if (boothTimer) return;
-  boothTimer = setTimeout(() => {
-    boothTimer = null;
-    const st = getState();
-    const day = openDay(st);
-    const todays = day ? Object.values(st.orders).filter((o) => o.dayId === day.id && !o.voided) : [];
-    const summary: Omit<BoothDoc, 'updatedAt'> = {
-      open: !!day,
-      date: day?.date ?? null,
-      queue: todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt).map((o) => o.number),
-      ready: todays.filter((o) => o.status === 'ready').sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0)).slice(0, 10).map((o) => o.number),
-      waitMinutes: waitMinutes(todays, Date.now(), st.settings.defaultWaitMinutes),
-      soldOut: st.settings.menu.filter((m) => m.active && day?.soldOut[m.id]).map((m) => m.name),
-    };
-    const key = JSON.stringify(summary);
-    if (key === lastBooth) return;
-    lastBooth = key;
-    publicWrite(['public', `booth-${st.settings.mode}`], { ...summary, updatedAt: Date.now() });
-  }, BOOTH_EVERY_MS);
+  // Right away if nothing was sent in the last 20 seconds, otherwise at the end of them.
+  const wait = Math.max(0, BOOTH_EVERY_MS - (Date.now() - boothSentAt));
+  boothTimer = setTimeout(sendBoothSummary, wait);
+}
+
+// A device closing or going to the background sends what is waiting first.
+if (typeof addEventListener === 'function') {
+  addEventListener('pagehide', () => boothTimer && sendBoothSummary());
+  addEventListener('visibilitychange', () => typeof document !== 'undefined' && document.visibilityState === 'hidden' && boothTimer && sendBoothSummary());
+}
+
+function sendBoothSummary() {
+  if (boothTimer) clearTimeout(boothTimer);
+  boothTimer = null;
+  const st = getState();
+  const day = openDay(st);
+  const todays = day ? Object.values(st.orders).filter((o) => o.dayId === day.id && !o.voided) : [];
+  const summary: Omit<BoothDoc, 'updatedAt'> = {
+    open: !!day,
+    date: day?.date ?? null,
+    queue: todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt).map((o) => o.number),
+    ready: todays.filter((o) => o.status === 'ready').sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0)).slice(0, 10).map((o) => o.number),
+    waitMinutes: waitMinutes(todays, Date.now(), st.settings.defaultWaitMinutes),
+    soldOut: st.settings.menu.filter((m) => m.active && day?.soldOut[m.id]).map((m) => m.name),
+  };
+  const key = JSON.stringify(summary);
+  if (key === lastBooth) return;
+  lastBooth = key;
+  boothSentAt = Date.now();
+  publicWrite(['public', `booth-${st.settings.mode}`], { ...summary, updatedAt: Date.now() });
 }
 
 // What each listener last told us, to show one combined status.

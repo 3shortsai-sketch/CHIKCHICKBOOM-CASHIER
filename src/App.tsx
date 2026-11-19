@@ -6,6 +6,7 @@ import { Kitchen } from './screens/Kitchen';
 import { Profit } from './screens/Profit';
 import { Serving } from './screens/Serving';
 import { Setup } from './screens/Setup';
+import { Track } from './screens/Track';
 import { BoothLoginGate } from './ui/BoothLogin';
 import { TopBar } from './ui/TopBar';
 import { useHash } from './ui/ui';
@@ -44,6 +45,9 @@ function Home() {
 }
 
 export function App() {
+  const hash = useHash();
+  // The customer page (from the QR code on the monitor): no booth login, no links to booth screens.
+  if (hash === 'track' || hash.startsWith('track/')) return <Track key={hash} mode={hash === 'track/demo' ? 'demo' : 'live'} />;
   return (
     <BoothLoginGate>
       <Screen />

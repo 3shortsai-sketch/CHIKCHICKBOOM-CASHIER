@@ -334,6 +334,13 @@ export function Serving() {
           <div className="serving-brand">
             <img src="./logo.png" alt="Chick Chick Boom" />
             <h1>NOW SERVING</h1>
+            {/* Hidden while the GCash QR is up, so nobody scans the wrong code to pay. */}
+            {!(cart.stage === 'paying' && cart.method === 'gcash') && (
+              <div className="serving-track">
+                <img src="./track-qr.png" alt="QR code to track your order" />
+                <span>Track your order on your phone</span>
+              </div>
+            )}
           </div>
           <div className={`serving-numbers n${Math.min(serving.length, 3)}`}>
             {serving.length === 0 ? (
