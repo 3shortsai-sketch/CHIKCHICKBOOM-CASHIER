@@ -204,10 +204,18 @@ but the kitchen tablet is not.
 
 ## Sync between devices (Firebase)
 
-- **Firestore** holds `settings/main`, `days/{id}` and `orders/{id}`. Every change is saved on the device first, then sent to Firestore; other devices get it in well under a second. Without internet, changes queue up and send when it's back (status pill: "Offline · will sync" → "Synced").
+- **Firestore** holds `settings/main`, `days/{id}`, `orders/{id}`, `cards/{id}` and `cashMoves/{id}` (drops, change added, expenses paid from the drawer). Every change is saved on the device first, then sent to Firestore; other devices get it in well under a second. Without internet, changes queue up and send when it's back (status pill: "Offline · will sync" → "Synced").
 - **Booth login**: each device signs in once with the shared booth account (Firebase Authentication, email/password). "Continue on this device only" lets a device work without signing in; it syncs after signing in later.
 - **Security rules** (`firestore.rules`): only the booth email(s) can read or write. Anyone else, even with their own account, is refused.
-- The first device to connect uploads its settings (menu, prices, PINs) and any orders the server doesn't have; after that the server's copy wins.
+- The first device to connect uploads its settings (menu, prices, PINs) and any orders the server doesn't have; after that the shared copy of the settings always wins (a spare tablet with default prices can never replace the real ones).
+- **Changes made while signed out** (a void, Ready, a closed day) wait in an outbox on the device and are sent, oldest first, as soon as it signs in.
+
+### Customer order page (`#track`)
+- Customers scan the QR on the monitor (or open chick-chick-boom.web.app/#track), type their order number and see Preparing → READY → Picked up, live, with how many orders are ahead and the wait. Their phone vibrates and clucks when it is ready.
+- Customers never sign in and never see booth data. The device that changes an order also writes a tiny public copy, `tracker/{mode}_{date}_{number}`: order number, status, times and spins left. **No names, items or money.** A summary `public/booth-{mode}` (queue numbers, ready numbers, wait, sold-out items) is written at most every 20 seconds.
+- Anyone can read one public document if they know its id, but nobody can list them.
+- Free quota: each customer costs a few reads (their order is watched live; the summary is fetched once a minute while the page is open). 400 orders a day stays far under the free 50,000 reads.
+- **Needs the updated rules** below. Until they are published the booth works normally and the customer page just finds nothing; the status pill's details say "The customer order page is not switched on yet".
 - **Publishing**: `.github/workflows/test-and-deploy.yml` tests and builds every PR, and publishes to Firebase Hosting on every merge to `main` once the `FIREBASE_SERVICE_ACCOUNT` secret is added.
 - Tested against the Firebase emulators with two separate browsers (laptop and tablet): orders, Ready, inventory counts and price changes sync both ways; an order taken offline arrives after reconnecting; a non-booth login can't read anything.
 
@@ -215,6 +223,9 @@ but the kitchen tablet is not.
 - **Nothing is merged to `main` or published during the bazaar (Nov 23 to 27).** A merge publishes a new version to every device, and a mistake would stop the booth mid-queue. Fixes wait until after closing on Nov 27, unless the booth cannot sell at all.
 - The last publish before the bazaar is tested the day before on every device (see the booth checklist).
 - **Never run `firebase deploy` for the rules from this repo.** `firestore.rules` here holds a placeholder email (`BOOTH_EMAIL_GOES_HERE`), so deploying it would lock every device out of sync. The rules are published by hand in the Firebase console (Firestore → Rules) with the real booth email.
+
+### Rules to publish (Firebase console → Firestore → Rules)
+Copy `firestore.rules` from this repo, put the booth login email(s) in place of `BOOTH_EMAIL_GOES_HERE`, then Publish. Compared with the earlier rules it adds `cashMoves` (booth only), `tracker` and `public` (anyone may read one document by id, only the booth may write).
 
 ### To switch it on
 1. Paste the web app config into `src/data/firebase-config.ts` (Claude does this from the block you send).
