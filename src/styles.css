@@ -1442,16 +1442,39 @@ textarea.input {
 }
 .quick-cash {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  /* Wraps to a second row instead of cutting off the last button. */
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
   gap: 0.45rem;
   margin-bottom: 0.8rem;
 }
 .quick-cash .btn {
+  min-width: 0;
   min-height: 58px;
+  padding-inline: 0.3rem;
+  white-space: nowrap;
   font-family: var(--display);
   font-weight: 800;
   letter-spacing: 0.03em;
-  font-size: 1.4rem;
+  font-size: 1.3rem;
+}
+/* Cashier: the day was left open overnight. */
+.stale-day {
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.stale-day h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  font-size: 2.2rem;
+  color: var(--red);
+}
+.stale-day p {
+  margin: 0;
+  font-size: 1.1rem;
 }
 
 /* ---------- After pay ---------- */
@@ -3063,6 +3086,269 @@ th:first-child {
   font-size: 0.9rem;
 }
 
+/* ---------- Customer monitor: fits 1280x720 (the popup), 1366x768 and 1920x1080 ----------
+   Sizes use the smaller of a width share and a height share, so six ready
+   numbers with names and 14 preparing numbers are always fully on screen. */
+.serving-top {
+  flex: 1 1 47vh;
+  min-height: 47vh;
+}
+.serving-bottom {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1.4vh 2.4vw 1.6vh;
+  gap: 1.6vw;
+  grid-template-columns: minmax(0, 3.6fr) minmax(0, 1fr);
+}
+.now-serving {
+  padding: 1.8vh 2.6vw;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.serving-brand img {
+  height: min(7.5vw, 11vh);
+  border-width: 3px;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+.now-serving h1 {
+  font-size: min(5.4vw, 9vh);
+  line-height: 1;
+}
+.serving-numbers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: center;
+  align-items: start;
+  gap: 1.6vh 1.5vw;
+  min-height: 0;
+}
+.snum,
+.snum.first {
+  font-size: min(5.6vw, 10vh);
+  min-width: 0;
+  white-space: nowrap;
+}
+/* One or two numbers ready (the usual case): make them as big as the space allows. */
+.serving-numbers.n1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+.serving-numbers.n1 .snum {
+  font-size: min(17vw, 21vh);
+}
+.serving-numbers.n2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.serving-numbers.n2 .snum {
+  font-size: min(8.6vw, 19vh);
+}
+.serving-numbers.n0 {
+  display: flex;
+  align-items: center;
+}
+.snum-name {
+  font-size: max(0.24em, min(1.5vw, 2.6vh));
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.serving-empty {
+  font-size: min(4vw, 7vh);
+}
+.preparing {
+  padding: 1.8vh 1.6vw;
+  gap: 1.2vh;
+  min-width: 0;
+}
+.preparing h2 {
+  font-size: min(3.2vw, 5.6vh);
+  line-height: 1;
+  margin: 0;
+}
+.wait-chip {
+  font-size: min(1.5vw, 2.6vh);
+}
+.prep-numbers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.9vh 0.8vw;
+  font-size: min(2.75vw, 4.9vh);
+  line-height: 1.05;
+  white-space: nowrap;
+}
+.preparing.with-order .prep-numbers {
+  font-size: min(2vw, 3.6vh);
+}
+/* A long order: the list is cut short, the total and the spin note always stay in view. */
+.preparing > .your-order:not(.qr):not(.paid) {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1.6vh 1.2vw;
+}
+.preparing > .your-order:not(.qr):not(.paid) ul {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.preparing > .your-order > :not(ul) {
+  flex: none;
+}
+.preparing.with-order .prep-head {
+  flex: 0 1000 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.preparing.with-order .prep-numbers {
+  flex: 0 1000 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+/* The QR card must fit whole in the top area: the customer has to see the amount and the code. */
+.your-order.qr {
+  padding: 1.2vh 1vw;
+  gap: 0.6vh;
+  font-size: min(1.25vw, 2.2vh);
+  flex: none;
+}
+.your-order.qr .qr-amount {
+  font-size: 2.6em;
+}
+.your-order.qr .qr-img {
+  width: min(100%, 24vh);
+}
+.serving-menu {
+  grid-template-columns: 1.9fr 1.1fr 1fr 1.35fr 1fr;
+  gap: 1.2vw;
+  font-size: min(1.1vw, 1.9vh, 1.25rem);
+  line-height: 1.22;
+  min-width: 0;
+}
+.serving-menu h3 {
+  margin: 0 0 0.2em;
+  line-height: 1;
+}
+.serving-menu .menu-row {
+  padding: 0.16em 0;
+  gap: 0.5em;
+}
+.serving-menu .menu-choices {
+  margin: 0.3em 0 0;
+}
+.serving-menu .menu-allergy-note {
+  margin-top: 0.4em;
+}
+.serving-wheel {
+  font-size: min(1.1vw, 1.9vh, 1.25rem);
+  line-height: 1.22;
+  padding: 0.8em 1em;
+  border-width: 3px;
+  box-shadow: 4px 4px 0 var(--ink);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  align-self: start;
+}
+.serving-wheel h3 {
+  font-size: 1.8em;
+  margin: 0 0 0.2em;
+  line-height: 1;
+}
+.serving-wheel p {
+  margin: 0.3em 0;
+}
+
+@media (max-width: 900px) {
+  /* A phone or a narrow window: let the monitor page scroll instead of cutting things off. */
+  .serving:not(.center-screen) {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  .serving-top {
+    flex: none;
+    min-height: 0;
+  }
+  .now-serving,
+  .preparing,
+  .serving-bottom,
+  .serving-wheel {
+    overflow: visible;
+  }
+}
+
+/* ---------- Small notes under fields (Setup, Inventory, Dashboard) ---------- */
+.field-error,
+.qty-hint {
+  display: block;
+  color: var(--red-deep);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.25;
+  max-width: 16rem;
+}
+.qty-action {
+  flex-wrap: wrap;
+}
+.qty-hint {
+  flex-basis: 100%;
+}
+.setup .default-pins {
+  grid-column: 1 / -1;
+  margin: 0;
+  border: 2px solid var(--red-deep);
+  font-weight: 800;
+}
+.passcodes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+.passcodes .row {
+  flex-wrap: wrap;
+}
+.wheel-warn,
+.close-ask,
+.hand-back {
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.4rem 0;
+}
+.close-ask p {
+  margin: 0 0 0.5rem;
+}
+.hand-back {
+  font-size: 1.15rem;
+  margin: 0;
+}
+.wallet-flag {
+  color: var(--red-deep);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+.wallet-ref {
+  overflow-wrap: anywhere;
+}
+.restore-panel label {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+.restore-panel label input {
+  flex: none;
+  margin-top: 0.15rem;
+}
+.restore-panel input[type='file'] {
+  display: block;
+  margin-top: 0.5rem;
+  max-width: 100%;
+}
+
 /* ---------- Smaller screens (tablet portrait, phone) ---------- */
 @media (max-width: 1100px) {
   .wordmark {
@@ -3086,7 +3372,7 @@ th:first-child {
     grid-template-columns: repeat(2, 1fr);
   }
   .quick-cash {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
   }
   .serving-top,
   .serving-bottom {

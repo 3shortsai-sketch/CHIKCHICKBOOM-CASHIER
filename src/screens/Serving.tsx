@@ -16,6 +16,9 @@ const CATS = [
   { id: 'cookies', label: 'Cookies' },
 ] as const;
 
+/** Preparing numbers shown (3 across, 5 rows). With more, the last cell says "+N more". */
+const PREP_MAX = 15;
+
 const METHOD_LABEL = { cash: 'Cash', gcash: 'GCash', maya: 'Maya' } as const;
 
 function formatPhone(n: string): string {
@@ -155,31 +158,89 @@ export function Serving() {
   const wins = useMemo(() => recentWins(day, all, 4), [day, all]);
   const wait = waitMinutes(orders, now, s.defaultWaitMinutes);
   const clearMs = s.servingClearMinutes * 60000;
+
+  // When THIS screen first saw each order ready. The kitchen tablet's clock can
+  // be minutes off, so "stays up for N minutes" is counted on this screen's own clock.
+  const firstReady = useRef(new Map<string, number>());
+  const sawWaiting = useRef(new Set<string>());
+  {
+    const t = Date.now();
+    const ready = new Set<string>();
+    for (const o of orders) {
+      if (o.status === 'ready') {
+        ready.add(o.id);
+        // Watched it turn ready: it starts now. Already ready when first seen
+        // (screen just opened, or it was offline): trust the kitchen's time, but never a future one.
+        if (!firstReady.current.has(o.id)) firstReady.current.set(o.id, sawWaiting.current.has(o.id) ? t : Math.min(o.readyAt ?? t, t));
+      } else if (o.status === 'new' || o.status === 'cooking') sawWaiting.current.add(o.id);
+    }
+    // Sent back to cooking, claimed or voided: forget it, so a second "ready" counts again.
+    for (const id of [...firstReady.current.keys()]) if (!ready.has(id)) firstReady.current.delete(id);
+  }
+  const readyAtHere = (id: string) => firstReady.current.get(id) ?? 0;
   const serving = orders
-    .filter((o) => o.status === 'ready' && now - (o.readyAt ?? 0) < clearMs)
-    .sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0));
+    .filter((o) => o.status === 'ready' && now - readyAtHere(o.id) < clearMs)
+    .sort((a, b) => readyAtHere(b.id) - readyAtHere(a.id) || (b.readyAt ?? 0) - (a.readyAt ?? 0));
   const preparing = orders.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt);
 
-  // A new "ready" number: cluck, then say it out loud.
-  const seen = useRef<Set<string> | null>(null);
-  const [flash, setFlash] = useState<string | null>(null);
+  // Every timer this screen starts, so they can all be stopped when it closes.
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const later = (fn: () => void, ms: number) => {
+    const t = setTimeout(() => {
+      timers.current.delete(t);
+      fn();
+    }, ms);
+    timers.current.add(t);
+  };
   useEffect(() => {
-    const ids = new Set(serving.map((o) => o.id));
-    if (seen.current) {
-      const fresh = serving.filter((o) => !seen.current!.has(o.id));
-      fresh.forEach((o, i) => {
-        setTimeout(() => {
-          const secs = cluck();
-          setTimeout(() => announce(`Order ${spokenNumber(o.number)}${o.customerName ? ` for ${o.customerName}` : ''} is ready!`), secs * 1000 + 150);
-        }, i * 3500);
-      });
-      if (fresh[0]) {
-        setFlash(fresh[0].id);
-        setTimeout(() => setFlash(null), 4000);
-      }
+    const all = timers.current;
+    return () => {
+      for (const t of all) clearTimeout(t);
+      all.clear();
+    };
+  }, []);
+
+  // A new "ready" number: cluck, then say it out loud. Each number is called
+  // once, and several at once wait their turn instead of talking over each other.
+  const announced = useRef<Set<string> | null>(null);
+  const waiting = useRef<{ id: string; text: string }[]>([]);
+  const speaking = useRef(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const callNext = () => {
+    if (speaking.current) return;
+    let next = waiting.current.shift();
+    // Skip a number that was sent back or voided while it waited.
+    while (next && !announced.current?.has(next.id)) next = waiting.current.shift();
+    if (!next) return;
+    const { id, text } = next;
+    speaking.current = true;
+    setFlash(id);
+    const secs = cluck();
+    later(() => announce(text), secs * 1000 + 150);
+    later(() => {
+      speaking.current = false;
+      setFlash((f) => (f === id ? null : f));
+      callNext();
+    }, 3500);
+  };
+  const readyIds = serving.map((o) => o.id).join(' ');
+  useEffect(() => {
+    const known = announced.current;
+    const stillReady = new Set(orders.filter((o) => o.status === 'ready').map((o) => o.id));
+    if (!known || !started) {
+      // Numbers already up when the screen starts are not called out again.
+      announced.current = new Set([...(known ?? []), ...serving.map((o) => o.id)]);
+      return;
     }
-    seen.current = ids;
-  }, [serving]);
+    for (const id of [...known]) if (!stillReady.has(id)) known.delete(id);
+    for (const o of [...serving].reverse()) {
+      if (known.has(o.id)) continue;
+      known.add(o.id);
+      waiting.current.push({ id: o.id, text: `Order ${spokenNumber(o.number)}${o.customerName ? ` for ${o.customerName}` : ''} is ready!` });
+    }
+    callNext();
+    // readyIds changes exactly when the list of ready numbers changes.
+  }, [readyIds, started]);
 
   // A new FREE MEAL: big celebration banner for a few seconds.
   const seenWins = useRef<Set<string> | null>(null);
@@ -190,7 +251,7 @@ export function Serving() {
       const big = wins.find((w) => w.prize === 'freeMeal' && !seenWins.current!.has(`${w.orderId}:${w.at}`));
       if (big) {
         setCelebrate(big);
-        setTimeout(() => setCelebrate(null), 7000);
+        later(() => setCelebrate((c) => (c === big ? null : c)), 7000);
       }
     }
     seenWins.current = keys;
@@ -274,7 +335,7 @@ export function Serving() {
             <img src="./logo.png" alt="Chick Chick Boom" />
             <h1>NOW SERVING</h1>
           </div>
-          <div className="serving-numbers">
+          <div className={`serving-numbers n${Math.min(serving.length, 3)}`}>
             {serving.length === 0 ? (
               <span className="serving-empty">Your number will show here</span>
             ) : (
@@ -294,10 +355,10 @@ export function Serving() {
             {day && <span className="wait-chip">Wait ≈ {wait} min</span>}
           </div>
           <div className="prep-numbers">
-            {preparing.slice(0, 15).map((o) => (
+            {(preparing.length > PREP_MAX ? preparing.slice(0, PREP_MAX - 1) : preparing).map((o) => (
               <span key={o.id}>{o.number}</span>
             ))}
-            {preparing.length > 15 && <span>+{preparing.length - 15}</span>}
+            {preparing.length > PREP_MAX && <span>+{preparing.length - (PREP_MAX - 1)} more</span>}
           </div>
         </section>
       </div>

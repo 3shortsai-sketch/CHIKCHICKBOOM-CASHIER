@@ -3,9 +3,9 @@ import { peso } from '../domain/pricing';
 import { dayXlsx, xlsxFileName } from '../domain/excel';
 import { expectedSpinCost, promoStatus } from '../domain/promo';
 import { XLSX_MIME } from '../domain/xlsx';
-import { ordersCsv, orderNet, stockLeft, summarize } from '../domain/reports';
-import type { Order } from '../domain/types';
-import { exportBackup, importBackup, latestDay, modeOrders, openDay, patchDay, patchOrder, useStore } from '../data/store';
+import { ordersCsv, orderNet, pendingSpins, stockLeft, summarize, voidReturnAmount } from '../domain/reports';
+import type { Order, Refund } from '../domain/types';
+import { appendToOrder, exportBackup, importBackup, latestDay, modeOrders, openDay, patchDay, patchOrder, useDevice, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 import { download, ManagerConfirm, PinGate } from '../ui/ui';
 import { LineDetails } from './cashier/Cashier';
@@ -30,6 +30,121 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
   );
 }
 
+type RestoreMsg = { ok: boolean; message: string } | null;
+
+/**
+ * Load a backup file. Works with no business day yet (a fresh laptop).
+ * The message is kept by the dashboard, so it stays up when the restored day appears.
+ */
+function RestorePanel({ msg, setMsg }: { msg: RestoreMsg; setMsg: (m: RestoreMsg) => void }) {
+  const [withSettings, setWithSettings] = useState(false);
+  return (
+    <section className="panel no-print restore-panel">
+      <h2>Restore a backup</h2>
+      <p className="muted small">Only adds orders this device does not have. Nothing here is changed.</p>
+      <label className="row small">
+        <input type="checkbox" checked={withSettings} onChange={(e) => setWithSettings(e.target.checked)} />
+        Also restore menu, prices and passcodes (new laptop only)
+      </label>
+      <input
+        type="file"
+        accept="application/json,.json"
+        aria-label="Backup file"
+        onChange={async (e) => {
+          const input = e.target;
+          const f = input.files?.[0];
+          if (!f) return;
+          try {
+            setMsg(importBackup(await f.text(), { withSettings }));
+          } catch {
+            setMsg({ ok: false, message: 'Could not read that file.' });
+          }
+          // Let the same file be picked again.
+          input.value = '';
+        }}
+      />
+      {msg && (
+        <p className={msg.ok ? 'ok-note' : 'error'} role="status">
+          {msg.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
+const METHOD_NAME = { cash: 'Cash', gcash: 'GCash', maya: 'Maya' } as const;
+const clock = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const refKey = (r: string | undefined) => (r ?? '').replace(/\s+/g, '').toLowerCase();
+
+/** GCash and Maya payments of the day, to tick off against the wallet's own list. */
+function WalletCheck({ dayList, all }: { dayList: Order[]; all: Order[] }) {
+  const rows = dayList.filter((o) => o.payment.method !== 'cash').sort((a, b) => a.seq - b.seq);
+  const byRef = new Map<string, Order[]>();
+  for (const o of all) {
+    if (o.payment.method === 'cash') continue;
+    const k = refKey(o.payment.reference);
+    if (k) byRef.set(k, [...(byRef.get(k) ?? []), o]);
+  }
+  const total = rows.reduce((n, o) => n + o.payment.due, 0);
+  const mixed = new Set(rows.map((o) => o.payment.method)).size > 1;
+  let flagged = 0;
+  return (
+    <section className="panel wallet-check">
+      <h2>GCash check list</h2>
+      {rows.length === 0 ? (
+        <p className="muted">No GCash or Maya payments yet.</p>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Order</th>
+                <th>Amount</th>
+                <th>Reference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((o) => {
+                const k = refKey(o.payment.reference);
+                const twins = k ? (byRef.get(k) ?? []).filter((x) => x.id !== o.id) : [];
+                const problem = !k ? 'No reference' : twins.length ? `Same as ${twins.map((x) => x.number).join(', ')}` : '';
+                if (problem) flagged += 1;
+                return (
+                  <tr key={o.id} className={problem ? 'warn-row' : ''}>
+                    <td>{clock(o.createdAt)}</td>
+                    <td>
+                      <b>{o.number}</b>
+                      {mixed && <span className="muted small"> {METHOD_NAME[o.payment.method]}</span>}
+                      {o.voided && <div className="muted small">voided, cash handed back</div>}
+                    </td>
+                    <td>{peso(o.payment.due)}</td>
+                    <td className="wallet-ref">
+                      {o.payment.reference || '—'}
+                      {problem && <div className="wallet-flag">{problem}</div>}
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr className="strong">
+                <td colSpan={2}>
+                  Total · {rows.length} {rows.length === 1 ? 'payment' : 'payments'}
+                </td>
+                <td>{peso(total)}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted small">
+        {flagged > 0 ? `${flagged} highlighted: the reference is missing or used twice. Find ${flagged === 1 ? 'it' : 'them'} in the GCash app. ` : ''}
+        Each row should match one payment received in the GCash app. Voided orders stay on the list because the money still came in.
+      </p>
+    </section>
+  );
+}
+
 function DashboardInner() {
   const state = useStore((s) => s);
   const s = state.settings;
@@ -42,16 +157,22 @@ function DashboardInner() {
   const sum = useMemo(() => summarize(day, orders, s), [day, orders, s]);
   const left = useMemo(() => stockLeft(day, orders, s), [day, orders, s]);
   const [counted, setCounted] = useState('');
-  const [action, setAction] = useState<{ type: 'void' | 'refund'; order: Order } | null>(null);
+  const [action, setAction] = useState<{ type: 'void' | 'refund'; orderId: string } | null>(null);
   const [search, setSearch] = useState('');
-  const [restoreMsg, setRestoreMsg] = useState('');
+  const [restoreMsg, setRestoreMsg] = useState<RestoreMsg>(null);
+  const [closeAsk, setCloseAsk] = useState(false);
+  const [reopen, setReopen] = useState(false);
+  const device = useDevice();
 
   if (!day) {
     return (
-      <div className="screen">
+      <div className="screen dashboard">
         <TopBar title="Dashboard" />
-        <div className="center-screen">
+        <div className="dash-body">
           <p className="empty">No business day yet. Open one on the cashier screen.</p>
+          <div className="dash-grid">
+            <RestorePanel msg={restoreMsg} setMsg={setRestoreMsg} />
+          </div>
         </div>
       </div>
     );
@@ -64,10 +185,27 @@ function DashboardInner() {
   const expected = expectedSpinCost(s);
   const goalPct = Math.min(100, Math.max(0, sum.goalPct));
 
+  // Things still going on: closing now would leave them hanging.
+  const unfinished = dayList.filter((o) => !o.voided && (o.status === 'new' || o.status === 'cooking' || o.status === 'ready')).length;
+  const spinsWaiting = pendingSpins(day, orders, Date.now(), Infinity).length;
+  const loose = [
+    unfinished > 0 ? `${unfinished} ${unfinished === 1 ? 'order is' : 'orders are'} not handed over yet` : '',
+    spinsWaiting > 0 ? `${spinsWaiting} ${spinsWaiting === 1 ? 'order still has' : 'orders still have'} a spin waiting` : '',
+  ].filter(Boolean);
+  const reallyClose = () => {
+    if (counted === '') return;
+    patchDay(day.id, { countedCash: Number(counted), closedAt: Date.now(), closedBy: device.cashier.trim() || 'Dashboard' });
+    setCloseAsk(false);
+    setCounted('');
+  };
   const closeDay = () => {
     if (counted === '') return;
-    patchDay(day.id, { countedCash: Number(counted), closedAt: Date.now() });
+    if (loose.length > 0) setCloseAsk(true);
+    else reallyClose();
   };
+  // Only one day can be open at a time.
+  const otherOpen = days.find((d) => d.id !== day.id && !d.closedAt);
+  const acting = action ? state.orders[action.orderId] : undefined;
 
   return (
     <div className="screen dashboard">
@@ -110,9 +248,20 @@ function DashboardInner() {
         <section className="stats">
           <Stat label="Orders" value={String(sum.orders)} />
           <Stat label="Average order" value={peso(sum.average)} />
-          <Stat label="Ingredient cost" value={peso(Math.round(sum.cost))} />
+          <Stat label="Sales at menu price" value={peso(sum.grossSales)} sub="before discounts, free meals left out" />
+          <Stat label="Discounts" value={peso(sum.discounts)} sub="vouchers used + ₱10 off" />
+          <Stat
+            label="Ingredient cost"
+            value={peso(Math.round(sum.cost))}
+            sub={`food sold ${peso(Math.round(sum.cogsSold))} · giveaways ${peso(Math.round(sum.giveawaysAtCost))} · waste ${peso(Math.round(sum.waste.cost))}`}
+          />
           <Stat label="Profit after ingredients" value={peso(Math.round(sum.profit))} tone={sum.profit >= 0 ? 'good' : 'bad'} />
-          <Stat label="Promo cost" value={peso(Math.round(sum.promo.total))} sub={`wheel ${peso(sum.promo.wheel)} · vouchers ${peso(sum.promo.vouchers)} · rewards ${peso(sum.promo.rewards)}`} />
+          <Stat
+            label="Promo cost (at cost)"
+            value={peso(Math.round(sum.promo.total))}
+            sub={`wheel ${peso(Math.round(sum.promo.wheel))} · vouchers ${peso(sum.promo.vouchers)} · rewards ${peso(Math.round(sum.promo.rewards))}`}
+          />
+          <Stat label="Prize cash handed back" value={peso(sum.promo.cashBack)} sub="free meals and ₱10 off, paid from the drawer" />
           <Stat label="Spins" value={String(sum.spins)} />
         </section>
 
@@ -151,7 +300,7 @@ function DashboardInner() {
               <tbody>
                 {sum.payments.filter((p) => p.method === 'cash' || p.orders > 0 || s.payments[p.method]).map((p) => (
                   <tr key={p.method}>
-                    <td>{p.method === 'cash' ? 'Cash' : p.method === 'gcash' ? 'GCash' : 'Maya'}</td>
+                    <td>{METHOD_NAME[p.method]}</td>
                     <td>{p.orders} {p.orders === 1 ? 'order' : 'orders'}</td>
                     <td>{peso(p.amount)}</td>
                   </tr>
@@ -191,12 +340,19 @@ function DashboardInner() {
                   <tr key={w.prize}>
                     <td>{w.label}</td>
                     <td>{w.count}</td>
-                    <td>{peso(w.cost)}</td>
+                    <td>{peso(Math.round(w.cost))}</td>
                   </tr>
                 ))}
+                <tr className="strong">
+                  <td>Prize cash handed back</td>
+                  <td></td>
+                  <td>{peso(sum.promo.cashBack)}</td>
+                </tr>
               </tbody>
             </table>
-            <p className="muted small">Cash prizes count the cash given back. Free items count their ingredient cost. ₱20 vouchers count when used (under promo cost).</p>
+            <p className="muted small">
+              Prizes are counted at cost: a FREE MEAL costs the ingredients of the bowl, not its menu price. ₱10 off counts the cash. Free items count their ingredients. Vouchers count when they are used (under promo cost).
+            </p>
           </section>
 
           <section className="panel">
@@ -210,7 +366,7 @@ function DashboardInner() {
               <b className="display">{promo.pct.toFixed(1)}%</b>
             </div>
             <p className="small">
-              Wheel prizes + vouchers used: <b>{peso(Math.round(promo.cost))}</b> of {peso(sum.gross)} paid.{' '}
+              Wheel prizes at cost + vouchers used: <b>{peso(Math.round(promo.cost))}</b> of {peso(sum.gross)} paid.{' '}
               {promo.level === 'early'
                 ? `Not checked until sales reach ${peso(s.promoLimits.minSales)}.`
                 : promo.level === 'pause'
@@ -286,8 +442,16 @@ function DashboardInner() {
                   <td>{peso(sum.cash.cashSales)}</td>
                 </tr>
                 <tr>
-                  <td>− Cash given back (wheel + refunds)</td>
-                  <td>{peso(sum.cash.paidOut)}</td>
+                  <td>− Prize cash handed back</td>
+                  <td>{peso(sum.promo.cashBack)}</td>
+                </tr>
+                <tr>
+                  <td>− Refunds</td>
+                  <td>{peso(sum.manualRefunds)}</td>
+                </tr>
+                <tr>
+                  <td>− Cash handed back for voided GCash or Maya orders</td>
+                  <td>{peso(sum.cash.voidReturns)}</td>
                 </tr>
                 <tr className="strong">
                   <td>Should be in the drawer</td>
@@ -308,14 +472,52 @@ function DashboardInner() {
               </tbody>
             </table>
             {!day.closedAt ? (
-              <div className="row no-print">
-                <input className="input" inputMode="numeric" value={counted} onChange={(e) => setCounted(e.target.value.replace(/\D/g, ''))} placeholder="Cash counted at close (₱)" />
-                <button className="btn danger" disabled={counted === ''} onClick={closeDay}>
-                  Close the day
-                </button>
-              </div>
+              <>
+                <div className="row no-print">
+                  <input
+                    className="input"
+                    inputMode="numeric"
+                    value={counted}
+                    onChange={(e) => {
+                      setCounted(e.target.value.replace(/\D/g, ''));
+                      setCloseAsk(false);
+                    }}
+                    placeholder="Cash counted at close (₱)"
+                    aria-label="Cash counted at close"
+                  />
+                  <button className="btn danger" disabled={counted === ''} onClick={closeDay}>
+                    Close the day
+                  </button>
+                </div>
+                {closeAsk && loose.length > 0 && (
+                  <div className="banner warn close-ask no-print" role="alert">
+                    <p>
+                      <b>Not finished yet:</b> {loose.join(' and ')}. Closing now takes them off the kitchen and cashier screens.
+                    </p>
+                    <div className="row">
+                      <button className="btn" onClick={() => setCloseAsk(false)}>
+                        Not yet
+                      </button>
+                      <button className="btn danger" onClick={reallyClose}>
+                        Close anyway
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
-              <p className="muted small">Day closed {new Date(day.closedAt).toLocaleTimeString()}.</p>
+              <>
+                <p className="muted small">
+                  Day closed {new Date(day.closedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  {day.closedBy ? ` by ${day.closedBy}` : ''}.
+                </p>
+                <div className="row no-print">
+                  <button className="btn small" disabled={!!otherOpen} onClick={() => setReopen(true)}>
+                    Reopen this day
+                  </button>
+                  {otherOpen && <span className="muted small">Close the day that is open now ({otherOpen.date}) first.</span>}
+                </div>
+              </>
             )}
           </section>
 
@@ -343,7 +545,7 @@ function DashboardInner() {
                         {o.payment.reference ? ` #${o.payment.reference}` : ''} {o.cardId ?? ''}
                       </div>
                     </td>
-                    <td>{new Date(o.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                    <td>{clock(o.createdAt)}</td>
                     <td>
                       {o.lines.map((l) => (
                         <div key={l.id}>
@@ -353,7 +555,7 @@ function DashboardInner() {
                       {o.voided && <div className="error">VOID: {o.voided.reason} ({o.voided.by})</div>}
                       {o.refunds?.map((r, i) => (
                         <div key={i} className="error">
-                          Refund {peso(r.amount)}: {r.reason}
+                          Refund {peso(r.amount)}: {r.reason} ({r.by})
                         </div>
                       ))}
                     </td>
@@ -362,8 +564,8 @@ function DashboardInner() {
                     <td className="no-print">
                       {!o.voided && (
                         <div className="row">
-                          <button className="btn small ghost" onClick={() => setAction({ type: 'refund', order: o })}>Refund</button>
-                          <button className="btn small danger" onClick={() => setAction({ type: 'void', order: o })}>Void</button>
+                          <button className="btn small ghost" onClick={() => setAction({ type: 'refund', orderId: o.id })}>Refund</button>
+                          <button className="btn small danger" onClick={() => setAction({ type: 'void', orderId: o.id })}>Void</button>
                         </div>
                       )}
                     </td>
@@ -374,35 +576,61 @@ function DashboardInner() {
             {!search && dayList.length > 15 && <p className="muted small">Showing the latest 15 of {dayList.length}. Search to find others.</p>}
           </section>
 
-          <section className="panel no-print">
-            <h2>Restore a backup</h2>
-            <p className="muted small">Loads orders and settings from a backup file into this device. Orders already here are kept.</p>
-            <input
-              type="file"
-              accept="application/json"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                setRestoreMsg(importBackup(await f.text()).message);
-              }}
-            />
-            {restoreMsg && <p className="ok-note">{restoreMsg}</p>}
-          </section>
+          <WalletCheck dayList={dayList} all={orders} />
+
+          <RestorePanel msg={restoreMsg} setMsg={setRestoreMsg} />
         </div>
       </div>
 
-      {action && (
+      {action && acting && !acting.voided && (
         <ManagerConfirm
-          title={action.type === 'void' ? `Void ${action.order.number}` : `Refund part of ${action.order.number}`}
+          title={action.type === 'void' ? `Void ${acting.number}` : `Refund part of ${acting.number}`}
           managerPin={s.managerPin}
           needAmount={action.type === 'refund'}
-          maxAmount={orderNet(action.order)}
+          maxAmount={orderNet(acting)}
+          who={device.cashier}
+          confirmLabel={action.type === 'void' ? 'Void this order' : 'Refund'}
+          note={
+            action.type === 'void' ? (
+              <p className="banner warn hand-back">
+                {voidReturnAmount(acting) > 0 ? (
+                  <>
+                    Hand back <b>{peso(voidReturnAmount(acting))}</b> in cash.
+                  </>
+                ) : (
+                  'Nothing to hand back: the customer already got it all back.'
+                )}
+              </p>
+            ) : (
+              <p className="muted small">The customer paid {peso(orderNet(acting))} for this order so far. Hand the refund back in cash.</p>
+            )
+          }
           onClose={() => setAction(null)}
-          onConfirm={(reason, amount) => {
-            const by = 'Manager';
-            if (action.type === 'void') patchOrder(action.order.id, { voided: { reason, at: Date.now(), by } });
-            else patchOrder(action.order.id, { refunds: [...(action.order.refunds ?? []), { amount, reason, at: Date.now(), by }] });
+          onConfirm={(reason, amount, by) => {
+            if (action.type === 'void') patchOrder(acting.id, { voided: { reason, at: Date.now(), by } });
+            else {
+              // One refund is added, so a refund made on another device at the same time is kept.
+              const refund: Refund = { amount, reason, at: Date.now(), by };
+              appendToOrder(acting.id, 'refunds', refund);
+            }
             setAction(null);
+          }}
+        />
+      )}
+
+      {reopen && day.closedAt && !otherOpen && (
+        <ManagerConfirm
+          title={`Reopen ${day.date}`}
+          managerPin={s.managerPin}
+          who={device.cashier}
+          confirmLabel="Reopen this day"
+          reasonHint="e.g. closed by mistake"
+          note={<p className="muted small">The day opens again for selling. The cash count is cleared: count the drawer again when you close.</p>}
+          onClose={() => setReopen(false)}
+          onConfirm={() => {
+            // undefined removes the field, here and on the other devices.
+            patchDay(day.id, { closedAt: undefined, countedCash: undefined, closedBy: undefined });
+            setReopen(false);
           }}
         />
       )}

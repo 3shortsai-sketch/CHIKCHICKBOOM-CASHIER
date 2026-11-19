@@ -79,7 +79,8 @@ but the kitchen tablet is not.
 
 ### Business day
 - The cashier **opens the day** with their name, the opening cash float and today's stock.
-- The CFO **closes the day** on the dashboard by typing the cash counted.
+- The CFO **closes the day** on the dashboard by typing the cash counted. If orders are still cooking or ready, or spins are waiting, the app says how many and asks again ("Close anyway"). It records who closed.
+- A day closed by mistake can be **reopened** on the dashboard with the manager PIN, as long as no other day is open. The cash count is cleared and typed again at the next close.
 - Order numbers (A-001, A-002…) restart each business day, not at midnight.
 - Each device has an order letter (laptop = A). A backup cashier device uses B so numbers never clash.
 
@@ -90,11 +91,11 @@ but the kitchen tablet is not.
 
 | Prize | What the app does |
 | --- | --- |
-| FREE MEAL | Shows "Give back ₱X cash" (the price of that bowl, extras included) |
+| FREE MEAL | Shows "Give back ₱X cash" (the price of that bowl, extras included, never more than the customer paid) |
 | ₱10 off | Shows "Give back ₱10 cash" |
 | Free cookie / water / extra sauce | Adds it to the order at ₱0; the kitchen sees it highlighted. If it's sold out, the app says so and the cashier logs "Try again" + sticker |
 | Double stamp | +1 stamp (needs the loyalty card; the cashier can add it after paying) |
-| ₱20 off tomorrow | Shows a code like `V-K7PM` to write on a voucher slip |
+| ₱20 off next day | Shows a code like `V-K7PM` to write on a voucher slip. On the last selling day there is no next day, so the slot gives the stand-in prize instead (₱10 off unless Setup says otherwise) |
 | Try again | Sticker |
 
 - Money given back is always **cash from the drawer**, even if the customer paid by GCash or Maya. The cash drawer count accounts for it.
@@ -110,8 +111,9 @@ but the kitchen tablet is not.
 - An order that uses a reward still earns its stamp (switch in Setup).
 - Unknown card numbers are refused. Voiding an order takes its stamps back.
 
-### Vouchers (₱20 off tomorrow)
-- Valid only the day after it was won (number of days is a setting), on orders of ₱150 or more, once.
+### Vouchers (₱20 off on the next selling day)
+- Valid on the **next selling day** after it was won, on orders of ₱150 or more, once. The selling days are listed in Setup ("Bazaar days": Nov 23, 24, 25 and 27; Nov 26 is a holiday), so a voucher won on Nov 25 works on Nov 27. How many selling days it stays valid is a setting (1).
+- **Last-day swap**: on the last selling day a voucher could never be used, so the voucher slot gives another prize instead. Setup picks which one ("On the last day the voucher slot gives"); it starts as ₱10 off.
 - Orders with a voucher get no spins.
 
 ### Stock
@@ -121,15 +123,16 @@ but the kitchen tablet is not.
 ### Money on the dashboard
 - **Sales** = what customers paid − cash given back for prizes − refunds. This is the number compared with the ₱66,800 goal.
 - **Profit after ingredients** = sales − unit cost of everything that left the kitchen (free items included). Unit cost should include packaging.
-- **Promo cost** = wheel (cash given back + ingredient cost of free items) + vouchers used + ingredient cost of reward items.
-- **Cash drawer**: opening float + cash sales − cash given back = what should be in the drawer. The count at close shows over/short.
-- Voids and refunds need a reason and the manager PIN.
+- **Promo cost is counted at cost**: a FREE MEAL costs the ingredients of that bowl (not its menu price), ₱10 off costs the ₱10, a free item or reward item costs its ingredients, and a voucher counts when it is used. The cash handed back for prizes is shown on its own line ("Prize cash handed back").
+- **Sales at menu price**, **Discounts** (vouchers used + ₱10 off) and the split of ingredient cost (food sold, giveaways, waste) are on the dashboard for the accounting sheet.
+- **Cash drawer**: opening float + cash sales − prize cash handed back − refunds − cash handed back for voided GCash/Maya orders = what should be in the drawer. The count at close shows over/short.
+- Voids and refunds need a reason, the name of the person approving and the manager PIN. The void box shows how much cash to hand back.
 
 ### Exports
 - **CSV**: one row per item, voucher, prize payback and refund. Adding up the `amount` column (rows where `voided` = no) gives the day's sales. Columns can be matched to the master Google Sheet once Step 4 sets it up.
 - **Print day-end report**: the dashboard, printed.
 - **Excel (.xlsx)**: Dashboard "Export to Excel" or Team page "Download Excel". One file per day with sheets: Summary (sales, profit, promos, cash drawer), Sales by item (qty, sales, cost, profit, margin), Profit per piece (items and combos), Orders (every row, same as the CSV), Hours, Payments, Wheel, Waste. Amounts are real numbers with peso formatting, so they can be summed and charted. Built in, works offline.
-- **Backup file**: everything on the device, restorable from the dashboard.
+- **Backup file**: everything on the device. **Restore** (dashboard, also on a brand-new laptop with no day yet) only adds orders, days and cards the device does not have; nothing already there is changed, and damaged records are skipped. Menu, prices and passcodes come along only when the box "Also restore menu, prices and passcodes (new laptop only)" is ticked.
 
 ### Customer monitor
 - While the cashier rings up an order, the monitor shows it line by line with the total and how many spins it earns.
@@ -151,9 +154,11 @@ but the kitchen tablet is not.
 
 ### Payments
 - Cash and GCash. Maya is off (switch in Setup).
+- **A GCash or Maya payment needs its reference number.** The cashier types it (at least the last 4 digits) from the customer's receipt screen before the order is saved. If another order today already has that reference, the app warns and the cashier must confirm again.
+- The dashboard has a **GCash check list** (time, order, amount, reference, total) to tick off against the GCash app. Rows with a missing or repeated reference are highlighted.
 
 ### Prize limit
-- Wheel prizes (cash given back + ingredient cost of free items) plus vouchers used, as a % of what customers paid today.
+- Wheel prizes at cost (ingredients of free meals and free items, cash for ₱10 off) plus vouchers used, as a % of what customers paid today.
 - A normal day is about 4–5% (about ₱14 per spin with the real menu; bowls earn 32–37% after ingredients, so the wheel takes roughly 15% of bowl profit).
 - At **6.5%** the cashier sees a warning; at **8%** the cashier is asked to pause the wheel. Not checked until sales reach **₱5,000**, so one early FREE MEAL doesn't trigger it. All three numbers are in Setup.
 
@@ -206,6 +211,11 @@ but the kitchen tablet is not.
 - **Publishing**: `.github/workflows/test-and-deploy.yml` tests and builds every PR, and publishes to Firebase Hosting on every merge to `main` once the `FIREBASE_SERVICE_ACCOUNT` secret is added.
 - Tested against the Firebase emulators with two separate browsers (laptop and tablet): orders, Ready, inventory counts and price changes sync both ways; an order taken offline arrives after reconnecting; a non-booth login can't read anything.
 
+### Deploy freeze: Nov 23 to 27
+- **Nothing is merged to `main` or published during the bazaar (Nov 23 to 27).** A merge publishes a new version to every device, and a mistake would stop the booth mid-queue. Fixes wait until after closing on Nov 27, unless the booth cannot sell at all.
+- The last publish before the bazaar is tested the day before on every device (see the booth checklist).
+- **Never run `firebase deploy` for the rules from this repo.** `firestore.rules` here holds a placeholder email (`BOOTH_EMAIL_GOES_HERE`), so deploying it would lock every device out of sync. The rules are published by hand in the Firebase console (Firestore → Rules) with the real booth email.
+
 ### To switch it on
 1. Paste the web app config into `src/data/firebase-config.ts` (Claude does this from the block you send).
 2. Put the booth email in `firestore.rules` and the project ID in `.firebaserc`, then publish the rules (Firestore → Rules → paste → Publish).
@@ -220,6 +230,7 @@ but the kitchen tablet is not.
 - Receipts: the app's screen is not a BIR official receipt. Check with whoever handles permits.
 
 ## Booth checklist
+- Before the bazaar: change all three passcodes in Setup (4 to 8 digits). Setup shows a red banner while any of them is still a default.
 - Laptop + charger, monitor + HDMI cable (and USB-C adapter if needed), tablet + charger + stand
 - Extension cord / power strip
 - Phone hotspot with a data promo loaded

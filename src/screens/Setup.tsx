@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { newId } from '../domain/pricing';
-import { ALLERGENS, type AllergenTags, type MenuItem, type Settings } from '../domain/types';
+import { ALLERGENS, type AllergenTags, type MenuItem, type PrizeId, type Settings } from '../domain/types';
+import { PRIZE_LABEL } from '../domain/wheel';
 import { clearDemoData, openDay, resetSettings, saveSettings, setDevice, useDevice, useStore } from '../data/store';
 import { signOutBooth, useAuthState, useSyncStatus } from '../data/sync';
 import { askToSignIn } from '../ui/BoothLogin';
 import { TopBar } from '../ui/TopBar';
-import { PinGate } from '../ui/ui';
+import { keepUnlocked, PinGate } from '../ui/ui';
 
 export function Setup() {
   const pin = useStore((s) => s.settings.adminPin);
@@ -16,7 +17,88 @@ export function Setup() {
   );
 }
 
-const num = (v: string) => Number(v.replace(/[^\d.]/g, '') || 0);
+/** The passcodes the app ships with. Anyone can read them in the public code. */
+const DEFAULT_PINS = { adminPin: '0000', managerPin: '1234', teamPin: '2468' } as const;
+
+const showNum = (n: number) => (Number.isFinite(n) ? String(n) : '0');
+
+/**
+ * A number box that can only save a sensible number. A wrong entry (letters,
+ * a minus, too small) puts the old value back and says why in one line.
+ * Nothing is saved when the number did not change.
+ */
+function NumField({
+  value,
+  onSave,
+  min = 0,
+  max,
+  decimals,
+  blankZero,
+  className = 'input',
+  label,
+}: {
+  value: number;
+  onSave: (n: number) => void;
+  min?: number;
+  max?: number;
+  /** Allow 0.15; without it only whole numbers. */
+  decimals?: boolean;
+  /** Show 0 as an empty box, and read an empty box as 0. */
+  blankZero?: boolean;
+  className?: string;
+  label?: string;
+}) {
+  const shown = blankZero && !value ? '' : showNum(value);
+  const [text, setText] = useState(shown);
+  const [error, setError] = useState('');
+  const focused = useRef(false);
+  // A change made on another device (or a reset) shows up, unless someone is typing here.
+  useEffect(() => {
+    if (!focused.current) setText(shown);
+  }, [shown]);
+  const commit = () => {
+    focused.current = false;
+    const raw = text.trim();
+    if (raw === shown) return;
+    const n = raw === '' && blankZero ? 0 : Number(raw);
+    const wellFormed = raw === '' ? !!blankZero : decimals ? /^\d+(\.\d+)?$/.test(raw) : /^\d+$/.test(raw);
+    if (!wellFormed || !Number.isFinite(n) || n < min || (max !== undefined && n > max)) {
+      const kind = decimals ? 'a number' : 'a whole number';
+      const range = max !== undefined ? `from ${min} to ${max}` : `${min} or more`;
+      setError(`Not saved. Type ${kind}, ${range}.`);
+      setText(shown);
+      return;
+    }
+    setError('');
+    if (n !== value) onSave(n);
+    else setText(shown);
+  };
+  return (
+    <>
+      <input
+        className={className}
+        inputMode={decimals ? 'decimal' : 'numeric'}
+        aria-label={label}
+        aria-invalid={error ? true : undefined}
+        value={text}
+        onFocus={() => {
+          focused.current = true;
+        }}
+        onChange={(e) => {
+          setText(e.target.value);
+          setError('');
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+      />
+      {error && (
+        <small className="field-error" role="alert">
+          {error}
+        </small>
+      )}
+    </>
+  );
+}
 
 function ListEditor({ label, values, onChange }: { label: string; values: string[]; onChange: (v: string[]) => void }) {
   const [text, setText] = useState(values.join('\n'));
@@ -28,9 +110,147 @@ function ListEditor({ label, values, onChange }: { label: string; values: string
         rows={Math.max(3, values.length + 1)}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onBlur={() => onChange(text.split('\n').map((x) => x.trim()).filter(Boolean))}
+        onBlur={() => {
+          const next = text.split('\n').map((x) => x.trim()).filter(Boolean);
+          if (next.join('\n') !== values.join('\n')) onChange(next);
+        }}
       />
     </label>
+  );
+}
+
+function realDate(d: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const [y, m, day] = d.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, day));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === day;
+}
+
+/** The days the booth sells, and what the voucher slot gives on the last one. */
+function BazaarDays({ s, save }: { s: Settings; save: (patch: Partial<Settings>) => void }) {
+  const days = [...(s.sellingDays ?? [])].sort();
+  const shown = days.join(', ');
+  const [text, setText] = useState(shown);
+  const [error, setError] = useState('');
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setText(shown);
+  }, [shown]);
+  const commit = () => {
+    focused.current = false;
+    const parts = text.split(/[\s,;]+/).filter(Boolean);
+    const bad = parts.filter((d) => !realDate(d));
+    if (bad.length) {
+      setError(`Not saved. "${bad[0]}" is not a date. Type dates like 2026-11-23, with commas between them.`);
+      setText(shown);
+      return;
+    }
+    const next = [...new Set(parts)].sort();
+    setError('');
+    setText(next.join(', '));
+    if (next.join(',') !== days.join(',')) save({ sellingDays: next });
+  };
+  const standIn: PrizeId = s.voucher.lastDayPrize ?? 'tenOff';
+  return (
+    <section className="panel">
+      <h2>Bazaar days</h2>
+      <label className="field">
+        <span>Days the booth sells (YYYY-MM-DD, commas between)</span>
+        <input
+          className="input"
+          value={text}
+          aria-invalid={error ? true : undefined}
+          onFocus={() => {
+            focused.current = true;
+          }}
+          onChange={(e) => {
+            setText(e.target.value);
+            setError('');
+          }}
+          onBlur={commit}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+          placeholder="2026-11-23, 2026-11-24"
+        />
+        {error && (
+          <small className="field-error" role="alert">
+            {error}
+          </small>
+        )}
+      </label>
+      <label className="field">
+        <span>On the last day the voucher slot gives</span>
+        <select className="input" value={standIn} onChange={(e) => save({ voucher: { ...s.voucher, lastDayPrize: e.target.value as PrizeId } })}>
+          {(Object.keys(PRIZE_LABEL) as PrizeId[])
+            .filter((p) => p !== 'voucher')
+            .map((p) => (
+              <option key={p} value={p}>
+                {PRIZE_LABEL[p]}
+              </option>
+            ))}
+        </select>
+      </label>
+      <p className="muted small">
+        Vouchers are valid on the next selling day. {days.length ? `The last day is ${days[days.length - 1]}: there is no next day, so the voucher slot gives the prize above instead.` : 'No days are set, so a voucher is simply valid the next day.'}
+      </p>
+    </section>
+  );
+}
+
+/** Three passcodes, saved together with one button. */
+function Passcodes({ s, save }: { s: Settings; save: (patch: Partial<Settings>) => void }) {
+  const [manager, setManager] = useState(s.managerPin);
+  const [admin, setAdmin] = useState(s.adminPin);
+  const [team, setTeam] = useState(s.teamPin);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const digits = (set: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    set(e.target.value.replace(/\D/g, '').slice(0, 8));
+    setMsg(null);
+  };
+  const changed = manager !== s.managerPin || admin !== s.adminPin || team !== s.teamPin;
+  const submit = () => {
+    const fail = (text: string) => setMsg({ ok: false, text });
+    for (const [name, v] of [['Manager', manager], ['Dashboard and Setup', admin], ['Team', team]] as const) {
+      if (!/^\d{4,8}$/.test(v)) return fail(`Not saved. The ${name} passcode needs 4 to 8 digits.`);
+    }
+    if (admin === manager || admin === team) return fail('Not saved. The Dashboard and Setup passcode must be different from the other two.');
+    if (!changed) return setMsg({ ok: true, text: 'Nothing changed.' });
+    // This tab stays open; other tabs and devices must type the new passcode.
+    if (admin !== s.adminPin) {
+      keepUnlocked('Setup', admin);
+      keepUnlocked('Dashboard', admin);
+    }
+    save({ managerPin: manager, adminPin: admin, teamPin: team });
+    const stillDefault = manager === DEFAULT_PINS.managerPin || admin === DEFAULT_PINS.adminPin || team === DEFAULT_PINS.teamPin;
+    setMsg({ ok: true, text: stillDefault ? 'Passcodes saved. One is still a default: change it too.' : 'Passcodes saved. Tell the team the new ones.' });
+  };
+  return (
+    <div className="passcodes">
+      <div className="grid-2">
+        <label className="field">
+          <span>Manager passcode (voids and refunds)</span>
+          <input className="input" inputMode="numeric" autoComplete="off" value={manager} onChange={digits(setManager)} />
+        </label>
+        <label className="field">
+          <span>Dashboard and Setup passcode</span>
+          <input className="input" inputMode="numeric" autoComplete="off" value={admin} onChange={digits(setAdmin)} />
+        </label>
+        <label className="field">
+          <span>Team passcode (cashier "Team" page)</span>
+          <input className="input" inputMode="numeric" autoComplete="off" value={team} onChange={digits(setTeam)} />
+        </label>
+      </div>
+      <div className="row">
+        <button className="btn primary" onClick={submit} disabled={!changed}>
+          Save passcodes
+        </button>
+        <span className="muted small">4 to 8 digits each. The Dashboard and Setup one must be different from the other two.</span>
+      </div>
+      {msg && (
+        <p className={msg.ok ? 'ok-note' : 'error'} role="status">
+          {msg.text}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -86,6 +306,10 @@ function SetupInner() {
   const device = useDevice();
   const day = openDay(state);
   const [saved, setSaved] = useState('');
+  const [modeMsg, setModeMsg] = useState('');
+  const realDayOpen = Object.values(state.days).find((d) => d.mode === 'live' && !d.closedAt);
+  const defaultPins = s.adminPin === DEFAULT_PINS.adminPin || s.managerPin === DEFAULT_PINS.managerPin || s.teamPin === DEFAULT_PINS.teamPin;
+  const wheelTotal = s.wheel.slots.reduce((n, w) => n + w.slots, 0);
   // Bumped after a reset so the form shows the new values.
   const [formKey, setFormKey] = useState(0);
 
@@ -114,26 +338,53 @@ function SetupInner() {
       <TopBar title="Setup" />
       <div className="dash-body" key={formKey}>
         {saved && <div className="toast">{saved}</div>}
+        {defaultPins && (
+          <p className="error default-pins" role="alert">
+            Passcodes are still the defaults anyone can find online. Change all three before the bazaar.
+          </p>
+        )}
 
         <section className="panel">
           <h2>Data mode</h2>
           <div className="segmented">
-            <button className={s.mode === 'demo' ? 'selected' : ''} onClick={() => save({ mode: 'demo' })}>
+            <button
+              className={s.mode === 'demo' ? 'selected' : ''}
+              onClick={() => {
+                if (s.mode === 'demo') return;
+                if (realDayOpen) return setModeMsg(`Close the day first. A real day is open (${realDayOpen.date}): close it on the Dashboard, then switch to demo.`);
+                if (confirm('Switch to DEMO (practice)? Every device changes to practice mode. Orders taken in demo are not real sales and do not count.')) {
+                  setModeMsg('');
+                  save({ mode: 'demo' });
+                }
+              }}
+            >
               Demo (practice)
             </button>
             <button
               className={s.mode === 'live' ? 'selected' : ''}
               onClick={() => {
-                if (s.mode !== 'live' && confirm('Switch to REAL data? Demo orders stay separate and will not count in reports.')) save({ mode: 'live' });
+                if (s.mode !== 'live' && confirm('Switch to REAL data? Demo orders stay separate and will not count in reports.')) {
+                  setModeMsg('');
+                  save({ mode: 'live' });
+                }
               }}
             >
               Real data
             </button>
           </div>
-          <p className="muted small">Demo and real orders are kept apart. {day ? `A ${day.mode} day is open (${day.date}).` : ''}</p>
-          <button className="btn danger small" onClick={() => confirm('Delete ALL demo orders and demo days on this device?') && clearDemoData()}>
+          {modeMsg && (
+            <p className="error" role="alert">
+              {modeMsg}
+            </p>
+          )}
+          <p className="muted small">Demo and real orders are kept apart. {day ? `A ${day.mode === 'live' ? 'real' : 'demo'} day is open (${day.date}).` : ''}</p>
+          <button
+            className="btn danger small"
+            onClick={() => confirm('Delete ALL practice (demo) orders, days and cards? This clears practice data on every device, not only this one. Real data is not touched.') && clearDemoData()}
+          >
             Clear demo data
           </button>
+          <p className="muted small">Clears practice data on every device. Real orders stay.</p>
         </section>
 
         <section className="panel wide">
@@ -159,7 +410,7 @@ function SetupInner() {
                       <input type="checkbox" checked={m.active} onChange={(e) => setItem(m.id, { active: e.target.checked })} />
                     </td>
                     <td>
-                      <input className="input" defaultValue={m.name} onBlur={(e) => setItem(m.id, { name: e.target.value })} />
+                      <input className="input" defaultValue={m.name} onBlur={(e) => e.target.value !== m.name && setItem(m.id, { name: e.target.value })} />
                     </td>
                     <td>
                       <select className="input" value={m.category} onChange={(e) => { const category = e.target.value as MenuItem['category']; setItem(m.id, { category, kind: KIND_FOR[category][0] }); }}>
@@ -181,13 +432,13 @@ function SetupInner() {
                       )}
                     </td>
                     <td>
-                      <input className="input small-input" inputMode="numeric" defaultValue={m.price} onBlur={(e) => setItem(m.id, { price: num(e.target.value) })} />
+                      <NumField className="input small-input" label={`${m.name} price`} value={m.price} onSave={(price) => setItem(m.id, { price })} />
                     </td>
                     <td>
-                      <input className="input small-input" inputMode="decimal" defaultValue={m.unitCost} onBlur={(e) => setItem(m.id, { unitCost: num(e.target.value) })} />
+                      <NumField className="input small-input" label={`${m.name} unit cost`} decimals value={m.unitCost} onSave={(unitCost) => setItem(m.id, { unitCost })} />
                     </td>
                     <td>
-                      <input className="input small-input" inputMode="numeric" defaultValue={m.startStock} onBlur={(e) => setItem(m.id, { startStock: num(e.target.value) })} />
+                      <NumField className="input small-input" label={`${m.name} start stock`} value={m.startStock} onSave={(startStock) => setItem(m.id, { startStock })} />
                     </td>
                   </tr>
                 ))}
@@ -221,7 +472,7 @@ function SetupInner() {
                         <b>{m.name}</b>
                       </td>
                       <td>
-                        <input className="input" defaultValue={m.description ?? ''} maxLength={70} onBlur={(e) => setItem(m.id, { description: e.target.value.trim() || undefined })} placeholder="e.g. Crispy chicken in garlic butter" />
+                        <input className="input" defaultValue={m.description ?? ''} maxLength={70} onBlur={(e) => (e.target.value.trim() || undefined) !== m.description && setItem(m.id, { description: e.target.value.trim() || undefined })} placeholder="e.g. Crispy chicken in garlic butter" />
                       </td>
                       <td>
                         <AllergenPicker value={{ contains: m.allergens, may: m.mayContain }} onChange={(v) => setItem(m.id, { allergens: v.contains, mayContain: v.may })} />
@@ -268,17 +519,17 @@ function SetupInner() {
               <span className="muted small">{c.parts.join(' + ')}</span>
               <span className="spacer" />
               <span>₱</span>
-              <input className="input small-input" inputMode="numeric" defaultValue={c.price} onBlur={(e) => save({ combos: s.combos.map((x) => (x.id === c.id ? { ...x, price: num(e.target.value) } : x)) })} />
+              <NumField className="input small-input" label={`${c.name} price`} value={c.price} onSave={(price) => save({ combos: s.combos.map((x) => (x.id === c.id ? { ...x, price } : x)) })} />
             </div>
           ))}
           <div className="grid-2">
             <label className="field">
               <span>Extra side ₱</span>
-              <input className="input" inputMode="numeric" defaultValue={s.extraSidePrice} onBlur={(e) => save({ extraSidePrice: num(e.target.value) })} />
+              <NumField value={s.extraSidePrice} onSave={(extraSidePrice) => save({ extraSidePrice })} />
             </label>
             <label className="field">
               <span>Extra sauce ₱</span>
-              <input className="input" inputMode="numeric" defaultValue={s.extraSaucePrice} onBlur={(e) => save({ extraSaucePrice: num(e.target.value) })} />
+              <NumField value={s.extraSaucePrice} onSave={(extraSaucePrice) => save({ extraSaucePrice })} />
             </label>
           </div>
           <ListEditor label="Bowl sides" values={s.sides} onChange={(sides) => save({ sides })} />
@@ -303,30 +554,35 @@ function SetupInner() {
                 <tr key={w.prize}>
                   <td>{w.label}</td>
                   <td>
-                    <input
+                    <NumField
                       className="input small-input"
-                      inputMode="numeric"
-                      defaultValue={w.slots}
-                      onBlur={(e) => save({ wheel: { ...s.wheel, slots: s.wheel.slots.map((x, j) => (j === i ? { ...x, slots: num(e.target.value) } : x)) } })}
+                      label={`${w.label} slots`}
+                      value={w.slots}
+                      onSave={(slots) => save({ wheel: { ...s.wheel, slots: s.wheel.slots.map((x, j) => (j === i ? { ...x, slots } : x)) } })}
                     />
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="muted small">Total slots: {s.wheel.slots.reduce((n, w) => n + w.slots, 0)}. Match these to the physical wheel; the digital backup uses the same odds.</p>
+          {wheelTotal !== 20 && (
+            <p className="banner warn wheel-warn" role="alert">
+              The slots add up to {wheelTotal}, not 20. The real wheel has 20 slots: fix the numbers so the backup wheel has the same chances.
+            </p>
+          )}
+          <p className="muted small">Total slots: {wheelTotal}. Match these to the physical wheel; the digital backup uses the same odds.</p>
           <div className="grid-2">
             <label className="field">
               <span>Voucher amount ₱</span>
-              <input className="input" inputMode="numeric" defaultValue={s.voucher.amount} onBlur={(e) => save({ voucher: { ...s.voucher, amount: num(e.target.value) } })} />
+              <NumField value={s.voucher.amount} onSave={(amount) => save({ voucher: { ...s.voucher, amount } })} />
             </label>
             <label className="field">
               <span>Voucher minimum order ₱</span>
-              <input className="input" inputMode="numeric" defaultValue={s.voucher.minOrder} onBlur={(e) => save({ voucher: { ...s.voucher, minOrder: num(e.target.value) } })} />
+              <NumField value={s.voucher.minOrder} onSave={(minOrder) => save({ voucher: { ...s.voucher, minOrder } })} />
             </label>
             <label className="field">
-              <span>Voucher valid for (days after it was won)</span>
-              <input className="input" inputMode="numeric" defaultValue={s.voucher.validDays} onBlur={(e) => save({ voucher: { ...s.voucher, validDays: Math.max(1, num(e.target.value)) } })} />
+              <span>Voucher valid for (selling days, from the next one)</span>
+              <NumField min={1} value={s.voucher.validDays} onSave={(validDays) => save({ voucher: { ...s.voucher, validDays } })} />
             </label>
           </div>
         </section>
@@ -343,7 +599,7 @@ function SetupInner() {
           </label>
           <label className="field">
             <span>GCash number to show on the customer screen (optional)</span>
-            <input className="input" inputMode="tel" defaultValue={s.payments.gcashNumber} onBlur={(e) => save({ payments: { ...s.payments, gcashNumber: e.target.value.trim() } })} placeholder="09XX XXX XXXX" />
+            <input className="input" inputMode="tel" defaultValue={s.payments.gcashNumber} onBlur={(e) => e.target.value.trim() !== s.payments.gcashNumber && save({ payments: { ...s.payments, gcashNumber: e.target.value.trim() } })} placeholder="09XX XXX XXXX" />
           </label>
           <p className="muted small">When the cashier picks GCash, the customer screen shows the GCash QR and the amount.</p>
         </section>
@@ -353,15 +609,15 @@ function SetupInner() {
           <div className="grid-2">
             <label className="field">
               <span>Warn the cashier at (% of sales)</span>
-              <input className="input" inputMode="decimal" defaultValue={s.promoLimits.warnPct} onBlur={(e) => save({ promoLimits: { ...s.promoLimits, warnPct: num(e.target.value) } })} />
+              <NumField decimals max={100} value={s.promoLimits.warnPct} onSave={(warnPct) => save({ promoLimits: { ...s.promoLimits, warnPct } })} />
             </label>
             <label className="field">
               <span>Ask to pause the wheel at (% of sales)</span>
-              <input className="input" inputMode="decimal" defaultValue={s.promoLimits.pausePct} onBlur={(e) => save({ promoLimits: { ...s.promoLimits, pausePct: num(e.target.value) } })} />
+              <NumField decimals max={100} value={s.promoLimits.pausePct} onSave={(pausePct) => save({ promoLimits: { ...s.promoLimits, pausePct } })} />
             </label>
             <label className="field">
               <span>Start checking after sales of (₱)</span>
-              <input className="input" inputMode="numeric" defaultValue={s.promoLimits.minSales} onBlur={(e) => save({ promoLimits: { ...s.promoLimits, minSales: num(e.target.value) } })} />
+              <NumField value={s.promoLimits.minSales} onSave={(minSales) => save({ promoLimits: { ...s.promoLimits, minSales } })} />
             </label>
           </div>
           <p className="muted small">Counts wheel prizes (cash given back + ingredient cost of free items) and vouchers used. A normal day is about 4–5%.</p>
@@ -372,19 +628,19 @@ function SetupInner() {
           <div className="grid-2">
             <label className="field">
               <span>Card prefix</span>
-              <input className="input" defaultValue={s.loyalty.prefix} onBlur={(e) => save({ loyalty: { ...s.loyalty, prefix: e.target.value } })} />
+              <input className="input" defaultValue={s.loyalty.prefix} onBlur={(e) => e.target.value !== s.loyalty.prefix && save({ loyalty: { ...s.loyalty, prefix: e.target.value } })} />
             </label>
             <label className="field">
               <span>Stamps to fill a card</span>
-              <input className="input" inputMode="numeric" defaultValue={s.loyalty.cardSize} onBlur={(e) => save({ loyalty: { ...s.loyalty, cardSize: num(e.target.value) } })} />
+              <NumField min={2} value={s.loyalty.cardSize} onSave={(cardSize) => save({ loyalty: { ...s.loyalty, cardSize } })} />
             </label>
             <label className="field">
               <span>First card number</span>
-              <input className="input" inputMode="numeric" defaultValue={s.loyalty.first} onBlur={(e) => save({ loyalty: { ...s.loyalty, first: num(e.target.value) } })} />
+              <NumField min={1} max={s.loyalty.last} value={s.loyalty.first} onSave={(first) => save({ loyalty: { ...s.loyalty, first } })} />
             </label>
             <label className="field">
               <span>Last card number</span>
-              <input className="input" inputMode="numeric" defaultValue={s.loyalty.last} onBlur={(e) => save({ loyalty: { ...s.loyalty, last: num(e.target.value) } })} />
+              <NumField min={Math.max(1, s.loyalty.first)} value={s.loyalty.last} onSave={(last) => save({ loyalty: { ...s.loyalty, last } })} />
             </label>
           </div>
           <table>
@@ -399,7 +655,7 @@ function SetupInner() {
                 <tr key={i}>
                   <td>{r.at}</td>
                   <td>
-                    <input className="input" defaultValue={r.label} onBlur={(e) => save({ loyalty: { ...s.loyalty, rewards: s.loyalty.rewards.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) } })} />
+                    <input className="input" defaultValue={r.label} onBlur={(e) => e.target.value !== r.label && save({ loyalty: { ...s.loyalty, rewards: s.loyalty.rewards.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) } })} />
                   </td>
                 </tr>
               ))}
@@ -415,44 +671,32 @@ function SetupInner() {
         <section className="panel">
           <h2>Team, PINs and screens</h2>
           <ListEditor label="Cashier names" values={s.cashiers} onChange={(cashiers) => save({ cashiers })} />
+          <Passcodes s={s} save={save} />
           <div className="grid-2">
             <label className="field">
-              <span>Manager PIN (voids & refunds)</span>
-              <input className="input" inputMode="numeric" defaultValue={s.managerPin} onBlur={(e) => e.target.value.length >= 4 && save({ managerPin: e.target.value })} />
-            </label>
-            <label className="field">
-              <span>Dashboard & Setup PIN</span>
-              <input className="input" inputMode="numeric" defaultValue={s.adminPin} onBlur={(e) => e.target.value.length >= 4 && save({ adminPin: e.target.value })} />
-            </label>
-            <label className="field">
               <span>Daily sales goal ₱</span>
-              <input className="input" inputMode="numeric" defaultValue={s.dailyGoal} onBlur={(e) => save({ dailyGoal: num(e.target.value) })} />
+              <NumField value={s.dailyGoal} onSave={(dailyGoal) => save({ dailyGoal })} />
             </label>
             <label className="field">
               <span>Kitchen card turns red after (min)</span>
-              <input className="input" inputMode="numeric" defaultValue={s.kitchenLateMinutes} onBlur={(e) => save({ kitchenLateMinutes: num(e.target.value) })} />
+              <NumField min={1} value={s.kitchenLateMinutes} onSave={(kitchenLateMinutes) => save({ kitchenLateMinutes })} />
             </label>
             <label className="field">
               <span>"Now serving" number stays up for (min)</span>
-              <input className="input" inputMode="numeric" defaultValue={s.servingClearMinutes} onBlur={(e) => save({ servingClearMinutes: num(e.target.value) })} />
-            </label>
-          </div>
-          <div className="grid-2">
-            <label className="field">
-              <span>Team passcode (cashier "Team" page)</span>
-              <input className="input" inputMode="numeric" defaultValue={s.teamPin} onBlur={(e) => e.target.value.length >= 4 && save({ teamPin: e.target.value })} />
+              <NumField min={1} value={s.servingClearMinutes} onSave={(servingClearMinutes) => save({ servingClearMinutes })} />
             </label>
             <label className="field">
               <span>Monitor shows "Only N left!" at</span>
-              <input className="input" inputMode="numeric" defaultValue={s.lowStockAlert} onBlur={(e) => save({ lowStockAlert: num(e.target.value) })} />
+              <NumField value={s.lowStockAlert} onSave={(lowStockAlert) => save({ lowStockAlert })} />
             </label>
             <label className="field">
               <span>Wait estimate before any order is done (min)</span>
-              <input className="input" inputMode="numeric" defaultValue={s.defaultWaitMinutes} onBlur={(e) => save({ defaultWaitMinutes: Math.max(1, num(e.target.value)) })} />
+              <NumField min={1} value={s.defaultWaitMinutes} onSave={(defaultWaitMinutes) => save({ defaultWaitMinutes })} />
             </label>
           </div>
-          <p className="muted small">PINs need at least 4 digits. Change both from the defaults (1234 / 0000) before the event.</p>
         </section>
+
+        <BazaarDays s={s} save={save} />
 
         <section className="panel wide">
           <h2>Ingredients: how much one item uses (optional)</h2>
@@ -481,24 +725,26 @@ function SetupInner() {
                       <b>{ing.name}</b> <span className="muted small">({ing.unit})</span>
                     </td>
                     <td>
-                      <input
+                      <NumField
                         className="input tiny-input"
-                        inputMode="decimal"
-                        defaultValue={ing.low || ''}
-                        onBlur={(e) => save({ ingredients: s.ingredients.map((x) => (x.id === ing.id ? { ...x, low: num(e.target.value) } : x)) })}
+                        decimals
+                        blankZero
+                        label={`${ing.name} low at`}
+                        value={ing.low}
+                        onSave={(low) => save({ ingredients: s.ingredients.map((x) => (x.id === ing.id ? { ...x, low } : x)) })}
                       />
                     </td>
                     {s.menu
                       .filter((m) => m.active && m.category !== 'addons')
                       .map((m) => (
                         <td key={m.id}>
-                          <input
+                          <NumField
                             className="input tiny-input"
-                            inputMode="decimal"
-                            aria-label={`${ing.name} per ${m.name}`}
-                            defaultValue={ing.uses?.[m.id] ?? ''}
-                            onBlur={(e) => {
-                              const v = num(e.target.value);
+                            decimals
+                            blankZero
+                            label={`${ing.name} per ${m.name}`}
+                            value={ing.uses?.[m.id] ?? 0}
+                            onSave={(v) => {
                               const uses = { ...(ing.uses ?? {}) };
                               if (v > 0) uses[m.id] = v;
                               else delete uses[m.id];
@@ -524,11 +770,17 @@ function SetupInner() {
           <SyncInfo />
           <label className="field">
             <span>Order letter for this device</span>
-            <input className="input small-input" maxLength={1} defaultValue={device.orderLetter} onBlur={(e) => setDevice({ orderLetter: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') || 'A' })} />
+            <input className="input small-input" maxLength={1} defaultValue={device.orderLetter} onBlur={(e) => {
+              const letter = e.target.value.toUpperCase().replace(/[^A-Z]/g, '') || 'A';
+              e.target.value = letter;
+              if (letter !== device.orderLetter) setDevice({ orderLetter: letter });
+            }} />
           </label>
           <p className="muted small">Laptop = A. If the tablet ever takes orders as a backup cashier, set it to B so numbers never clash.</p>
           <button className="btn ghost small" onClick={() => {
-              if (confirm('Reset ALL settings (menu, prices, PINs) to the starting values?')) {
+              if (confirm('Reset the menu, prices, passcodes, wheel and ingredients to the starting values? The data mode (demo or real) stays as it is. Orders are not touched.')) {
+                // The passcodes go back to the built-in ones; keep this tab open.
+                keepUnlocked('Setup', DEFAULT_PINS.adminPin);
                 resetSettings();
                 setFormKey((k) => k + 1);
               }
