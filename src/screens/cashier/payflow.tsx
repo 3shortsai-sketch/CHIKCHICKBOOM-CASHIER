@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { cashSuggestions } from '../../domain/checkout';
 import { cardStateFor } from '../../domain/cards';
-import { availableRewards, parseCard } from '../../domain/loyalty';
+import { availableRewards, localDate, parseCard, voucherWindow } from '../../domain/loyalty';
 import { peso, spinnableBowls } from '../../domain/pricing';
 import type { MenuItem, Order, PaymentMethod, PrizeId, Settings } from '../../domain/types';
 import { applyPrize, digitalSpin, PRIZE_LABEL, prizeRefundTotal, undoLastSpin } from '../../domain/wheel';
@@ -9,9 +9,23 @@ import { modeCards, useStore } from '../../data/store';
 import { Modal } from '../../ui/ui';
 import { CardNameField } from './CardName';
 
+/** Shortest GCash/Maya reference the cashier may type (the last 4 digits). */
+const MIN_REFERENCE = 4;
+/** Longest cash amount that can be typed: 7 digits. */
+const MAX_CASH_DIGITS = 7;
+/** Keys are ignored this long after the after-payment screen opens (a held Enter must not close it). */
+const AFTERPAY_KEY_DELAY_MS = 400;
+
+/** "2026-11-24" as "Tue, Nov 24". */
+function niceDate(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 export function PayModal({
   due,
   methods,
+  duplicateOf,
   onMethod,
   onPay,
   onClose,
@@ -19,9 +33,12 @@ export function PayModal({
   due: number;
   /** Payment methods the booth accepts (cash is always on). */
   methods: PaymentMethod[];
+  /** The number of another order today paid with this GCash/Maya reference, if any. */
+  duplicateOf: (reference: string) => string | undefined;
   /** Tells the customer monitor which method is chosen, so it can show the QR. */
   onMethod: (m: PaymentMethod) => void;
-  onPay: (method: PaymentMethod, tendered: number, reference: string) => void;
+  /** Saves the order. Returns the problem as a sentence when it could not be saved. */
+  onPay: (method: PaymentMethod, tendered: number, reference: string) => string | undefined;
   onClose: () => void;
 }) {
   const [method, setMethodState] = useState<PaymentMethod>('cash');
@@ -34,11 +51,17 @@ export function PayModal({
   const [reference, setReference] = useState('');
   const cash = typed ? Number(typed) : (tendered ?? 0);
   const change = cash - due;
-  const canPay = method === 'cash' ? cash >= due : true;
+  const ref = reference.trim();
+  const canPay = method === 'cash' ? cash >= due : ref.length >= MIN_REFERENCE;
+  const [problem, setProblem] = useState('');
+  // Same reference as an earlier order: Confirm must be pressed twice.
+  const sameAs = method !== 'cash' && ref ? duplicateOf(ref) : undefined;
+  const [warnedRef, setWarnedRef] = useState('');
 
   const pay = () => {
     if (!canPay) return;
-    onPay(method, method === 'cash' ? cash : due, reference.trim());
+    if (sameAs && warnedRef !== ref) return setWarnedRef(ref);
+    setProblem(onPay(method, method === 'cash' ? cash : due, method === 'cash' ? '' : ref) ?? '');
   };
 
   useEffect(() => {
@@ -46,7 +69,8 @@ export function PayModal({
       if (e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-        pay();
+        // A held-down Enter must not confirm the payment.
+        if (!e.repeat) pay();
       }
     };
     addEventListener('keydown', onKey, true);
@@ -78,7 +102,7 @@ export function PayModal({
           </div>
           <label className="field">
             <span>Or type the cash received</span>
-            <input className="input" inputMode="numeric" value={typed} onChange={(e) => setTyped(e.target.value.replace(/\D/g, ''))} placeholder="₱" autoFocus />
+            <input className="input" inputMode="numeric" value={typed} onChange={(e) => setTyped(e.target.value.replace(/\D/g, '').slice(0, MAX_CASH_DIGITS))} placeholder="₱" autoFocus />
           </label>
           <div className={`change ${cash > 0 && change < 0 ? 'short' : ''}`}>
             <span>{cash > 0 && change < 0 ? 'Still short' : 'Change'}</span>
@@ -90,10 +114,20 @@ export function PayModal({
           {method === 'gcash' && <p className="ok-note">The GCash QR and amount are showing on the customer screen.</p>}
           <p className="muted">Check the payment arrived on the business phone before confirming.</p>
           <label className="field">
-            <span>Reference number (optional)</span>
-            <input className="input" inputMode="numeric" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="last 4 digits is enough" autoFocus />
+            <span>Reference number (last 4 digits or more)</span>
+            <input className="input" inputMode="numeric" value={reference} maxLength={40} onChange={(e) => setReference(e.target.value)} placeholder="from the payment message" autoFocus />
           </label>
+          {sameAs && (
+            <p className="error" role="alert">
+              Same reference as order {sameAs}. Check the phone again.{warnedRef === ref ? ' Press Confirm again to go on.' : ''}
+            </p>
+          )}
         </>
+      )}
+      {problem && (
+        <p className="error" role="alert">
+          {problem}
+        </p>
       )}
       <button className="btn primary big full" disabled={!canPay} onClick={pay}>
         Confirm payment ↵
@@ -117,7 +151,7 @@ export function AfterPay({
   orders,
   s,
   pickFree,
-  onUpdate,
+  onPatch,
   onDone,
 }: {
   mode: AfterPayMode;
@@ -125,7 +159,8 @@ export function AfterPay({
   orders: Order[];
   s: Settings;
   pickFree: (kind: MenuItem['kind']) => MenuItem | undefined;
-  onUpdate: (o: Order) => void;
+  /** Saves only the fields that changed, so a change made on another device is not erased. */
+  onPatch: (patch: Partial<Order>) => void;
   onDone: () => void;
 }) {
   const bowls = useMemo(() => spinnableBowls(order.lines, s), [order.lines, s]);
@@ -140,32 +175,55 @@ export function AfterPay({
   const cardList = useStore((st) => modeCards(st));
   const card = order.cardId ? cardStateFor(order.cardId, orders.filter((o) => o.id !== order.id).concat(order), s, cardList) : null;
   const vouchers = order.spins.filter((x) => x.voucherCode);
+  /** The real days a voucher won at `at` can be used, e.g. "on Tue, Nov 24". */
+  const voucherDays = (at: number) => {
+    const w = voucherWindow(localDate(at), s);
+    return w.validTo > w.validFrom ? `${niceDate(w.validFrom)} to ${niceDate(w.validTo)}` : `on ${niceDate(w.validFrom)}`;
+  };
 
-  const log = (prize: PrizeId, via: 'physical' | 'digital') => {
-    if (!nextBowl) return;
-    const r = applyPrize(order, nextBowl, prize, { settings: s, pickFree, via, now: Date.now() });
+  const spinPatch = (o: Order): Partial<Order> => ({ spins: o.spins, lines: o.lines, stampsEarned: o.stampsEarned });
+
+  /** `landed` is what the wheel showed; the prize really given (r.spin.prize) can differ on the last day. */
+  const log = (landed: PrizeId, via: 'physical' | 'digital') => {
+    // A past order is only for looking: nothing is logged from here.
+    if (past || !nextBowl) return;
+    const r = applyPrize(order, nextBowl, landed, { settings: s, pickFree, via, now: Date.now() });
     if (!r.ok) return setMessage({ text: r.message, bad: true });
-    onUpdate(r.order);
-    setMessage({ text: via === 'digital' ? `Digital wheel landed on ${PRIZE_LABEL[prize]}. ${r.message}` : r.message });
+    onPatch(spinPatch(r.order));
+    setMessage({ text: via === 'digital' ? `Digital wheel landed on ${PRIZE_LABEL[landed]}. ${r.message}` : r.message });
+  };
+
+  const undo = () => {
+    if (past) return;
+    onPatch(spinPatch(undoLastSpin(order)));
+    setMessage({ text: 'Last spin undone.' });
   };
 
   const attachCard = () => {
     const id = parseCard(cardInput, s);
     if (!id) return setMessage({ text: `Unknown card number. Cards run ${s.loyalty.prefix}${String(s.loyalty.first).padStart(3, '0')} to ${s.loyalty.prefix}${s.loyalty.last}.`, bad: true });
-    onUpdate({ ...order, cardId: id, stampsEarned: order.stampsEarned + 1 });
+    onPatch({ cardId: id, stampsEarned: order.stampsEarned + 1 });
     setCardInput('');
     setMessage({ text: `Card ${id} added. +1 stamp.` });
   };
 
+  const [openedAt] = useState(() => Date.now());
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
+      // The Enter that confirmed the payment may still be held down: it must
+      // not close this screen before the cashier has read the change.
+      if (e.repeat || Date.now() - openedAt < AFTERPAY_KEY_DELAY_MS) {
+        if (e.key === 'Enter') e.preventDefault();
+        return;
+      }
       if (e.key === 'Enter') {
         e.preventDefault();
         onDone();
+        return;
       }
       const n = Number(e.key);
-      if (spinsLeft > 0 && n >= 1 && n <= PRIZE_ORDER.length) log(PRIZE_ORDER[n - 1], 'physical');
+      if (!past && spinsLeft > 0 && n >= 1 && n <= PRIZE_ORDER.length) log(PRIZE_ORDER[n - 1], 'physical');
     };
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
@@ -193,7 +251,11 @@ export function AfterPay({
           </div>
         )}
 
-        {spinsLeft > 0 && nextBowl ? (
+        {past && spinsLeft > 0 ? (
+          <p className="muted">
+            {spinsLeft} spin{spinsLeft > 1 ? 's were' : ' was'} not logged on this order.
+          </p>
+        ) : spinsLeft > 0 && nextBowl ? (
           <section className="spin-panel">
             <h2>
               🎡 Spin {order.spins.length + 1} of {order.spinsEarned} <span className="muted">for {nextBowl.name}</span>
@@ -221,7 +283,7 @@ export function AfterPay({
 
         {message && <p className={message.bad ? 'error' : 'ok-note'}>{message.text}</p>}
         {!past && order.spins.length > spinsAtOpen && (
-          <button className="btn ghost small" onClick={() => { onUpdate(undoLastSpin(order)); setMessage({ text: 'Last spin undone.' }); }}>
+          <button className="btn ghost small" onClick={undo}>
             Undo last spin
           </button>
         )}
@@ -240,9 +302,11 @@ export function AfterPay({
             {vouchers.map((v) => (
               <b key={v.voucherCode}>{v.voucherCode}</b>
             ))}
-            <small>
-              ₱{s.voucher.amount} off, valid tomorrow, min ₱{s.voucher.minOrder}
-            </small>
+            {[...new Set(vouchers.map((v) => voucherDays(v.at)))].map((days) => (
+              <small key={days}>
+                ₱{s.voucher.amount} off, valid {days}, min ₱{s.voucher.minOrder}
+              </small>
+            ))}
           </div>
         )}
         {order.spins.length > 0 && (

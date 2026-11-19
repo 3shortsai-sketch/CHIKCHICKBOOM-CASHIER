@@ -9,7 +9,7 @@ export const PRIZE_LABEL: Record<PrizeId, string> = {
   freeSauce: 'Free extra sauce',
   doubleStamp: 'Double stamp',
   tenOff: '₱10 off',
-  voucher: '₱20 off tomorrow',
+  voucher: '₱20 off next day',
   tryAgain: 'Try again',
 };
 

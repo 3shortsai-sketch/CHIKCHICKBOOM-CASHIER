@@ -296,8 +296,11 @@ export function adjustStamps(number: string, delta: number, reason: string, by: 
   const id = cardDocId(mode, number);
   const old = s.cards[id];
   const now = Date.now();
-  const adjustments = [...(old?.adjustments ?? []), { delta, reason: reason.trim(), at: now, by }];
-  commit({ type: 'put', col: 'cards', id, doc: { number, mode, name: old?.name ?? '', createdAt: old?.createdAt ?? now, updatedAt: now, by: old?.by ?? by, adjustments } satisfies Card });
+  const entry = { delta, reason: reason.trim(), at: now, by };
+  // A card nobody has named yet needs a record to hold its stamp history.
+  if (!old) commit({ type: 'put', col: 'cards', id, doc: { number, mode, name: '', createdAt: now, updatedAt: now, by, adjustments: [] } satisfies Card });
+  // Added as one entry, so two devices editing the same card both keep theirs.
+  commit({ type: 'append', col: 'cards', id, field: 'adjustments', item: entry }, { type: 'patch', col: 'cards', id, patch: { updatedAt: now } });
 }
 
 /** Save or rename a card owner. An empty name removes the record. */
