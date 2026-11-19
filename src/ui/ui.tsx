@@ -41,7 +41,10 @@ export function useWakeLock(active: boolean) {
     let cancelled = false;
     const get = async () => {
       try {
-        lock = await navigator.wakeLock.request('screen');
+        const got = await navigator.wakeLock.request('screen');
+        // The screen was left while the browser was still answering: let it go.
+        if (cancelled) void got.release();
+        else lock = got;
       } catch {
         /* not allowed right now */
       }
@@ -192,17 +195,28 @@ export function minutesAgo(ts: number, now: number): string {
   return `${m} min`;
 }
 
+/** Open modals, oldest first. Escape closes only the newest one. */
+const openModals: object[] = [];
+
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  const close = useLatest(onClose);
   useEffect(() => {
+    const me = {};
+    openModals.push(me);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
+      if (e.key !== 'Escape' || openModals[openModals.length - 1] !== me) return;
+      // Stop here: the modal underneath and the screen's own Escape key must not also react.
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      close.current();
     };
     addEventListener('keydown', onKey, true);
-    return () => removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+    return () => {
+      removeEventListener('keydown', onKey, true);
+      const i = openModals.indexOf(me);
+      if (i >= 0) openModals.splice(i, 1);
+    };
+  }, [close]);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
@@ -223,27 +237,57 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
  * unlock for this browser tab, so unlocking Profit doesn't lock Setup.
  * Extra passcodes (e.g. the admin PIN on the team Profit page) also open it.
  */
+/**
+ * What the tab remembers after an unlock: a scrambled mark of the PIN that
+ * was used, never the PIN. A changed PIN no longer matches, so the page locks again.
+ */
+function pinFlag(label: string, pin: string): string {
+  let h = 5381;
+  for (const ch of `ccb|${label}|${pin}`) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+  return `u${h.toString(36)}`;
+}
+
+function readFlag(label: string): string {
+  try {
+    return sessionStorage.getItem(`ccb:unlocked:${label}`) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Keep a page open in this tab across a PIN change made right here (Setup
+ * calls it just before saving a new PIN, so the person changing it is not locked out).
+ */
+export function keepUnlocked(label: string, newPin: string) {
+  try {
+    sessionStorage.setItem(`ccb:unlocked:${label}`, pinFlag(label, newPin));
+  } catch {
+    /* private mode: the page will ask for the new PIN */
+  }
+}
+
 export function PinGate({ pin, also = [], label, children }: { pin: string; also?: string[]; label: string; children: ReactNode }) {
   const key = `ccb:unlocked:${label}`;
   const pins = [pin, ...also];
-  const [ok, setOk] = useState(() => {
-    try {
-      return pins.includes(sessionStorage.getItem(key) ?? '');
-    } catch {
-      return false;
-    }
-  });
+  // Kept in memory too, for browsers that will not store anything (private mode).
+  const [memFlag, setFlag] = useState('');
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
-  if (ok) return <>{children}</>;
+  // Checked on every draw: when the PIN is changed (here or on another device) the page locks again.
+  const flag = readFlag(label) || memFlag;
+  if (flag && pins.some((p) => pinFlag(label, p) === flag)) return <>{children}</>;
   const submit = () => {
     if (pins.includes(value)) {
+      const mark = pinFlag(label, value);
       try {
-        sessionStorage.setItem(key, value);
+        sessionStorage.setItem(key, mark);
       } catch {
         /* private mode: unlock for this view only */
       }
-      setOk(true);
+      setFlag(mark);
+      setValue('');
+      setError('');
     } else {
       setError('Wrong PIN');
       setValue('');
@@ -275,7 +319,10 @@ export function PinGate({ pin, also = [], label, children }: { pin: string; also
   );
 }
 
-/** Asks for the manager PIN and a reason before a void or refund. */
+/**
+ * Asks for the manager PIN and a reason before a void or refund.
+ * With `who` (even an empty text) it also asks who is approving, and passes the name on.
+ */
 export function ManagerConfirm({
   title,
   managerPin,
@@ -283,28 +330,41 @@ export function ManagerConfirm({
   onClose,
   needAmount,
   maxAmount,
+  who,
+  note,
+  confirmLabel = 'Confirm',
+  reasonHint = 'e.g. wrong flavor punched',
 }: {
   title: string;
   managerPin: string;
-  onConfirm: (reason: string, amount: number) => void;
+  onConfirm: (reason: string, amount: number, by: string) => void;
   onClose: () => void;
   needAmount?: boolean;
   maxAmount?: number;
+  /** Name to start the "Who is approving?" box with. Leave out to not ask. */
+  who?: string;
+  /** Shown at the top, e.g. how much cash to hand back. */
+  note?: ReactNode;
+  confirmLabel?: string;
+  reasonHint?: string;
 }) {
   const [reason, setReason] = useState('');
   const [pin, setPin] = useState('');
   const [amount, setAmount] = useState('');
+  const [by, setBy] = useState(who ?? '');
   const [error, setError] = useState('');
   const submit = () => {
-    if (!reason.trim()) return setError('Type a reason.');
     const n = Number(amount);
     if (needAmount && (!n || n <= 0 || (maxAmount !== undefined && n > maxAmount))) return setError(`Amount must be between ₱1 and ₱${maxAmount}.`);
+    if (!reason.trim()) return setError('Type a reason.');
+    if (who !== undefined && !by.trim()) return setError('Type the name of the person approving.');
     if (pin !== managerPin) return setError('Wrong manager PIN.');
-    onConfirm(reason.trim(), needAmount ? n : 0);
+    onConfirm(reason.trim(), needAmount ? n : 0, by.trim());
   };
   return (
     <Modal title={title} onClose={onClose}>
       <div className="stack">
+        {note}
         {needAmount && (
           <label className="field">
             <span>Amount to refund (₱)</span>
@@ -313,15 +373,21 @@ export function ManagerConfirm({
         )}
         <label className="field">
           <span>Reason</span>
-          <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus={!needAmount} placeholder="e.g. wrong flavor punched" />
+          <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus={!needAmount} placeholder={reasonHint} />
         </label>
+        {who !== undefined && (
+          <label className="field">
+            <span>Who is approving?</span>
+            <input className="input" value={by} onChange={(e) => setBy(e.target.value)} maxLength={30} placeholder="Your name" />
+          </label>
+        )}
         <label className="field">
           <span>Manager PIN</span>
           <input className="input" type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} onKeyDown={(e) => e.key === 'Enter' && submit()} />
         </label>
         {error && <p className="error">{error}</p>}
         <button className="btn danger big" onClick={submit}>
-          Confirm
+          {confirmLabel}
         </button>
       </div>
     </Modal>

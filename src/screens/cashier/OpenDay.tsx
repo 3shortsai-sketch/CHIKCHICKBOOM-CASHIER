@@ -3,6 +3,8 @@ import { localDate } from '../../domain/loyalty';
 import { latestDay, putDay, setDevice, useDevice, useStore } from '../../data/store';
 import { TopBar } from '../../ui/TopBar';
 
+const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
 export function OpenDayForm() {
   const state = useStore((s) => s);
   const s = state.settings;
@@ -12,6 +14,9 @@ export function OpenDayForm() {
   const [float, setFloat] = useState('');
   const [stock, setStock] = useState<Record<string, number>>(() => Object.fromEntries(s.menu.map((m) => [m.id, m.startStock])));
   const [error, setError] = useState('');
+  // Each device prints its own letter in front of the order number (A-001, B-001).
+  const letter = device.orderLetter || 'A';
+  const letters = [...new Set([...LETTERS, letter])];
 
   const open = () => {
     if (!cashier) return setError('Pick the cashier.');
@@ -51,7 +56,18 @@ export function OpenDayForm() {
               <span>Opening cash float (₱)</span>
               <input className="input" inputMode="numeric" value={float} onChange={(e) => setFloat(e.target.value.replace(/\D/g, ''))} placeholder="e.g. 2000" autoFocus />
             </label>
+            <label className="field">
+              <span>This device's order letter</span>
+              <select className="input" value={letter} onChange={(e) => setDevice({ orderLetter: e.target.value })}>
+                {letters.map((l) => (
+                  <option key={l}>{l}</option>
+                ))}
+              </select>
+            </label>
           </div>
+          <p className="muted small">
+            On this device: cashier <b>{cashier || 'not picked yet'}</b>, order numbers start with <b>{letter}</b> ({letter}-001). Each device needs its own letter.
+          </p>
           <h3>Starting stock today</h3>
           <div className="stock-grid">
             {s.menu

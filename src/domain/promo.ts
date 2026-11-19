@@ -22,7 +22,8 @@ export function expectedSpinCost(s: Settings): { perSpin: number; pctOfBowl: num
     return items[0]?.unitCost ?? 0;
   };
   const cost: Record<string, number> = {
-    freeMeal: bowlPrice,
+    // Promo cost is counted at cost: a free meal costs the booth its ingredients.
+    freeMeal: avg(bowls.map((m) => m.unitCost)),
     freeCookie: cheapest('cookie'),
     freeWater: cheapest('water'),
     freeSauce: cheapest('extraSauce'),
@@ -38,14 +39,16 @@ export function expectedSpinCost(s: Settings): { perSpin: number; pctOfBowl: num
 
 export type PromoLevel = 'early' | 'ok' | 'warn' | 'pause';
 
-/** Wheel prizes + vouchers used, as % of what customers paid today. */
+/** Wheel prizes (at cost) + vouchers used, as % of what customers paid today. */
 export function promoStatus(sum: DaySummary, s: Settings): { pct: number; cost: number; level: PromoLevel } {
   const cost = sum.promo.wheel + sum.promo.vouchers;
   const pct = sum.gross > 0 ? (cost / sum.gross) * 100 : 0;
+  // Compare to two decimals, so 6.499999999999999 counts as 6.5.
+  const shown = Math.round(pct * 100) / 100;
   const { warnPct, pausePct, minSales } = s.promoLimits;
   let level: PromoLevel = 'ok';
   if (sum.gross < minSales) level = 'early';
-  else if (pct >= pausePct) level = 'pause';
-  else if (pct >= warnPct) level = 'warn';
+  else if (shown >= pausePct) level = 'pause';
+  else if (shown >= warnPct) level = 'warn';
   return { pct, cost, level };
 }

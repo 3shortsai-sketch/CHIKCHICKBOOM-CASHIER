@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 import { isLow, onHand, servingsLeft } from '../domain/inventory';
 import { newId } from '../domain/pricing';
 import { stockLeft } from '../domain/reports';
-import type { BusinessDay, Ingredient, MenuItem, Settings } from '../domain/types';
-import { modeOrders, openDay, patchDay, saveSettings, useDevice, useStore } from '../data/store';
+import type { BusinessDay, Ingredient, MenuItem, Settings, WasteEntry } from '../domain/types';
+import { appendToDay, modeOrders, openDay, patchDay, saveSettings, useDevice, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 
 const CATEGORY_LABEL: Record<MenuItem['category'], string> = { bowls: 'Rice bowls', fries: 'Fries', drinks: 'Drinks', cookies: 'Cookies', addons: 'Add-ons' };
@@ -12,11 +12,33 @@ function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-/** Two small number fields with a button: "Set count" or "Remove". */
-function QtyAction({ label, placeholder, onSubmit, decimals, danger }: { label: string; placeholder: string; onSubmit: (n: number) => void; decimals?: boolean; danger?: boolean }) {
+/**
+ * A small number field with a button: "Set count" or "Remove".
+ * `min` and `max` are the smallest and largest amount allowed; `hint` says why the button is off.
+ */
+function QtyAction({
+  label,
+  placeholder,
+  onSubmit,
+  decimals,
+  danger,
+  min = 0,
+  max,
+  hint,
+}: {
+  label: string;
+  placeholder: string;
+  onSubmit: (n: number) => void;
+  decimals?: boolean;
+  danger?: boolean;
+  min?: number;
+  max?: number;
+  hint?: string;
+}) {
   const [v, setV] = useState('');
   const n = Number(v);
-  const ok = v !== '' && Number.isFinite(n) && n >= 0;
+  const valid = v !== '' && Number.isFinite(n);
+  const ok = valid && n >= min && (max === undefined || n <= max);
   const go = () => {
     if (!ok) return;
     onSubmit(n);
@@ -36,6 +58,11 @@ function QtyAction({ label, placeholder, onSubmit, decimals, danger }: { label: 
       <button className={`btn small ${danger ? 'danger' : ''}`} disabled={!ok} onClick={go}>
         {label}
       </button>
+      {valid && !ok && hint && (
+        <small className="qty-hint" role="alert">
+          {hint}
+        </small>
+      )}
     </div>
   );
 }
@@ -44,6 +71,7 @@ function ItemRow({ m, left, day, who }: { m: MenuItem; left: number; day: Busine
   const count = day.stockCounts?.[m.id];
   const [reason, setReason] = useState('Broken');
   const low = left <= 5;
+  const canRemove = Math.max(0, Math.floor(left));
   return (
     <tr className={left <= 0 ? 'out-row' : low ? 'warn-row' : ''}>
       <td>
@@ -68,7 +96,14 @@ function ItemRow({ m, left, day, who }: { m: MenuItem; left: number; day: Busine
             label="Remove"
             placeholder="How many"
             danger
-            onSubmit={(n) => n > 0 && patchDay(day.id, { waste: [...(day.waste ?? []), { id: newId('w'), itemId: m.id, qty: n, reason, at: Date.now(), by: who }] })}
+            min={1}
+            max={canRemove}
+            hint={canRemove < 1 ? 'None left to remove.' : `Type 1 to ${canRemove}.`}
+            onSubmit={(n) => {
+              // One entry is added, so a waste entry made on another device at the same time is kept.
+              const entry: WasteEntry = { id: newId('w'), itemId: m.id, qty: n, reason, at: Date.now(), by: who };
+              appendToDay(day.id, 'waste', entry);
+            }}
           />
         </div>
       </td>
@@ -116,6 +151,9 @@ function IngredientRow({ ing, s, orders, who }: { ing: Ingredient; s: Settings; 
           placeholder={`Spoiled/used ${ing.unit}`}
           decimals
           danger
+          min={0.01}
+          max={have === null ? undefined : Math.max(0, have)}
+          hint={have === null ? 'Type more than 0.' : have <= 0 ? 'None left to remove.' : `Type up to ${fmt(have)}.`}
           onSubmit={(n) => {
             if (!ing.count) return update({ count: { qty: 0, at: Date.now(), by: who } });
             if (n > 0) update({ removed: [...(ing.removed ?? []), { qty: n, reason: 'Removed', at: Date.now(), by: who }] });

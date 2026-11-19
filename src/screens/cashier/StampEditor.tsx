@@ -9,8 +9,8 @@ const REASONS = ['Stamps from the paper card', 'Missed a stamp', 'Wrong stamp gi
 
 /**
  * Change a card's stamps by hand. Every change is saved with the reason, who
- * did it and when. At the cashier it also asks for the manager PIN, because
- * stamps lead to free food.
+ * did it and when. It always asks for the manager PIN, because stamps lead
+ * to free food.
  */
 export function StampEditor({
   number,
@@ -28,8 +28,8 @@ export function StampEditor({
   size: number;
   cards: Card[];
   by: string;
-  /** Manager PIN to ask for (cashier). Leave out where the team passcode already guards the page. */
-  pin?: string;
+  /** Manager PIN to ask for. */
+  pin: string;
   onClose: () => void;
 }) {
   const [target, setTarget] = useState(stamps);
@@ -44,7 +44,7 @@ export function StampEditor({
     if (!delta) return setError('Change the number of stamps first.');
     const why = reason === 'Other' ? other.trim() : reason;
     if (!why) return setError('Type a reason.');
-    if (pin !== undefined && pinValue !== pin) return setError('Wrong manager PIN.');
+    if (pinValue !== pin) return setError('Wrong manager PIN.');
     adjustStamps(number, delta, why, by);
     onClose();
   };
@@ -75,12 +75,10 @@ export function StampEditor({
           ))}
         </div>
         {reason === 'Other' && <input className="input" value={other} onChange={(e) => setOther(e.target.value)} placeholder="What happened?" aria-label="Reason" />}
-        {pin !== undefined && (
-          <label className="field">
-            <span>Manager PIN</span>
-            <input className="input" type="password" inputMode="numeric" value={pinValue} onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ''))} onKeyDown={(e) => e.key === 'Enter' && save()} />
-          </label>
-        )}
+        <label className="field">
+          <span>Manager PIN</span>
+          <input className="input" type="password" inputMode="numeric" value={pinValue} onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ''))} onKeyDown={(e) => e.key === 'Enter' && save()} />
+        </label>
         {error && <p className="error">{error}</p>}
         <button className="btn primary big" onClick={save}>
           Save stamps

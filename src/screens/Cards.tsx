@@ -195,6 +195,7 @@ function CardsInner() {
           size={s.loyalty.cardSize}
           cards={cards}
           by={by}
+          pin={s.managerPin}
           onClose={() => setStampsFor(null)}
         />
       )}

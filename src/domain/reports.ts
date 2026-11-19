@@ -1,6 +1,7 @@
-import { itemById, lineTotal, money2, stockUsage } from './pricing';
-import { PRIZE_LABEL, prizeRefundTotal } from './wheel';
-import type { BusinessDay, MenuItem, Order, OrderLine, PaymentMethod, PrizeId, Settings } from './types';
+import { usedAfterCount, usesStock } from './inventory';
+import { itemById, lineCostEach, lineTotal, money2, stockUsage } from './pricing';
+import { paidSoFar, PRIZE_LABEL, prizeRefundTotal } from './wheel';
+import type { BusinessDay, CashMove, MenuItem, Order, OrderLine, PaymentMethod, PrizeId, Settings } from './types';
 
 export function dayOrders(day: BusinessDay | undefined, orders: Order[]): Order[] {
   if (!day) return [];
@@ -14,6 +15,9 @@ export function liveOrders(orders: Order[]): Order[] {
 /**
  * Pieces left of each menu item: opening stock, or the kitchen's latest
  * count, minus what sold and what was wasted after that.
+ * A voided order still counts if its food was already being made. An order
+ * placed before a count but not finished at count time comes off the count.
+ * A free wheel item counts from the moment of the spin.
  */
 export function stockLeft(day: BusinessDay | undefined, orders: Order[], s: Settings): Record<string, number> {
   const left: Record<string, number> = {};
@@ -23,9 +27,12 @@ export function stockLeft(day: BusinessDay | undefined, orders: Order[], s: Sett
     left[m.id] = count ? count.qty : (day?.stockStart[m.id] ?? m.startStock);
     since[m.id] = count ? count.at : -Infinity;
   }
-  for (const o of liveOrders(dayOrders(day, orders))) {
-    for (const [id, n] of Object.entries(stockUsage(o.lines))) {
-      if (id in left && o.createdAt > since[id]) left[id] -= n;
+  for (const o of dayOrders(day, orders).filter(usesStock)) {
+    for (const line of o.lines) {
+      const placedAt = o.spins.find((sp) => sp.addedLineId === line.id)?.at ?? o.createdAt;
+      for (const [id, n] of Object.entries(stockUsage([line]))) {
+        if (id in left && usedAfterCount(o, since[id], placedAt)) left[id] -= n;
+      }
     }
   }
   for (const w of day?.waste ?? []) {
@@ -38,10 +45,17 @@ export function isAvailable(item: MenuItem, day: BusinessDay | undefined, left: 
   return item.active && !day?.soldOut[item.id] && (left[item.id] ?? 0) > 0;
 }
 
+/** Cost of the line: what it cost when sold if the line remembers it, else today's unit costs. */
 function lineCost(line: OrderLine, s: Settings): number {
+  if (line.costEach !== undefined) return line.costEach * line.qty;
   let cost = 0;
   for (const [id, n] of Object.entries(stockUsage([line]))) cost += (itemById(s, id)?.unitCost ?? 0) * n;
   return cost;
+}
+
+/** Cost of one unit of the line. */
+function unitCost(line: OrderLine, s: Settings): number {
+  return line.costEach ?? lineCostEach(line, s);
 }
 
 export function orderCost(o: Order, s: Settings): number {
@@ -50,6 +64,14 @@ export function orderCost(o: Order, s: Settings): number {
 
 export function manualRefundTotal(o: Order): number {
   return (o.refunds ?? []).reduce((n, r) => n + r.amount, 0);
+}
+
+/**
+ * Cash to hand back when voiding this order: what was paid, minus prize cash
+ * and refunds the customer already got.
+ */
+export function voidReturnAmount(o: Order): number {
+  return paidSoFar(o);
 }
 
 /** What the customer finally paid for this order, after prize payback and refunds. */
@@ -62,27 +84,63 @@ export type ItemRow = { id: string; name: string; qty: number; sales: number; co
 
 export type DaySummary = {
   orders: number;
+  /** What customers paid at the till (after vouchers), before paybacks and refunds. */
   gross: number;
+  /** Menu-price sales of live orders, with FREE MEAL bowls taken out (a giveaway, not a sale). */
+  grossSales: number;
+  /** Vouchers used + ₱10-off cash given back. grossSales − discounts − manualRefunds = net. */
+  discounts: number;
+  /** Free-meal bowls, free prize items and loyalty reward items, at ingredient cost. */
+  giveawaysAtCost: number;
+  /** Ingredient cost of what was really sold: cost − waste − giveawaysAtCost. */
+  cogsSold: number;
   prizeRefunds: number;
   manualRefunds: number;
   net: number;
   average: number;
   cost: number;
   profit: number;
+  /** Things bought with drawer cash today (ice, LPG). An operating cost, not ingredients. */
+  expenses: number;
+  /** profit − expenses. */
+  netAfterExpenses: number;
   goal: number;
   goalPct: number;
-  promo: { wheel: number; vouchers: number; rewards: number; total: number };
+  /** wheel is at cost (free meal = cost of the bowl); cashBack is the prize cash handed back. */
+  promo: { wheel: number; vouchers: number; rewards: number; total: number; cashBack: number };
   waste: { rows: { itemId: string; name: string; qty: number; cost: number }[]; cost: number };
   items: ItemRow[];
   payments: { method: PaymentMethod; orders: number; amount: number }[];
   hours: { hour: number; orders: number; sales: number }[];
   wheel: { prize: PrizeId; label: string; count: number; cost: number }[];
   spins: number;
-  cash: { float: number; cashSales: number; paidOut: number; expected: number; counted?: number; overShort?: number };
+  /**
+   * voidReturns: money handed back from the drawer for voided GCash/Maya orders.
+   * drops: taken out to the safe; added: change put in; expenses: paid out for something.
+   */
+  cash: {
+    float: number;
+    cashSales: number;
+    paidOut: number;
+    voidReturns: number;
+    drops: number;
+    added: number;
+    expenses: number;
+    expected: number;
+    counted?: number;
+    overShort?: number;
+  };
   voids: Order[];
 };
 
-export function summarize(day: BusinessDay | undefined, all: Order[], s: Settings): DaySummary {
+/** Cash moves of this day that were not cancelled, added up by type. */
+export function cashMoveTotals(day: BusinessDay | undefined, moves: CashMove[]): { drops: number; added: number; expenses: number } {
+  const mine = moves.filter((m) => day && m.dayId === day.id && !m.cancelled);
+  const sum = (type: CashMove['type']) => mine.filter((m) => m.type === type).reduce((n, m) => n + m.amount, 0);
+  return { drops: sum('drop'), added: sum('add'), expenses: sum('expense') };
+}
+
+export function summarize(day: BusinessDay | undefined, all: Order[], s: Settings, cashMoves: CashMove[] = []): DaySummary {
   const todays = dayOrders(day, all);
   const live = liveOrders(todays);
 
@@ -97,6 +155,11 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
     row.qty += w.qty;
     row.cost += w.qty * (item?.unitCost ?? 0);
     wasteMap.set(w.itemId, row);
+  }
+  // A voided order whose food was already made is wasted food.
+  const voidedMade = todays.filter((o) => o.voided && o.status !== 'new');
+  if (voidedMade.length) {
+    wasteMap.set('voided', { itemId: 'voided', name: 'Voided after cooking', qty: voidedMade.length, cost: voidedMade.reduce((n, o) => n + orderCost(o, s), 0) });
   }
   const waste = { rows: [...wasteMap.values()], cost: [...wasteMap.values()].reduce((n, r) => n + r.cost, 0) };
   const cost = live.reduce((n, o) => n + orderCost(o, s), 0) + waste.cost;
@@ -135,8 +198,12 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
   }
   const hours = [...hourMap.values()].sort((a, b) => a.hour - b.hour);
 
-  // Wheel: cash paid back, or ingredient cost of the free item. Vouchers cost
-  // nothing until someone uses one (counted under promo.vouchers).
+  // Wheel, at cost: a FREE MEAL costs the ingredients of that bowl (not its
+  // menu price), ₱10 off costs the cash, a free item its ingredients. Vouchers
+  // cost nothing until someone uses one (counted under promo.vouchers).
+  let freeMealRefunds = 0;
+  let freeMealCost = 0;
+  let freeItemCost = 0;
   const wheelMap = new Map<PrizeId, { prize: PrizeId; label: string; count: number; cost: number }>();
   for (const sl of s.wheel.slots) wheelMap.set(sl.prize, { prize: sl.prize, label: PRIZE_LABEL[sl.prize], count: 0, cost: 0 });
   let spins = 0;
@@ -145,10 +212,21 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
       spins += 1;
       const w = wheelMap.get(sp.prize) ?? { prize: sp.prize, label: PRIZE_LABEL[sp.prize], count: 0, cost: 0 };
       w.count += 1;
-      w.cost += sp.refund;
+      if (sp.prize === 'freeMeal') {
+        const spun = o.lines.find((l) => l.id === sp.lineId);
+        // Nothing handed back (order already refunded) = nothing given away.
+        const c = spun && sp.refund > 0 ? unitCost(spun, s) : 0;
+        freeMealRefunds += sp.refund;
+        freeMealCost += c;
+        w.cost += c;
+      } else {
+        w.cost += sp.refund;
+      }
       if (sp.addedLineId) {
         const added = o.lines.find((l) => l.id === sp.addedLineId);
-        if (added) w.cost += lineCost(added, s);
+        const c = added ? lineCost(added, s) : 0;
+        freeItemCost += c;
+        w.cost += c;
       }
       wheelMap.set(sp.prize, w);
     }
@@ -161,32 +239,50 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
     0,
   );
 
-  // Cash drawer. Every payback and refund is handed out in cash.
+  // Sales the accountant's way. A free meal is a giveaway, not a sale;
+  // vouchers and ₱10 off are discounts. (subtotal − due is the voucher part.)
+  const grossSales = live.reduce((n, o) => n + o.subtotal, 0) - freeMealRefunds;
+  const discounts = live.reduce((n, o) => n + (o.subtotal - o.payment.due), 0) + (prizeRefunds - freeMealRefunds);
+  const giveawaysAtCost = freeMealCost + freeItemCost + rewards;
+  const cogsSold = cost - waste.cost - giveawaysAtCost;
+
+  // Cash drawer. Every payback and refund is handed out in cash. A voided
+  // GCash/Maya order is paid back from the drawer too; a voided cash order
+  // nets to zero (money in, same money out) and is left out.
   const float = day?.openingFloat ?? 0;
   const cashSales = live.filter((o) => o.payment.method === 'cash').reduce((n, o) => n + o.payment.due, 0);
   const paidOut = prizeRefunds + manualRefunds;
-  const expected = float + cashSales - paidOut;
+  const voidReturns = todays.filter((o) => o.voided && o.payment.method !== 'cash').reduce((n, o) => n + o.payment.due, 0);
+  // Drops and expenses leave the drawer; change added goes in.
+  const { drops, added, expenses } = cashMoveTotals(day, cashMoves);
+  const expected = float + cashSales - paidOut - voidReturns - drops - expenses + added;
   const counted = day?.countedCash;
 
   return {
     orders: live.length,
     gross,
+    grossSales,
+    discounts,
+    giveawaysAtCost,
+    cogsSold,
     prizeRefunds,
     manualRefunds,
     net,
     average: live.length ? Math.round(net / live.length) : 0,
     cost,
     profit: net - cost,
+    expenses,
+    netAfterExpenses: net - cost - expenses,
     goal: s.dailyGoal,
     goalPct: s.dailyGoal ? Math.round((net / s.dailyGoal) * 100) : 0,
-    promo: { wheel: wheelCost, vouchers, rewards, total: wheelCost + vouchers + rewards },
+    promo: { wheel: wheelCost, vouchers, rewards, total: wheelCost + vouchers + rewards, cashBack: prizeRefunds },
     waste,
     items,
     payments,
     hours,
     wheel,
     spins,
-    cash: { float, cashSales, paidOut, expected, counted, overShort: counted === undefined ? undefined : counted - expected },
+    cash: { float, cashSales, paidOut, voidReturns, drops, added, expenses, expected, counted, overShort: counted === undefined ? undefined : counted - expected },
     voids: todays.filter((o) => o.voided),
   };
 }
@@ -210,9 +306,15 @@ export function kitchenMadeCounts(day: BusinessDay | undefined, all: Order[], s:
 
 // ---------- CSV ----------
 
-function csvCell(v: string | number | undefined): string {
-  const s = v === undefined ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+/**
+ * One CSV cell. With `text` on, a cell that a spreadsheet would run as a
+ * formula (starts with = + - @, tab or return) gets a leading ' so it stays
+ * text. Amounts are passed with `text` off, so -20 stays a number.
+ */
+export function csvCell(v: string | number | undefined, text = false): string {
+  let s = v === undefined ? '' : String(v);
+  if (text && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 function time(ts: number): string {
@@ -269,7 +371,7 @@ export function orderRows(day: BusinessDay | undefined, all: Order[], s: Setting
 
 export function ordersCsv(day: BusinessDay | undefined, all: Order[], s: Settings): string {
   return orderRows(day, all, s)
-    .map((r) => r.map((c) => csvCell(typeof c === 'number' ? money2(c) : c)).join(','))
+    .map((r) => r.map((c) => (typeof c === 'number' ? csvCell(money2(c)) : csvCell(c, true))).join(','))
     .join('\n');
 }
 
@@ -312,7 +414,7 @@ export function recentWins(day: BusinessDay | undefined, all: Order[], n = 5): W
 /** Paid orders whose customer has not spun yet (wheel is at the pickup spot). */
 export function pendingSpins(day: BusinessDay | undefined, all: Order[], now: number, maxAgeMin = 45): Order[] {
   return liveOrders(dayOrders(day, all))
-    .filter((o) => o.spinsEarned > o.spins.length && now - o.createdAt < maxAgeMin * 60000)
+    .filter((o) => o.spinsEarned > o.spins.length && orderNet(o) > 0 && now - o.createdAt < maxAgeMin * 60000)
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 

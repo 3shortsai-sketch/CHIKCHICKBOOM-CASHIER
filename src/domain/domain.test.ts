@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { cashSuggestions, cleanName, createOrder, nextSeq } from './checkout';
+import { cashSuggestions, checkCart, cleanName, createOrder, duplicateReference, nextSeq } from './checkout';
 import { defaultSettings } from './defaults';
-import { availableRewards, canRedeem, cardState, checkVoucher, parseCard } from './loyalty';
+import { availableRewards, canRedeem, cardState, checkVoucher, isLastSellingDay, nextSellingDay, normalizeVoucher, parseCard, voucherWindow } from './loyalty';
 import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
 import { allergenHint, allergenText, itemTags } from './allergens';
 import { cardDocId, cardRows, cardStateFor, cleanCardName, searchCards } from './cards';
 import { isLow, margins, onHand, servingsLeft, waitMinutes } from './inventory';
-import { dayXlsx, daySheets } from './excel';
+import { allDaysSheets, dayXlsx, daySheets } from './excel';
+import { liabilities } from './liabilities';
 import { colName, crc32 } from './xlsx';
-import { bestSellers, kitchenMadeCounts, ordersCsv, pendingSpins, popularToday, recentWins, stockLeft, summarize } from './reports';
+import { bestSellers, csvCell, kitchenMadeCounts, orderCost, ordersCsv, pendingSpins, popularToday, recentWins, stockLeft, summarize, voidReturnAmount } from './reports';
 import { expectedSpinCost, promoStatus } from './promo';
-import type { BusinessDay, MenuItem, Order, OrderLine } from './types';
-import { applyPrize, digitalSpin, undoLastSpin } from './wheel';
+import type { BusinessDay, Card, CashMove, MenuItem, Order, OrderLine, SpinResult } from './types';
+import { applyPrize, digitalSpin, makeVoucherCode, undoLastSpin } from './wheel';
 
 const s = defaultSettings();
 
@@ -106,12 +107,19 @@ describe('prizes (spin after paying)', () => {
     expect(r.ok && r.spin.refund).toBe(179);
   });
 
-  it('blocks a second prize on the same bowl, and spins beyond what was earned', () => {
-    const o = order([bowl(1, { id: 'b1' })]);
+  it('blocks a second prize on the same bowl', () => {
+    const o = order([bowl(2, { id: 'b1' })]);
     const r1 = applyPrize(o, { lineId: 'b1', unit: 0 }, 'tenOff', ctx);
-    expect(r1.ok).toBe(true);
-    if (!r1.ok) return;
-    expect(applyPrize(r1.order, { lineId: 'b1', unit: 0 }, 'freeMeal', ctx).ok).toBe(false);
+    if (!r1.ok) throw new Error(r1.message);
+    expect(applyPrize(r1.order, { lineId: 'b1', unit: 0 }, 'freeMeal', ctx)).toEqual({ ok: false, message: 'This bowl already spun. One prize per meal.' });
+  });
+
+  it('blocks spins beyond what was earned', () => {
+    // Two bowls on the line, but the order only earned one spin.
+    const o = { ...order([bowl(2, { id: 'b1' })]), spinsEarned: 1 };
+    const r1 = applyPrize(o, { lineId: 'b1', unit: 0 }, 'tryAgain', ctx);
+    if (!r1.ok) throw new Error(r1.message);
+    expect(applyPrize(r1.order, { lineId: 'b1', unit: 1 }, 'tenOff', ctx)).toEqual({ ok: false, message: 'No spins left on this order.' });
   });
 
   it('adds the cheapest cookie at ₱0 and sends it to the kitchen', () => {
@@ -189,6 +197,8 @@ describe('vouchers', () => {
   })();
 
   it('is valid the next day only, with a ₱150 minimum, once', () => {
+    // No selling days set: the plain calendar rule.
+    const s = { ...defaultSettings(), sellingDays: [] };
     const code = won.spins[0].voucherCode!;
     expect(checkVoucher(code, [won], s, '2026-11-15', 200).ok).toBe(false);
     expect(checkVoucher(code, [won], s, '2026-11-17', 200).ok).toBe(false);
@@ -255,10 +265,10 @@ describe('waste log', () => {
 });
 
 describe('prize limit', () => {
-  it('expects about ₱14 per spin with the starting menu', () => {
+  it('expects about ₱11 per spin at cost with the starting menu', () => {
     const e = expectedSpinCost(s);
-    expect(e.perSpin).toBeGreaterThan(13);
-    expect(e.perSpin).toBeLessThan(15);
+    expect(e.perSpin).toBeGreaterThan(10);
+    expect(e.perSpin).toBeLessThan(12);
   });
 
   it('waits for minimum sales, then warns and asks to pause', () => {
@@ -338,7 +348,7 @@ describe('real menu and allergens', () => {
 
 describe('inventory', () => {
   it('counts down from the kitchen count, ignoring sales before it', () => {
-    const a = order([cookie(), cookie()]); // sold before the count
+    const a = { ...order([cookie(), cookie()]), status: 'claimed' as const, claimedAt: Date.parse('2026-11-15T12:00:00') + 500 }; // sold and handed over before the count
     const counted = { ...day, stockCounts: { 'cookie-choco': { qty: 30, at: a.createdAt + 1000, by: 'Kitchen' } } };
     const b = { ...order([cookie()], {}, [a]), createdAt: a.createdAt + 2000 };
     const broke = { ...counted, waste: [{ id: 'w', itemId: 'cookie-choco', qty: 2, reason: 'Broken', at: a.createdAt + 3000, by: 'Kitchen' }] };
@@ -370,7 +380,7 @@ describe('wait estimate', () => {
     const recent = [0, 1, 2, 3, 4].map((i) => done(i, 6));
     expect(waitMinutes(recent, t0, 8)).toBe(6);
     const busy = [...recent, ...[0, 1, 2, 3, 4].map(waiting)];
-    expect(waitMinutes(busy, t0, 8)).toBe(12); // 6 orders ahead incl. yours × 2 min apart
+    expect(waitMinutes(busy, t0, 8)).toBe(16); // 6 min × (1 + 5 waiting ÷ 3 cooked at once)
   });
 });
 
@@ -499,5 +509,524 @@ describe('editing stamps by hand', () => {
   it('a voided order still takes its own stamp back but keeps the hand-added ones', () => {
     const o = { ...order([bowl()], { cardId: 'CCB-070' }), createdAt: 2000, voided: { reason: 'x', at: 1, by: 'm' } };
     expect(cardState('CCB-070', [o], s, undefined, [adj(2, 1000)]).stamps).toBe(2);
+  });
+});
+
+// ---------- Audit fixes ----------
+
+const at = (iso: string) => Date.parse(iso);
+const voidedBy = { reason: 'mistake', at: 1, by: 'Boss' };
+
+describe('wait estimate (prep time, not customer arrivals)', () => {
+  const t0 = at('2026-11-15T12:00:00');
+  const made = (i: number, gapMin: number, prepMin: number): Order => ({ ...order([bowl()]), id: 'm' + i, createdAt: t0 + i * gapMin * 60000, readyAt: t0 + i * gapMin * 60000 + prepMin * 60000, status: 'ready' });
+  const queued = (i: number): Order => ({ ...order([bowl()]), id: 'q' + i, createdAt: t0 + 200 * 60000 + i, status: 'new' });
+  const slow = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => made(i, 15, 5)); // a quiet hour: 15 min between customers
+
+  it('shows the prep time when nobody is waiting, however far apart customers came', () => {
+    expect(waitMinutes(slow, t0, 8)).toBe(5);
+  });
+  it('adds a third of the prep time per waiting order', () => {
+    expect(waitMinutes([...slow, ...[0, 1, 2, 3, 4].map(queued)], t0, 8)).toBe(13);
+  });
+  it('ignores impossible prep times and never promises more than 45 minutes', () => {
+    const skewed = [...slow, { ...made(20, 15, -3), id: 'x1' }, { ...made(21, 15, 600), id: 'x2' }, { ...made(22, 15, 0), id: 'x3' }];
+    expect(waitMinutes(skewed, t0, 8)).toBe(5);
+    const long = [0, 1, 2].map((i) => made(i, 1, 30));
+    expect(waitMinutes([...long, ...Array.from({ length: 10 }, (_, i) => queued(i))], t0, 8)).toBe(45);
+  });
+});
+
+describe('prize cash-back limits', () => {
+  it('never hands back more than the customer has paid (refund, then a spin)', () => {
+    const o = order([bowl(1, { id: 'b1' })]);
+    const refunded = { ...o, refunds: [{ amount: 160, reason: 'Wrong order', at: 5, by: 'Boss' }] };
+    const r = applyPrize(refunded, { lineId: 'b1', unit: 0 }, 'freeMeal', ctx);
+    if (!r.ok) throw new Error(r.message);
+    expect(r.spin.refund).toBe(9);
+    expect(summarize(day, [r.order], s).net).toBe(0);
+    const ten = applyPrize(refunded, { lineId: 'b1', unit: 0 }, 'tenOff', ctx);
+    expect(ten.ok && ten.spin.refund).toBe(9);
+  });
+
+  it('counts earlier prize cash: two free meals on a voucher-free order cannot exceed what was paid', () => {
+    const o = order([bowl(2, { id: 'b1' })]);
+    const paidLess = { ...o, payment: { ...o.payment, due: 200 } };
+    const r1 = applyPrize(paidLess, { lineId: 'b1', unit: 0 }, 'freeMeal', ctx);
+    if (!r1.ok) throw new Error(r1.message);
+    const r2 = applyPrize(r1.order, { lineId: 'b1', unit: 1 }, 'freeMeal', ctx);
+    expect(r2.ok && r2.spin.refund).toBe(200 - 169);
+  });
+
+  it('refuses a voided order and a bowl that is not on the line', () => {
+    const o = order([bowl(2, { id: 'b1' })]);
+    expect(applyPrize({ ...o, voided: voidedBy }, { lineId: 'b1', unit: 0 }, 'tenOff', ctx)).toEqual({ ok: false, message: 'This order was voided.' });
+    for (const unit of [2, -1, 0.5]) expect(applyPrize(o, { lineId: 'b1', unit }, 'tenOff', ctx).ok).toBe(false);
+    expect(applyPrize(o, { lineId: 'b1', unit: 1 }, 'tenOff', ctx).ok).toBe(true);
+  });
+
+  it('tells the cashier to hand a free item over when the kitchen is already done', () => {
+    const o = order([bowl(1, { id: 'b1' })]);
+    const cooking = applyPrize(o, { lineId: 'b1', unit: 0 }, 'freeWater', ctx);
+    expect(cooking.ok && cooking.message).toBe('Bottled Water added free. Kitchen will see it.');
+    for (const status of ['ready', 'claimed'] as const) {
+      const r = applyPrize({ ...o, status }, { lineId: 'b1', unit: 0 }, 'freeWater', ctx);
+      expect(r.ok && r.message).toBe('Bottled Water is free: hand it over now (the kitchen is already done with this order).');
+    }
+  });
+});
+
+describe('selling days and vouchers', () => {
+  const win = (iso: string, settings = s) => {
+    const o = { ...order([bowl(1, { id: 'b1' })], { now: at(iso) }) };
+    return applyPrize(o, { lineId: 'b1', unit: 0 }, 'voucher', { ...ctx, settings, now: at(iso) + 60000, rand: () => 0 });
+  };
+
+  it('knows the bazaar days: Nov 23, 24, 25 and 27', () => {
+    expect(s.sellingDays).toEqual(['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-27']);
+    expect(nextSellingDay('2026-11-25', s)).toBe('2026-11-27');
+    expect(nextSellingDay('2026-11-20', s)).toBe('2026-11-23');
+    expect(nextSellingDay('2026-11-27', s)).toBeNull();
+    expect(isLastSellingDay('2026-11-25', s)).toBe(false);
+    expect(isLastSellingDay('2026-11-27', s)).toBe(true);
+    expect(isLastSellingDay('2026-11-27', { ...s, sellingDays: [] })).toBe(false);
+  });
+
+  it('a voucher won on Nov 25 is valid on Nov 27, skipping the holiday', () => {
+    const r = win('2026-11-25T18:00:00');
+    if (!r.ok) throw new Error(r.message);
+    const code = r.spin.voucherCode!;
+    expect(voucherWindow('2026-11-25', s)).toEqual({ validFrom: '2026-11-27', validTo: '2026-11-27' });
+    expect(checkVoucher(code, [r.order], s, '2026-11-26', 200)).toEqual({ ok: false, message: 'Valid from 2026-11-27.' });
+    expect(checkVoucher(code, [r.order], s, '2026-11-27', 200).ok).toBe(true);
+    expect(checkVoucher(code, [r.order], s, '2026-11-28', 200).ok).toBe(false);
+  });
+
+  it('counts validDays in selling days and falls back to the calendar when none are left', () => {
+    expect(voucherWindow('2026-11-24', { ...s, voucher: { ...s.voucher, validDays: 2 } })).toEqual({ validFrom: '2026-11-25', validTo: '2026-11-27' });
+    expect(voucherWindow('2026-11-25', { ...s, voucher: { ...s.voucher, validDays: 5 } })).toEqual({ validFrom: '2026-11-27', validTo: '2026-11-27' });
+    expect(voucherWindow('2026-11-27', s)).toEqual({ validFrom: '2026-11-28', validTo: '2026-11-28' });
+    expect(voucherWindow('2026-11-15', { ...s, sellingDays: [] })).toEqual({ validFrom: '2026-11-16', validTo: '2026-11-16' });
+  });
+
+  it('on Nov 27 (the last day) a voucher spin becomes ₱10 off instead', () => {
+    const r = win('2026-11-27T15:00:00');
+    if (!r.ok) throw new Error(r.message);
+    expect(r.spin.prize).toBe('tenOff');
+    expect(r.spin.refund).toBe(10);
+    expect(r.spin.voucherCode).toBeUndefined();
+    expect(r.message).toBe('Last day, so no voucher: ₱10 off. Give back ₱10 cash.');
+    expect(r.order.spins[0].prize).toBe('tenOff');
+  });
+
+  it('the stand-in prize follows the setting, and "voucher" just issues the voucher', () => {
+    const water = win('2026-11-27T15:00:00', { ...s, voucher: { ...s.voucher, lastDayPrize: 'freeWater' } });
+    expect(water.ok && water.spin.prize).toBe('freeWater');
+    expect(water.ok && water.message.startsWith('Last day, so no voucher: Bottled Water')).toBe(true);
+    const keep = win('2026-11-27T15:00:00', { ...s, voucher: { ...s.voucher, lastDayPrize: 'voucher' } });
+    expect(keep.ok && keep.spin.voucherCode).toBe('V-AAAA');
+    expect(keep.ok && keep.message.startsWith('Write this code')).toBe(true);
+    // Not the last day: an ordinary voucher.
+    const early = win('2026-11-24T15:00:00');
+    expect(early.ok && early.spin.prize).toBe('voucher');
+  });
+
+  it('reads a typed code whose letters start with V, and new codes never contain V', () => {
+    expect(normalizeVoucher('v-vabc')).toBe('V-VABC');
+    expect(normalizeVoucher('VVABC')).toBe('V-VABC');
+    expect(normalizeVoucher('vabc')).toBe('V-VABC');
+    expect(normalizeVoucher(' v abcd ')).toBe('V-ABCD');
+    expect(normalizeVoucher('abcd')).toBe('V-ABCD');
+    const o = order([bowl(1, { id: 'b1' })], { now: at('2026-11-23T12:00:00') });
+    const old = { ...o, spinsEarned: 1, spins: [{ lineId: 'b1', unit: 0, prize: 'voucher' as const, refund: 0, voucherCode: 'V-VABC', via: 'physical' as const, at: at('2026-11-23T12:01:00') }] };
+    for (const typed of ['vabc', 'V-VABC', 'vvabc']) expect(checkVoucher(typed, [old], s, '2026-11-24', 200).ok).toBe(true);
+    for (let i = 0; i < 100; i++) expect(makeVoucherCode(() => i / 100).slice(2)).not.toContain('V');
+  });
+});
+
+describe('card numbers and stamp edits', () => {
+  it('only reads a clean card number', () => {
+    for (const bad of ['3.7', '1e2', 'Ana 7', 'card 12 (2 stamps)', '-', '', 'CCB', '1234567', '12 3']) expect(parseCard(bad, s)).toBeNull();
+    for (const ok of ['37', ' 037 ', 'ccb37', 'CCB-037', 'ccb 37', 'Ccb - 37']) expect(parseCard(ok, s)).toBe('CCB-037');
+  });
+
+  it('a card over a full card does not drop when one stamp is added or removed', () => {
+    const orders: Order[] = [];
+    for (let i = 0; i < 12; i++) orders.push({ ...order([bowl()], { cardId: 'CCB-080' }, orders), createdAt: 100 + i });
+    const adj = (delta: number) => [{ delta, reason: 'fix', at: 5000, by: 'Ana' }];
+    expect(cardState('CCB-080', orders, s).stamps).toBe(12);
+    expect(cardState('CCB-080', orders, s, undefined, adj(1)).stamps).toBe(12);
+    expect(cardState('CCB-080', orders, s, undefined, adj(-1)).stamps).toBe(11);
+  });
+});
+
+describe('checking the cart again before paying', () => {
+  const left = Object.fromEntries(s.menu.map((m) => [m.id, m.startStock]));
+  const base = { settings: s, today: '2026-11-24', rewardsRedeemed: [] as number[], left, soldOut: {} as Record<string, boolean> };
+  const wonOrder = (() => {
+    const o = order([bowl(1, { id: 'b1' })], { now: at('2026-11-23T12:00:00') });
+    const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'voucher', { ...ctx, now: at('2026-11-23T12:01:00'), rand: () => 0 });
+    if (!r.ok) throw new Error(r.message);
+    return r.order;
+  })();
+  const voucher = { code: 'V-AAAA', amount: 20 };
+
+  it('passes a good cart', () => {
+    expect(checkCart({ ...base, lines: [bowl()], orders: [wonOrder], voucher })).toBeNull();
+  });
+
+  it('catches a voucher that a parked cart or second device already used', () => {
+    const lines = [bowl()];
+    const first = { ...order([bowl()], { voucher, now: at('2026-11-24T10:00:00') }, [wonOrder]), id: 'first' };
+    const problem = checkCart({ ...base, lines, orders: [wonOrder, first], voucher });
+    expect(problem).toContain(`Already used on order ${first.number}.`);
+    // And a cart that dropped below the minimum after the voucher went on.
+    expect(checkCart({ ...base, lines: [fries()], orders: [wonOrder], voucher })).toContain('at least ₱150');
+  });
+
+  it('catches a loyalty reward that is no longer there', () => {
+    const state = { cardId: 'CCB-001', stamps: 6, used: [5], cardsCompleted: 0, orders: 6 };
+    expect(checkCart({ ...base, lines: [fries()], orders: [], cardState: state, rewardsRedeemed: [5] })).toContain('already used');
+    expect(checkCart({ ...base, lines: [fries()], orders: [], cardState: null, rewardsRedeemed: [5] })).toContain('loyalty card');
+    expect(checkCart({ ...base, lines: [fries()], orders: [], cardState: { ...state, used: [] }, rewardsRedeemed: [5] })).toBeNull();
+  });
+
+  it('catches items that sold out or ran short, by name', () => {
+    expect(checkCart({ ...base, lines: [cookie()], orders: [], soldOut: { 'cookie-choco': true } })).toContain('Choco Chip Cookie');
+    const short = checkCart({ ...base, lines: [bowl(3)], orders: [], left: { ...left, 'bowl-alaking': 2 } });
+    expect(short).toBe('Only 2 Ala King Chicken Rice Bowl left, but the order has 3.');
+    const sauce = checkCart({ ...base, lines: [bowl(1, { choices: { extraSauce: 2 } })], orders: [], left: { ...left, 'extra-sauce': 0 } });
+    expect(sauce).toContain('Extra Sauce');
+  });
+});
+
+describe('paying', () => {
+  it('refuses a cash amount that is not a real number', () => {
+    for (const tendered of [NaN, Infinity, 1_000_001]) expect(() => order([bowl()], { tendered })).toThrow();
+    expect(order([bowl()], { tendered: 1_000_000 }).payment.change).toBe(1_000_000 - 169);
+  });
+
+  it('gives two devices on the same letter different order ids, same number', () => {
+    const a = order([bowl()]);
+    const b = order([bowl()]);
+    expect(a.number).toBe(b.number);
+    expect(a.id).not.toBe(b.id);
+    expect(a.id).toMatch(/^demo-2026-11-15_A1_[a-z0-9]{4}$/);
+  });
+
+  it('spots a GCash reference typed twice today', () => {
+    const a = order([bowl()], { method: 'gcash', reference: 'ab 1234' });
+    expect(duplicateReference([a], day.id, 'AB1234')?.id).toBe(a.id);
+    expect(duplicateReference([a], day.id, ' ')).toBeUndefined();
+    expect(duplicateReference([a], 'other-day', 'AB1234')).toBeUndefined();
+    expect(duplicateReference([{ ...a, voided: voidedBy }], day.id, 'AB1234')).toBeUndefined();
+    expect(duplicateReference([order([bowl()], { reference: 'AB1234' })], day.id, 'AB1234')).toBeUndefined(); // cash
+    expect(duplicateReference([order([bowl()], { method: 'gcash' })], day.id, '')).toBeUndefined();
+  });
+});
+
+describe('history is not re-priced', () => {
+  it('keeps the extras prices and unit costs an order was sold at', () => {
+    const cart = [bowl(2, { id: 'b1', choices: { side: 'Butter Corn Carrot', extraSides: ['Shredded Cabbage'], extraSauce: 1 } })];
+    const o = order(cart);
+    expect(cart[0].costEach).toBeUndefined(); // the cart itself is not changed
+    expect(o.lines[0]).toMatchObject({ extraSidePrice: 20, extraSaucePrice: 10 });
+    expect(o.lines[0].costEach).toBeCloseTo(107.93 + 7 + 3, 2);
+
+    const before = summarize(day, [o], s);
+    const later = { ...s, extraSidePrice: 35, extraSaucePrice: 15, menu: s.menu.map((m) => ({ ...m, unitCost: m.unitCost * 2 })) };
+    const after = summarize(day, [o], later);
+    expect(lineTotal(o.lines[0], later)).toBe((169 + 20 + 10) * 2);
+    expect(after.items[0].sales).toBe(before.items[0].sales);
+    expect(after.cost).toBeCloseTo(before.cost, 2);
+    expect(after.profit).toBeCloseTo(before.profit, 2);
+    // A new cart uses the new prices; an old line without snapshots follows Setup as before.
+    expect(lineTotal(cart[0], later)).toBe((169 + 35 + 15) * 2);
+    expect(orderCost({ ...o, lines: cart }, later)).toBeCloseTo((107.93 + 7 + 3) * 2 * 2, 2);
+  });
+
+  it('remembers the cost of a free wheel item', () => {
+    const o = order([bowl(1, { id: 'b1' })]);
+    const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'freeCookie', ctx);
+    if (!r.ok) throw new Error(r.message);
+    expect(r.order.lines.find((l) => l.id === r.spin.addedLineId)!.costEach).toBeCloseTo(34.08, 2);
+  });
+});
+
+describe('reports: promo at cost, voids, recounts', () => {
+  const spin = (o: Order, prize: Parameters<typeof applyPrize>[2], unit = 0, lineId = 'b1') => {
+    const r = applyPrize(o, { lineId, unit }, prize, ctx);
+    if (!r.ok) throw new Error(r.message);
+    return r.order;
+  };
+
+  it('counts a FREE MEAL at the cost of the bowl, and keeps the books adding up', () => {
+    const a = spin(order([bowl(1, { id: 'b1', choices: { side: 'Butter Corn Carrot', extraSauce: 1 } })]), 'freeMeal');
+    const b = spin(order([bowl(1, { id: 'b1' }), cookie()], {}, [a]), 'tenOff');
+    const c = spin(order([bowl(1, { id: 'b1' })], {}, [a, b]), 'freeCookie');
+    const won = { ...order([bowl(1, { id: 'b1' })], { now: at('2026-11-14T12:00:00') }), id: 'yesterday', dayId: 'other', spinsEarned: 1, spins: [{ lineId: 'b1', unit: 0, prize: 'voucher' as const, refund: 0, voucherCode: 'V-AAAA', via: 'physical' as const, at: at('2026-11-14T12:00:00') }] };
+    const d = order([bowl(), fries()], { voucher: { code: 'V-AAAA', amount: 20 } }, [a, b, c]);
+    const reward: OrderLine = { ...fries(), unitPrice: 0, free: { reason: 'reward', stampsAt: 5 } };
+    const e = { ...order([bowl(), reward], { cardId: 'CCB-001', rewardsRedeemed: [5] }, [a, b, c, d]), refunds: [{ amount: 30, reason: 'Cold food', at: 9, by: 'Boss' }] };
+    const dd = { ...day, waste: [{ id: 'w1', itemId: 'water', qty: 2, reason: 'dropped', at: 1, by: 'Ana' }] };
+    const sum = summarize(dd, [won, a, b, c, d, e], s);
+
+    const bowlCost = 107.93 + 3;
+    expect(sum.wheel.find((w) => w.prize === 'freeMeal')!.cost).toBeCloseTo(bowlCost, 2);
+    expect(sum.wheel.find((w) => w.prize === 'tenOff')!.cost).toBe(10);
+    expect(sum.wheel.find((w) => w.prize === 'freeCookie')!.cost).toBeCloseTo(34.08, 2);
+    expect(sum.promo.wheel).toBeCloseTo(bowlCost + 10 + 34.08, 2);
+    expect(sum.promo.cashBack).toBe(179 + 10);
+    expect(sum.prizeRefunds).toBe(179 + 10);
+    expect(sum.promo.vouchers).toBe(20);
+
+    expect(sum.grossSales).toBe(179 + (169 + 89) + 169 + (169 + 79) + 169 - 179);
+    expect(sum.discounts).toBe(20 + 10);
+    expect(sum.giveawaysAtCost).toBeCloseTo(bowlCost + 34.08 + 44.98, 2);
+    expect(sum.grossSales - sum.discounts - sum.manualRefunds).toBe(sum.net);
+    expect(sum.net - sum.cogsSold - sum.giveawaysAtCost - sum.waste.cost).toBeCloseTo(sum.profit, 6);
+    expect(sum.profit).toBeCloseTo(sum.net - sum.cost, 6);
+    expect(sum.cogsSold).toBeCloseTo(107.93 * 4 + 34.08 + 44.98, 2);
+  });
+
+  it('a GCash order with ₱10 off takes ₱10 out of the drawer', () => {
+    const a = spin(order([bowl(1, { id: 'b1' })], { method: 'gcash', reference: '77' }), 'tenOff');
+    const sum = summarize(day, [a], s);
+    expect(sum.cash.cashSales).toBe(0);
+    expect(sum.cash.paidOut).toBe(10);
+    expect(sum.cash.expected).toBe(2000 - 10);
+    expect(sum.net).toBe(159);
+  });
+
+  it('void after a prize: cash nets to zero, GCash is paid back from the drawer', () => {
+    const cash = { ...spin(order([bowl(1, { id: 'b1' })]), 'tenOff') };
+    expect(voidReturnAmount(cash)).toBe(159);
+    const cashSum = summarize(day, [{ ...cash, voided: voidedBy }], s);
+    expect(cashSum.cash.voidReturns).toBe(0);
+    expect(cashSum.cash.expected).toBe(2000); // 169 in, 10 prize + 159 back out
+    expect(cashSum.net).toBe(0);
+
+    const gcash = spin(order([bowl(1, { id: 'b1' })], { method: 'gcash', reference: '77' }), 'tenOff');
+    expect(voidReturnAmount(gcash)).toBe(159);
+    const gSum = summarize(day, [{ ...gcash, voided: voidedBy }], s);
+    expect(gSum.cash.voidReturns).toBe(169); // 10 prize cash + 159 handed back at the void
+    expect(gSum.cash.expected).toBe(2000 - 169);
+    expect(voidReturnAmount({ ...gcash, refunds: [{ amount: 500, reason: 'x', at: 1, by: 'b' }] })).toBe(0);
+  });
+
+  it('an order voided after cooking still used its food and counts as waste', () => {
+    const made = { ...order([bowl(2)]), status: 'ready' as const, voided: voidedBy };
+    const notMade = { ...order([bowl()], {}, [made]), voided: voidedBy };
+    expect(stockLeft(day, [made, notMade], s)['bowl-alaking']).toBe(58);
+    const sum = summarize(day, [made, notMade], s);
+    expect(sum.waste.rows).toEqual([{ itemId: 'voided', name: 'Voided after cooking', qty: 1, cost: expect.closeTo(215.86, 2) }]);
+    expect(sum.cost).toBeCloseTo(215.86, 2);
+    expect(sum.profit).toBeCloseTo(-215.86, 2);
+    expect(sum.orders).toBe(0);
+    expect(sum.net - sum.cogsSold - sum.giveawaysAtCost - sum.waste.cost).toBeCloseTo(sum.profit, 6);
+  });
+
+  it('recount: an order still cooking at count time comes off the counted number', () => {
+    const t = at('2026-11-15T12:00:00');
+    const count = { ...day, stockCounts: { 'cookie-choco': { qty: 30, at: t + 10_000, by: 'Kitchen' } } };
+    const o = order([cookie()]); // placed at t, before the count
+    expect(stockLeft(count, [{ ...o, status: 'new' }], s)['cookie-choco']).toBe(29);
+    expect(stockLeft(count, [{ ...o, status: 'cooking' }], s)['cookie-choco']).toBe(29);
+    expect(stockLeft(count, [{ ...o, status: 'ready', readyAt: t + 20_000 }], s)['cookie-choco']).toBe(29);
+    expect(stockLeft(count, [{ ...o, status: 'claimed', readyAt: t + 5_000, claimedAt: t + 20_000 }], s)['cookie-choco']).toBe(30);
+    expect(stockLeft(count, [{ ...o, status: 'ready', readyAt: t + 5_000 }], s)['cookie-choco']).toBe(30);
+    // Ingredients follow the same rule.
+    const ing = { id: 'i', name: 'Dough', unit: 'pcs', low: 0, count: { qty: 10, at: t + 10_000, by: 'K' }, uses: { 'cookie-choco': 1 } };
+    expect(onHand(ing, [{ ...o, status: 'cooking' }])).toBe(9);
+    expect(onHand(ing, [{ ...o, status: 'ready', readyAt: t + 5_000 }])).toBe(10);
+  });
+
+  it('recount: a free prize item counts from the spin, not from the order', () => {
+    const t = at('2026-11-15T12:00:00');
+    const o = { ...order([bowl(1, { id: 'b1' })]), status: 'claimed' as const, readyAt: t + 1000, claimedAt: t + 2000 };
+    const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'freeCookie', { ...ctx, now: t + 60_000 });
+    if (!r.ok) throw new Error(r.message);
+    const count = { ...day, stockCounts: { 'cookie-choco': { qty: 30, at: t + 30_000, by: 'Kitchen' }, 'bowl-alaking': { qty: 50, at: t + 30_000, by: 'Kitchen' } } };
+    const left = stockLeft(count, [r.order], s);
+    expect(left['cookie-choco']).toBe(29); // spun after the count
+    expect(left['bowl-alaking']).toBe(50); // eaten before the count
+  });
+
+  it('does not ask a fully refunded order to spin', () => {
+    const o = order([bowl(1, { id: 'b1' })]);
+    expect(pendingSpins(day, [o], o.createdAt + 1000)).toHaveLength(1);
+    const refunded = { ...o, refunds: [{ amount: 169, reason: 'x', at: 1, by: 'Boss' }] };
+    expect(pendingSpins(day, [refunded], o.createdAt + 1000)).toEqual([]);
+  });
+
+  it('CSV: text that looks like a formula is defused, amounts stay numbers', () => {
+    expect(csvCell('=1+1', true)).toBe("'=1+1");
+    expect(csvCell('@SUM(A1)', true)).toBe("'@SUM(A1)");
+    expect(csvCell('-cmd', true)).toBe("'-cmd");
+    expect(csvCell('\tx', true)).toBe("'\tx");
+    expect(csvCell('a\rb', true)).toBe('"a\rb"');
+    expect(csvCell('-20')).toBe('-20');
+    expect(csvCell(-20)).toBe('-20');
+    const o = spin(order([bowl(1, { id: 'b1' }), { ...cookie(), notes: '+63 call me' }], { cashier: '=HYPERLINK("x")', method: 'gcash', reference: '-99' }), 'tenOff');
+    const csv = ordersCsv(day, [o], s);
+    expect(csv).toContain(`"'=HYPERLINK(""x"")"`);
+    expect(csv).toContain(",'-99,");
+    expect(csv).toContain(',-10,'); // the payback amount is still a number
+    expect(csv).toContain("'+63 call me");
+  });
+
+  it('Excel: adds the new summary lines and drops characters Excel cannot open', () => {
+    const o = order([bowl()], { cashier: 'Ana￿￾B' });
+    const labels = daySheets(day, [o], s)[0].rows.map((r) => {
+      const c = r[0] as string | { v: string | number } | undefined;
+      return typeof c === 'object' ? c.v : c;
+    });
+    for (const label of ['Gross sales', 'Discounts', 'Giveaways at cost', 'COGS of items sold', '− Void returns from drawer']) expect(labels).toContain(label);
+    const text = new TextDecoder().decode(dayXlsx(day, [o], s));
+    expect(text).toContain('>AnaB<');
+  });
+
+  it('promo limit: 6.499999999999999% counts as 6.5%', () => {
+    const base = summarize(day, [], s);
+    const st = promoStatus({ ...base, gross: 10000, promo: { ...base.promo, wheel: 649.9999999, vouchers: 0 } }, s);
+    expect(st.pct).toBeLessThan(6.5);
+    expect(st.level).toBe('warn');
+  });
+});
+
+describe('vouchers before the bazaar (practice runs)', () => {
+  it('uses the plain next-day rule before the first selling day', () => {
+    expect(voucherWindow('2026-11-21', s)).toEqual({ validFrom: '2026-11-22', validTo: '2026-11-22' });
+    expect(voucherWindow('2026-11-25', s)).toEqual({ validFrom: '2026-11-27', validTo: '2026-11-27' });
+  });
+});
+
+describe('recount after a void', () => {
+  it('takes an order voided while cooking off the stock once, not again after every recount', () => {
+    const o: Order = { ...order([cookie()]), createdAt: 500, status: 'cooking', voided: { reason: 'left', at: 1000, by: 'Boss' } };
+    const item = o.lines[0].itemId;
+    const counted = { ...day, stockCounts: { [item]: { qty: 30, at: 5000, by: 'Kitchen' } } };
+    expect(stockLeft(counted, [o], s)[item]).toBe(30);
+    // Voided after the count: the food was in the counted stock and is now gone.
+    const later: Order = { ...o, voided: { reason: 'left', at: 9000, by: 'Boss' } };
+    expect(stockLeft(counted, [later], s)[item]).toBe(29);
+  });
+});
+
+describe('cash drawer with cash in/out', () => {
+  const move = (type: CashMove['type'], amount: number, over: Partial<CashMove> = {}): CashMove => ({ id: 'm' + Math.random(), dayId: day.id, mode: 'demo', type, amount, note: '', by: 'Ana', at: 1, ...over });
+
+  it('takes drops and expenses out, adds change put in, skips cancelled and other days', () => {
+    const a = order([bowl(1, { id: 'b1' })]);
+    const r = applyPrize(a, { lineId: 'b1', unit: 0 }, 'tenOff', ctx);
+    if (!r.ok) throw new Error();
+    const b = { ...order([fries()], { method: 'gcash', reference: '77' }, [a]), voided: { reason: 'wrong', at: 2, by: 'Boss' } };
+    const c = { ...order([cookie()], {}, [a, b]), refunds: [{ amount: 20, reason: 'cold', at: 3, by: 'Boss' }] };
+    const moves = [
+      move('drop', 500),
+      move('add', 300),
+      move('expense', 150, { note: 'ice' }),
+      move('expense', 99, { cancelled: { at: 4, by: 'Boss', reason: 'typo' } }),
+      move('drop', 1000, { dayId: 'other-day' }),
+    ];
+    const sum = summarize({ ...day, countedCash: 1800 }, [r.order, b, c], s, moves);
+    // 2000 float + 258 cash sales − 30 paybacks − 79 void return − 500 drop − 150 expense + 300 added
+    expect(sum.cash.drops).toBe(500);
+    expect(sum.cash.added).toBe(300);
+    expect(sum.cash.expenses).toBe(150);
+    expect(sum.cash.expected).toBe(1799);
+    expect(sum.cash.overShort).toBe(1);
+    expect(sum.expenses).toBe(150);
+    expect(sum.netAfterExpenses).toBeCloseTo(sum.profit - 150, 6);
+    // Without moves, nothing changes for old callers.
+    const plain = summarize(day, [r.order, b, c], s);
+    expect(plain.cash.expected).toBe(2000 + 258 - 30 - 79);
+    expect(plain.expenses).toBe(0);
+    expect(plain.profit).toBe(sum.profit);
+  });
+
+  it('Excel: lists cash in/out and the money still owed', () => {
+    const sheets = daySheets(day, [], s, [move('drop', 500, { note: 'to safe' }), move('expense', 40, { cancelled: { at: 4, by: 'Boss', reason: 'typo' } })], [], '2026-11-15');
+    const cash = sheets.find((x) => x.name === 'Cash in out')!;
+    expect(cash.rows).toHaveLength(3);
+    const labels = sheets[0].rows.map((r) => {
+      const c = r[0] as string | { v: string | number } | undefined;
+      return typeof c === 'object' ? c.v : c;
+    });
+    for (const label of ['− Taken out (drops)', '+ Change added', '− Paid out (expenses)', 'Vouchers not used yet', 'Rewards ready', 'Stamps building up']) expect(labels).toContain(label);
+  });
+});
+
+describe('what we still owe', () => {
+  const at = (date: string) => Date.parse(`${date}T12:00:00`);
+  const voucherSpin = (code: string, date: string): SpinResult => ({ lineId: 'x', unit: 0, prize: 'voucher', refund: 0, voucherCode: code, via: 'physical', at: at(date) });
+  const won = (id: string, code: string, date: string, over: Partial<Order> = {}): Order => ({ ...order([bowl()]), id, spins: [voucherSpin(code, date)], ...over });
+  const card = (number: string, delta: number, mode: Card['mode'] = 'demo'): Card => ({ number, mode, name: 'X', createdAt: 0, updatedAt: 0, by: 'Ana', adjustments: [{ delta, reason: 'paper', at: 0, by: 'Ana' }] });
+
+  it('counts open vouchers, rewards ready and stamps at cost', () => {
+    const orders: Order[] = [
+      won('o1', 'V-AAAA', '2026-11-23'), // valid Nov 24: owed
+      won('o2', 'V-BBBB', '2026-11-23'), // used below
+      { ...order([bowl()]), id: 'o3', number: 'A-050', voucher: { code: 'V-BBBB', amount: 20 } },
+      won('o4', 'V-CCCC', '2026-11-22'), // before the bazaar: valid Nov 23 only, expired
+      won('o5', 'V-DDDD', '2026-11-23', { voided: { reason: 'x', at: 1, by: 'Boss' } }), // voided: never issued
+      won('o6', 'V-EEEE', '2026-11-24'), // valid Nov 25: owed
+      { ...order([bowl()]), id: 'o7', cardId: 'CCB-001', stampsEarned: 6 },
+      { ...order([bowl()]), id: 'o8', cardId: 'CCB-004', stampsEarned: 2 },
+    ];
+    const cards = [card('CCB-002', 10), card('CCB-003', 3, 'live')];
+    const l = liabilities(orders, cards, s, '2026-11-24');
+    expect(l.vouchers).toEqual({ count: 2, amount: 40 });
+    const fries = l.rewards.rows.find((r) => r.at === 5)!;
+    const bowlR = l.rewards.rows.find((r) => r.at === 10)!;
+    expect(fries.count).toBe(2); // CCB-001 (6 stamps) and CCB-002 (10)
+    expect(fries.cost).toBeCloseTo(2 * 44.98, 6);
+    expect(bowlR.count).toBe(1);
+    expect(bowlR.cost).toBeCloseTo(96.04, 6);
+    expect(l.rewards.count).toBe(3);
+    expect(l.stamps.stamps).toBe(18); // 6 + 10 + 2; the live card is left out
+    // CCB-001: 6/10 of a bowl; CCB-002: everything ready, nothing more; CCB-004: 2/5 fries + 2/10 bowl.
+    const accrual = 0.6 * 96.04 + 0.4 * 44.98 + 0.2 * 96.04;
+    expect(l.stamps.cost).toBeCloseTo(accrual, 6);
+    expect(l.total).toBeCloseTo(40 + 89.96 + 96.04 + accrual, 6);
+  });
+
+  it('prices a reward with no item at the average of its category', () => {
+    const s2 = { ...s, loyalty: { ...s.loyalty, rewards: [{ at: 5, label: 'Any fries', category: 'fries' as const }] } };
+    const l = liabilities([{ ...order([bowl()]), cardId: 'CCB-009', stampsEarned: 5 }], [], s2, '2026-11-24');
+    expect(l.rewards.rows[0].cost).toBeCloseTo((44.98 + 79.21) / 2, 6);
+    expect(l.stamps.cost).toBe(0); // the only reward is ready: counted once, above
+  });
+});
+
+describe('all days export', () => {
+  it('has one row per day of the current mode and a totals row', () => {
+    const d2: BusinessDay = { ...day, id: 'demo-2026-11-16', date: '2026-11-16', countedCash: 2100 };
+    const live: BusinessDay = { ...day, id: 'live-1', mode: 'live', date: '2026-11-17' };
+    const a = order([bowl()]);
+    const b = { ...order([cookie()], { day: d2 }), dayId: d2.id };
+    const moves: CashMove[] = [{ id: 'm1', dayId: d2.id, mode: 'demo', type: 'expense', amount: 50, note: 'ice', by: 'Ana', at: 1 }];
+    const [sheet] = allDaysSheets([d2, day, live], [a, b], s, moves, [], '2026-11-16');
+    const text = (c: unknown) => (typeof c === 'object' && c ? (c as { v: unknown }).v : c);
+    const firstCol = sheet.rows.map((r) => text(r[0]));
+    expect(firstCol).toContain('2026-11-15');
+    expect(firstCol).toContain('2026-11-16');
+    expect(firstCol).not.toContain('2026-11-17');
+    expect(firstCol.indexOf('2026-11-15')).toBeLessThan(firstCol.indexOf('2026-11-16'));
+    const total = sheet.rows.find((r) => text(r[0]) === 'Total')!;
+    expect(text(total[1])).toBe(2);
+    expect(text(total[2])).toBe(169 + 89);
+    expect(text(total[5])).toBe(50);
+    expect(firstCol).toContain('Vouchers not used yet');
+  });
+});
+
+describe('order numbers after reopening on the same date', () => {
+  it('carries on the numbering instead of starting at 001 again', () => {
+    const first = { ...day, id: `${day.mode}-${day.date}-aaa` };
+    const second = { ...day, id: `${day.mode}-${day.date}-bbb` };
+    const o = { ...order([cookie()]), dayId: first.id, seq: 7, number: 'A-007' };
+    expect(nextSeq(second, [o], 'A')).toBe(8);
+    expect(nextSeq({ ...second, date: '2099-01-01', id: `${day.mode}-2099-01-01-ccc` }, [o], 'A')).toBe(1);
   });
 });

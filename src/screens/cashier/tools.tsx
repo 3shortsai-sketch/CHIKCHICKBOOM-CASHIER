@@ -3,7 +3,7 @@ import { cardRows, cardStateFor, searchCards } from '../../domain/cards';
 import { availableRewards, parseCard } from '../../domain/loyalty';
 import { newId, peso } from '../../domain/pricing';
 import type { BusinessDay, Order, Settings } from '../../domain/types';
-import { modeCards, patchDay, useStore } from '../../data/store';
+import { appendToDay, modeCards, useStore } from '../../data/store';
 import { Modal } from '../../ui/ui';
 import { CardNameField } from './CardName';
 import { StampEditor } from './StampEditor';
@@ -111,7 +111,9 @@ export function WasteLog({ s, day, cashier, onClose }: { s: Settings; day: Busin
   const save = () => {
     if (!item || qty < 1) return;
     const why = reason === 'Other' ? other.trim() || 'Other' : reason;
-    patchDay(day.id, { waste: [...(day.waste ?? []), { id: newId('w'), itemId, qty, reason: why, at: Date.now(), by: cashier }] });
+    const entry: NonNullable<BusinessDay['waste']>[number] = { id: newId('w'), itemId, qty, reason: why, at: Date.now(), by: cashier };
+    // One entry is added: a waste entry logged on another device at the same time is kept.
+    appendToDay(day.id, 'waste', entry);
     onClose();
   };
 

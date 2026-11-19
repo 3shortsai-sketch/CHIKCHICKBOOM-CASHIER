@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { amountDue, createOrder, nextSeq, orderNumber } from '../../domain/checkout';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { amountDue, checkCart, createOrder, duplicateReference, nextSeq, orderNumber } from '../../domain/checkout';
 import { cardStateFor } from '../../domain/cards';
 import { availableRewards, canRedeem, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
 import { applyCombo, itemById, needsPicker, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
 import { allergenText, itemTags } from '../../domain/allergens';
 import { promoStatus } from '../../domain/promo';
-import { isAvailable, pendingSpins, popularToday, stockLeft, summarize } from '../../domain/reports';
-import type { Category, Combo, MenuItem, Order, OrderLine, PaymentMethod, Reward } from '../../domain/types';
+import { isAvailable, orderNet, pendingSpins, popularToday, stockLeft, summarize } from '../../domain/reports';
+import type { Category, Combo, MenuItem, Order, OrderLine, PaymentMethod, Reward, Settings } from '../../domain/types';
 import { publishCart } from '../../data/live';
 import { modeCards, modeOrders, openDay, patchDay, patchOrder, putOrder, saveSettings, useDevice, useStore } from '../../data/store';
 import { TopBar } from '../../ui/TopBar';
@@ -15,6 +15,7 @@ import { AfterPay, PayModal, StampDots, type AfterPayMode } from './payflow';
 import { ComboPicker, ItemPicker } from './pickers';
 import { CardNameField, useCardName } from './CardName';
 import { CardLookup, WasteLog } from './tools';
+import { CashMoves } from './CashMoves';
 import { minutesAgo } from '../../ui/ui';
 
 type TabId = Category | 'popular';
@@ -30,15 +31,45 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 
 /** An undecided customer's order, set aside on this device. */
-type Parked = { id: string; lines: OrderLine[]; cardId?: string; voucher?: { code: string; amount: number }; name?: string; at: number };
+type Parked = {
+  id: string;
+  lines: OrderLine[];
+  cardId?: string;
+  voucher?: { code: string; amount: number };
+  name?: string;
+  /** The name was filled in from the loyalty card, not typed. */
+  nameFromCard?: boolean;
+  at: number;
+  /** Demo or real data, and the day it was parked on: it only comes back there. */
+  mode: Settings['mode'];
+  dayId: string;
+};
 const PARKED_KEY = 'ccb:parked';
 
 function loadParked(): Parked[] {
   try {
-    return JSON.parse(localStorage.getItem(PARKED_KEY) ?? '[]') as Parked[];
+    const list = JSON.parse(localStorage.getItem(PARKED_KEY) ?? '[]') as Parked[];
+    return Array.isArray(list) ? list.filter((p) => p && Array.isArray(p.lines)) : [];
   } catch {
     return [];
   }
+}
+
+/** The stale-day warning was dismissed for this day ("keep selling"), until the browser is closed. */
+const STALE_OK_KEY = 'ccb:stale-day-ok';
+
+function staleDayOk(dayId: string): boolean {
+  try {
+    return sessionStorage.getItem(STALE_OK_KEY) === dayId;
+  } catch {
+    return false;
+  }
+}
+
+/** "2026-11-23" as "Mon, Nov 23". */
+function niceDate(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function saveParked(p: Parked[]) {
@@ -46,6 +77,48 @@ function saveParked(p: Parked[]) {
     localStorage.setItem(PARKED_KEY, JSON.stringify(p));
   } catch {
     /* parked orders still work for this session */
+  }
+}
+
+/** The order being rung up, kept so a reload (F5) or a wrong tap on another screen does not lose it. */
+const DRAFT_KEY = 'ccb:draft';
+
+function loadDraft(): Parked | null {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? 'null') as Parked | null;
+    return d && Array.isArray(d.lines) && d.lines.length ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(d: Parked | null) {
+  try {
+    if (d) localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    /* the order still works, it just won't survive a reload */
+  }
+}
+
+/** The change screen of the order just paid, kept for this browser tab so a reload comes back to it. */
+const AFTERPAY_KEY = 'ccb:afterpay';
+
+function loadAfterPay(exists: (id: string) => boolean): { id: string; mode: AfterPayMode } | null {
+  try {
+    const a = JSON.parse(sessionStorage.getItem(AFTERPAY_KEY) ?? 'null') as { id?: unknown; mode?: unknown } | null;
+    return a && typeof a.id === 'string' && a.mode === 'fresh' && exists(a.id) ? { id: a.id, mode: 'fresh' } : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAfterPay(a: { id: string; mode: AfterPayMode } | null) {
+  try {
+    if (a?.mode === 'fresh') sessionStorage.setItem(AFTERPAY_KEY, JSON.stringify(a));
+    else sessionStorage.removeItem(AFTERPAY_KEY);
+  } catch {
+    /* the change screen still works until a reload */
   }
 }
 
@@ -67,7 +140,7 @@ export function Cashier() {
   const [lines, setLines] = useState<OrderLine[]>([]);
   const [picking, setPicking] = useState<Picking>(null);
   const [paying, setPaying] = useState(false);
-  const [afterPay, setAfterPay] = useState<{ id: string; mode: AfterPayMode } | null>(null);
+  const [afterPay, setAfterPay] = useState<{ id: string; mode: AfterPayMode } | null>(() => loadAfterPay((id) => !!state.orders[id]));
   const [soldOutMode, setSoldOutMode] = useState(false);
   const [cardInput, setCardInput] = useState('');
   const [cardId, setCardId] = useState<string | undefined>();
@@ -78,14 +151,29 @@ export function Cashier() {
   const [comboDismissed, setComboDismissed] = useState<string>('');
   const [escArmed, setEscArmed] = useState(false);
   const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
-  const [tool, setTool] = useState<'card' | 'waste' | null>(null);
+  const [tool, setTool] = useState<'card' | 'waste' | 'cash' | null>(null);
   const [promoDismissed, setPromoDismissed] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
+  /** The name the loyalty card filled in (empty when the cashier typed it). */
+  const [cardFilledName, setCardFilledName] = useState('');
+  const [staleOk, setStaleOk] = useState('');
   const [parked, setParkedState] = useState<Parked[]>(loadParked);
   const setParked = (p: Parked[]) => {
     setParkedState(p);
     saveParked(p);
   };
+  // Parked orders belong to one day and one kind of data (demo or real).
+  // Once another day is open, or the data mode changed, the old ones go.
+  const dayId = day?.id;
+  useEffect(() => {
+    const keep = parked.filter((p) => p.mode === s.mode && (!dayId || p.dayId === dayId));
+    if (keep.length !== parked.length) setParked(keep);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayId, s.mode]);
+  const parkedHere = parked.filter((p) => p.mode === s.mode && p.dayId === dayId);
+
+  // Leaving the cashier screen clears "Your order" on the customer monitor.
+  useEffect(() => () => publishCart({ stage: 'idle' }), []);
 
   const cartUse = useMemo(() => stockUsage(lines), [lines]);
   const remaining = useCallback((id: string) => (left[id] ?? 0) - (cartUse[id] ?? 0), [left, cartUse]);
@@ -102,8 +190,19 @@ export function Cashier() {
   // A registered card fills in the customer's first name, so the kitchen and
   // the monitor can call them (only when the cashier hasn't typed one).
   const registeredName = useCardName(cardId);
+  const fillNameFromCard = (full: string) => {
+    const first = full.split(' ')[0];
+    setCustomerName(first);
+    setCardFilledName(first);
+  };
+  const removeCard = () => {
+    setCardId(undefined);
+    setLines(lines.filter((l) => l.free?.reason !== 'reward'));
+    if (cardFilledName && customerName === cardFilledName) setCustomerName('');
+    setCardFilledName('');
+  };
   useEffect(() => {
-    if (registeredName && !customerName.trim()) setCustomerName(registeredName.split(' ')[0]);
+    if (registeredName && !customerName.trim()) fillNameFromCard(registeredName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registeredName, cardId]);
   const rewardsInCart = lines.flatMap((l) => (l.free?.reason === 'reward' ? [l.free.stampsAt] : []));
@@ -203,7 +302,7 @@ export function Cashier() {
   };
 
   const applyVoucher = () => {
-    const r = checkVoucher(voucherInput, orders, s, day?.date ?? localDate(), sub);
+    const r = checkVoucher(voucherInput, orders, s, localDate(), sub);
     if (!r.ok) return flash(r.message, true);
     setVoucher({ code: r.code, amount: r.amount });
     setVoucherInput('');
@@ -221,6 +320,7 @@ export function Cashier() {
   const clearOrder = () => {
     setLines([]);
     setCustomerName('');
+    setCardFilledName('');
     setCardId(undefined);
     setCardInput('');
     setVoucher(undefined);
@@ -229,32 +329,109 @@ export function Cashier() {
   };
 
   // ----- Park an undecided customer's order -----
+  const parkCurrent = (d: { id: string }): Parked => ({
+    id: newId('p'),
+    lines,
+    cardId,
+    voucher,
+    name: customerName.trim() || undefined,
+    nameFromCard: (!!cardFilledName && customerName === cardFilledName) || undefined,
+    at: Date.now(),
+    mode: s.mode,
+    dayId: d.id,
+  });
+
   const parkOrder = () => {
-    if (!lines.length) return;
-    const p: Parked = { id: newId('p'), lines, cardId, voucher, name: customerName.trim() || undefined, at: Date.now() };
+    if (!lines.length || !day) return;
+    const p = parkCurrent(day);
     setParked([...parked, p]);
     clearOrder();
     flash(`Order parked${p.name ? ` for ${p.name}` : ''}. Tap it below to continue.`);
   };
 
-  const resumeOrder = (p: Parked) => {
-    let rest = parked.filter((x) => x.id !== p.id);
-    // Whatever is on screen now gets parked, so nothing is lost.
-    if (lines.length) rest = [...rest, { id: newId('p'), lines, cardId, voucher, name: customerName.trim() || undefined, at: Date.now() }];
-    setParked(rest);
-    setLines(p.lines);
+  /**
+   * Put a set-aside order (parked, or kept over a reload) back on screen.
+   * Things may have changed meanwhile: the reward, the voucher and the stock
+   * are checked again. Returns the problems found (already fixed where it can).
+   */
+  const bringBack = (p: Parked): string[] => {
+    const problems: string[] = [];
+    const cardNow = p.cardId ? cardStateFor(p.cardId, orders, s, cardList) : null;
+    const seen: number[] = [];
+    const kept = p.lines.filter((l) => {
+      if (l.free?.reason !== 'reward') return true;
+      const at = l.free.stampsAt;
+      const ok = !!cardNow && !seen.includes(at) && canRedeem(cardNow, at, s).ok;
+      if (ok) seen.push(at);
+      else problems.push(`${l.name} removed: the card's reward is not there any more.`);
+      return ok;
+    });
+    let v = p.voucher;
+    if (v) {
+      const r = checkVoucher(v.code, orders, s, localDate(), subtotal(kept, s));
+      if (!r.ok) {
+        problems.push(`Voucher ${v.code} removed: ${r.message}`);
+        v = undefined;
+      }
+    }
+    const short = Object.entries(stockUsage(kept)).filter(([id, n]) => (left[id] ?? 0) < n);
+    if (short.length) problems.push(`Not enough left now: ${short.map(([id]) => itemById(s, id)?.name ?? id).join(', ')}. Check the order.`);
+
+    setLines(kept);
     setCardId(p.cardId);
-    setVoucher(p.voucher);
+    setVoucher(v);
     setCustomerName(p.name ?? '');
+    setCardFilledName(p.nameFromCard ? (p.name ?? '') : '');
     setCardInput('');
     setVoucherInput('');
-    const short = Object.entries(stockUsage(p.lines)).filter(([id, n]) => (left[id] ?? 0) < n);
-    if (short.length) flash(`Not enough left now: ${short.map(([id]) => itemById(s, id)?.name ?? id).join(', ')}. Check the order.`, true);
+    return problems;
   };
 
-  // ----- Pay -----
-  const pay = (method: Order['payment']['method'], tendered: number, reference: string) => {
+  const resumeOrder = (p: Parked) => {
     if (!day) return;
+    let rest = parked.filter((x) => x.id !== p.id);
+    // Whatever is on screen now gets parked, so nothing is lost.
+    if (lines.length) rest = [...rest, parkCurrent(day)];
+    setParked(rest);
+    const problems = bringBack(p);
+    if (problems.length) flash(problems.join(' '), true);
+  };
+
+  // ----- Keep the order over a reload -----
+  // Once, when the day is known: bring back the order that was on screen,
+  // but only on the same day and the same kind of data (demo or real).
+  const draftChecked = useRef(false);
+  useEffect(() => {
+    if (draftChecked.current || !day) return;
+    draftChecked.current = true;
+    const d = loadDraft();
+    if (!d || d.mode !== s.mode || d.dayId !== day.id) {
+      saveDraft(null);
+      return;
+    }
+    const problems = bringBack(d);
+    flash(['Order brought back after a reload.', ...problems].join(' '), problems.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayId]);
+  // Every change is saved; an empty order removes it (paying, Cancel and Park all empty it).
+  useEffect(() => {
+    if (!draftChecked.current || !day) return;
+    saveDraft(lines.length ? parkCurrent(day) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, cardId, voucher, customerName, cardFilledName, s.mode, dayId]);
+  useEffect(() => saveAfterPay(afterPay), [afterPay]);
+
+  // ----- Pay -----
+  /** Returns the problem (also shown as a notice) when the order could not be saved. */
+  const pay = (method: Order['payment']['method'], tendered: number, reference: string): string | undefined => {
+    if (!day) return;
+    // Look at everything once more: another device or a parked order may have
+    // used the voucher, the reward or the last pieces since this cart was built.
+    const problem = checkCart({ lines, orders, settings: s, today: localDate(), voucher, cardState: card, rewardsRedeemed: rewardsInCart, left, soldOut: day.soldOut });
+    if (problem) {
+      flash(problem, true);
+      return problem;
+    }
     try {
       const o = createOrder({
         lines,
@@ -279,6 +456,7 @@ export function Cashier() {
       clearOrder();
     } catch (e) {
       flash((e as Error).message, true);
+      return (e as Error).message;
     }
   };
 
@@ -287,6 +465,10 @@ export function Cashier() {
 
   // ----- Customer monitor: show the order as it is rung up -----
   const afterOrder = afterPay ? state.orders[afterPay.id] : undefined;
+  // The order on the after-payment screen was deleted on another device: go back to the menu.
+  useEffect(() => {
+    if (afterPay && !afterOrder) setAfterPay(null);
+  }, [afterPay, afterOrder]);
   useEffect(() => {
     if (afterOrder && afterPay?.mode === 'fresh') {
       publishCart({
@@ -351,9 +533,12 @@ export function Cashier() {
     else flash(`${e.c.name} is sold out.`, true);
   };
 
+  // The day was opened on an earlier date and never closed (left open overnight).
+  const staleDay = !!day && day.date !== localDate() && staleOk !== day.id && !staleDayOk(day.id);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (picking || paying || afterPay || tool) return;
+      if (picking || paying || afterPay || tool || staleDay) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         if (e.key === 'Escape') (e.target as HTMLElement).blur();
         return;
@@ -388,6 +573,15 @@ export function Cashier() {
   const inKitchen = todays.filter((o) => o.status === 'new' || o.status === 'cooking').length;
   const recent = [...todays].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
   const waitingSpins = pendingSpins(day, orders, Date.now());
+  const myLetter = device.orderLetter || 'A';
+  // Two devices on the same letter give two orders the same number.
+  const numbersSeen = new Set<string>();
+  const letterClash = todays.some((o) => {
+    if (!o.number.startsWith(myLetter + '-')) return false;
+    if (numbersSeen.has(o.number)) return true;
+    numbersSeen.add(o.number);
+    return false;
+  });
   const nextNumber = orderNumber(device.orderLetter || 'A', nextSeq(day, orders, device.orderLetter || 'A'));
   const soldOutCount = s.menu.filter((m) => m.active && day.soldOut[m.id]).length;
   const promo = promoStatus(summarize(day, orders, s), s);
@@ -415,7 +609,32 @@ export function Cashier() {
         </div>
       </TopBar>
       {after ? (
-        <AfterPay mode={afterPay?.mode ?? 'fresh'} order={after} orders={orders} s={s} pickFree={pickFree} onUpdate={putOrder} onDone={() => setAfterPay(null)} />
+        <AfterPay key={after.id} mode={afterPay?.mode ?? 'fresh'} order={after} orders={orders} s={s} pickFree={pickFree} onPatch={(patch) => patchOrder(after.id, patch)} onDone={() => setAfterPay(null)} />
+      ) : staleDay ? (
+        <div className="center-screen">
+          <div className="card stale-day" role="alert">
+            <h1>An earlier day is still open</h1>
+            <p>
+              The day opened on <b>{niceDate(day.date)}</b> was never closed. Close it on the Dashboard (count the cash), then open today.
+            </p>
+            <a className="btn primary big full" href="#dashboard">
+              Go to the Dashboard
+            </a>
+            <button
+              className="btn ghost full"
+              onClick={() => {
+                try {
+                  sessionStorage.setItem(STALE_OK_KEY, day.id);
+                } catch {
+                  /* still dismissed while this screen stays open */
+                }
+                setStaleOk(day.id);
+              }}
+            >
+              Keep selling on that day
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="cashier-body">
           <section className="menu-side">
@@ -447,6 +666,11 @@ export function Cashier() {
                   </button>
                 </div>
               </div>
+            )}
+            {letterClash && (
+              <p className="banner warn" role="alert">
+                Another device is also using order letter {myLetter}. Change this device's letter in Setup → This device.
+              </p>
             )}
             {soldOutMode && <p className="banner warn">Tap an item to mark it sold out. Tap it again to bring it back.</p>}
 
@@ -497,10 +721,10 @@ export function Cashier() {
             </div>
 
             <div className="orders-bar">
-              {parked.length > 0 && (
+              {parkedHere.length > 0 && (
                 <div className="orders-group">
                   <span className="orders-label">⏸ Parked · tap to continue</span>
-                  {parked.map((p, i) => {
+                  {parkedHere.map((p, i) => {
                     const total = amountDue(p.lines, s, p.voucher?.amount ?? 0);
                     const items = p.lines.reduce((n, l) => n + l.qty, 0);
                     return (
@@ -542,7 +766,7 @@ export function Cashier() {
                 <div className="orders-group">
                   <span className="orders-label">Recent · tap to see voucher, stamps</span>
                   {recent.map((o) => (
-                    <button key={o.id} className="btn small recent" onClick={() => setAfterPay({ id: o.id, mode: 'past' })}>
+                    <button key={o.id} className="btn small recent" onClick={() => setAfterPay({ id: o.id, mode: o.spinsEarned > o.spins.length && orderNet(o) > 0 ? 'spin' : 'past' })}>
                       {o.number}
                     </button>
                   ))}
@@ -555,6 +779,9 @@ export function Cashier() {
                   </button>
                   <button className="btn small ghost tool-btn" title="Log dropped or spoiled items" onClick={() => setTool('waste')}>
                     Waste
+                  </button>
+                  <button className="btn small ghost tool-btn" title="Cash taken out, added or paid out (manager PIN)" onClick={() => setTool('cash')}>
+                    Cash
                   </button>
                   <a className="btn small ghost tool-btn" title="Team page (passcode)" href="#team">
                     Team
@@ -670,9 +897,9 @@ export function Cashier() {
                   <div>
                     <b>{card.cardId}</b> <span className="muted">{card.stamps}/{s.loyalty.cardSize} stamps</span>
                     <StampDots n={card.stamps} size={s.loyalty.cardSize} />
-                    <CardNameField number={card.cardId} by={device.cashier || day.openedBy} onSaved={(n) => !customerName.trim() && setCustomerName(n.split(' ')[0])} />
+                    <CardNameField number={card.cardId} by={device.cashier || day.openedBy} onSaved={(n) => !customerName.trim() && fillNameFromCard(n)} />
                   </div>
-                  <button className="btn ghost small" aria-label="Remove card" onClick={() => { setCardId(undefined); setLines(lines.filter((l) => l.free?.reason !== 'reward')); }}>
+                  <button className="btn ghost small" aria-label="Remove card" onClick={removeCard}>
                     ✕
                   </button>
                 </div>
@@ -762,6 +989,7 @@ export function Cashier() {
         <PayModal
           due={due}
           methods={methods}
+          duplicateOf={(ref) => duplicateReference(orders, day.id, ref)?.number}
           onMethod={setPayMethod}
           onPay={pay}
           onClose={() => {
@@ -771,6 +999,7 @@ export function Cashier() {
         />
       )}
       {tool === 'card' && <CardLookup s={s} orders={orders} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
+      {tool === 'cash' && <CashMoves s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
       {tool === 'waste' && <WasteLog s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
     </div>
   );

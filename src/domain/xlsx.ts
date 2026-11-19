@@ -20,7 +20,7 @@ const STYLE: Record<CellStyle, number> = { bold: 1, money: 2, boldMoney: 3, pct:
 
 function esc(s: string): string {
   return s
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

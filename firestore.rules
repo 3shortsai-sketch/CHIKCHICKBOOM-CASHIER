@@ -22,6 +22,22 @@ service cloud.firestore {
     match /cards/{cardId} {
       allow read, write: if isBooth();
     }
+    match /cashMoves/{moveId} {
+      allow read, write: if isBooth();
+    }
+    // Customer order page: anyone may look up ONE document by its id
+    // (order number + date), but nobody may list them. Only order number,
+    // status and times are stored here: no names, items or money.
+    match /tracker/{trackId} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if isBooth();
+    }
+    match /public/{docId} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if isBooth() && docId in ['booth-live', 'booth-demo'];
+    }
     // Anything else: no access.
   }
 }
