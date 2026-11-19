@@ -899,3 +899,15 @@ describe('vouchers before the bazaar (practice runs)', () => {
     expect(voucherWindow('2026-11-25', s)).toEqual({ validFrom: '2026-11-27', validTo: '2026-11-27' });
   });
 });
+
+describe('recount after a void', () => {
+  it('takes an order voided while cooking off the stock once, not again after every recount', () => {
+    const o: Order = { ...order([cookie()]), createdAt: 500, status: 'cooking', voided: { reason: 'left', at: 1000, by: 'Boss' } };
+    const item = o.lines[0].itemId;
+    const counted = { ...day, stockCounts: { [item]: { qty: 30, at: 5000, by: 'Kitchen' } } };
+    expect(stockLeft(counted, [o], s)[item]).toBe(30);
+    // Voided after the count: the food was in the counted stock and is now gone.
+    const later: Order = { ...o, voided: { reason: 'left', at: 9000, by: 'Boss' } };
+    expect(stockLeft(counted, [later], s)[item]).toBe(29);
+  });
+});

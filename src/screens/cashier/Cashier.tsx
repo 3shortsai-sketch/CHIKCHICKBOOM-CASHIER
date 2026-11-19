@@ -5,7 +5,7 @@ import { availableRewards, canRedeem, checkVoucher, localDate, parseCard } from 
 import { applyCombo, itemById, needsPicker, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
 import { allergenText, itemTags } from '../../domain/allergens';
 import { promoStatus } from '../../domain/promo';
-import { isAvailable, pendingSpins, popularToday, stockLeft, summarize } from '../../domain/reports';
+import { isAvailable, orderNet, pendingSpins, popularToday, stockLeft, summarize } from '../../domain/reports';
 import type { Category, Combo, MenuItem, Order, OrderLine, PaymentMethod, Reward, Settings } from '../../domain/types';
 import { publishCart } from '../../data/live';
 import { modeCards, modeOrders, openDay, patchDay, patchOrder, putOrder, saveSettings, useDevice, useStore } from '../../data/store';
@@ -691,7 +691,7 @@ export function Cashier() {
                 <div className="orders-group">
                   <span className="orders-label">Recent · tap to see voucher, stamps</span>
                   {recent.map((o) => (
-                    <button key={o.id} className="btn small recent" onClick={() => setAfterPay({ id: o.id, mode: waitingSpins.some((w) => w.id === o.id) ? 'spin' : 'past' })}>
+                    <button key={o.id} className="btn small recent" onClick={() => setAfterPay({ id: o.id, mode: o.spinsEarned > o.spins.length && orderNet(o) > 0 ? 'spin' : 'past' })}>
                       {o.number}
                     </button>
                   ))}

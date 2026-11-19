@@ -6,6 +6,7 @@ import { XLSX_MIME } from '../domain/xlsx';
 import { ordersCsv, orderNet, pendingSpins, stockLeft, summarize, voidReturnAmount } from '../domain/reports';
 import type { Order, Refund } from '../domain/types';
 import { appendToOrder, exportBackup, importBackup, latestDay, modeOrders, openDay, patchDay, patchOrder, useDevice, useStore } from '../data/store';
+import { useAuthState, useSyncStatus } from '../data/sync';
 import { TopBar } from '../ui/TopBar';
 import { download, ManagerConfirm, PinGate } from '../ui/ui';
 import { LineDetails } from './cashier/Cashier';
@@ -38,6 +39,8 @@ type RestoreMsg = { ok: boolean; message: string } | null;
  */
 function RestorePanel({ msg, setMsg }: { msg: RestoreMsg; setMsg: (m: RestoreMsg) => void }) {
   const [withSettings, setWithSettings] = useState(false);
+  const auth = useAuthState();
+  const sync = useSyncStatus();
   return (
     <section className="panel no-print restore-panel">
       <h2>Restore a backup</h2>
@@ -54,6 +57,12 @@ function RestorePanel({ msg, setMsg }: { msg: RestoreMsg; setMsg: (m: RestoreMsg
           const input = e.target;
           const f = input.files?.[0];
           if (!f) return;
+          if (auth.email && !sync.connected) {
+            // Restoring before this device has heard from the others could put old copies over newer ones.
+            setMsg({ ok: false, message: 'Not restored. Wait until the top bar says Synced, then pick the file again.' });
+            input.value = '';
+            return;
+          }
           try {
             setMsg(importBackup(await f.text(), { withSettings }));
           } catch {
@@ -120,7 +129,7 @@ function WalletCheck({ dayList, all }: { dayList: Order[]; all: Order[] }) {
                     </td>
                     <td>{peso(o.payment.due)}</td>
                     <td className="wallet-ref">
-                      {o.payment.reference || '—'}
+                      {o.payment.reference || 'none'}
                       {problem && <div className="wallet-flag">{problem}</div>}
                     </td>
                   </tr>
@@ -576,7 +585,7 @@ function DashboardInner() {
             {!search && dayList.length > 15 && <p className="muted small">Showing the latest 15 of {dayList.length}. Search to find others.</p>}
           </section>
 
-          <WalletCheck dayList={dayList} all={orders} />
+          <WalletCheck dayList={dayList} all={dayList.filter((o) => !o.voided)} />
 
           <RestorePanel msg={restoreMsg} setMsg={setRestoreMsg} />
         </div>

@@ -229,7 +229,7 @@ export function Serving() {
     const stillReady = new Set(orders.filter((o) => o.status === 'ready').map((o) => o.id));
     if (!known || !started) {
       // Numbers already up when the screen starts are not called out again.
-      announced.current = new Set([...(known ?? []), ...serving.map((o) => o.id)]);
+      announced.current = new Set([...(known ?? []), ...stillReady]);
       return;
     }
     for (const id of [...known]) if (!stillReady.has(id)) known.delete(id);

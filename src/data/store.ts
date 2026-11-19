@@ -201,11 +201,6 @@ export function setRemote(r: Remote | null) {
   remote = r;
 }
 
-/** True while this window is connected to the sync (it then hears remote changes itself). */
-export function hasRemote() {
-  return remote !== null;
-}
-
 channel?.addEventListener('message', (e: MessageEvent<Op | Op[]>) => {
   const ops = Array.isArray(e.data) ? e.data : [e.data];
   let changed = false;

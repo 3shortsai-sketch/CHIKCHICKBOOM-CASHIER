@@ -159,7 +159,7 @@ but the kitchen tablet is not.
 
 ### Prize limit
 - Wheel prizes at cost (ingredients of free meals and free items, cash for ₱10 off) plus vouchers used, as a % of what customers paid today.
-- A normal day is about 4–5% (about ₱14 per spin with the real menu; bowls earn 32–37% after ingredients, so the wheel takes roughly 15% of bowl profit).
+- A normal day is about 4–5% (about ₱11 per spin at cost with the real menu; bowls earn 32–37% after ingredients, so the wheel takes roughly 15% of bowl profit).
 - At **6.5%** the cashier sees a warning; at **8%** the cashier is asked to pause the wheel. Not checked until sales reach **₱5,000**, so one early FREE MEAL doesn't trigger it. All three numbers are in Setup.
 
 ### Waste

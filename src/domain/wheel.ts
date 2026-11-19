@@ -61,7 +61,8 @@ function freeLine(item: MenuItem, prize: PrizeId, s: Settings): OrderLine {
 }
 
 /** What the customer has really paid for this order so far: due, minus prize cash and refunds already handed back. */
-function paidSoFar(order: Order): number {
+/** What the customer has paid net so far: the amount due minus prize cash and refunds already handed back. */
+export function paidSoFar(order: Order): number {
   const refunds = (order.refunds ?? []).reduce((n, r) => n + r.amount, 0);
   return Math.max(0, order.payment.due - prizeRefundTotal(order) - refunds);
 }

@@ -1,6 +1,6 @@
 import { usedAfterCount, usesStock } from './inventory';
 import { itemById, lineCostEach, lineTotal, money2, stockUsage } from './pricing';
-import { PRIZE_LABEL, prizeRefundTotal } from './wheel';
+import { paidSoFar, PRIZE_LABEL, prizeRefundTotal } from './wheel';
 import type { BusinessDay, MenuItem, Order, OrderLine, PaymentMethod, PrizeId, Settings } from './types';
 
 export function dayOrders(day: BusinessDay | undefined, orders: Order[]): Order[] {
@@ -71,7 +71,7 @@ export function manualRefundTotal(o: Order): number {
  * and refunds the customer already got.
  */
 export function voidReturnAmount(o: Order): number {
-  return Math.max(0, o.payment.due - prizeRefundTotal(o) - manualRefundTotal(o));
+  return paidSoFar(o);
 }
 
 /** What the customer finally paid for this order, after prize payback and refunds. */

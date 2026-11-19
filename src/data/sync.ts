@@ -213,13 +213,9 @@ function attach() {
       (s) => {
         meta.settings = s.metadata;
         const first = !s.metadata.fromCache && !uploadedOnce.settings;
-        const mine = getState().settings;
-        if (s.exists() && first && (mine.updatedAt ?? 0) > ((s.data().updatedAt as number | undefined) ?? 0)) {
-          // This device was set up (menu, prices, passcodes) before it first
-          // connected, and more recently than the shared copy: keep its setup.
-          uploadedOnce.settings = true;
-          push({ type: 'put', col: 'settings', id: 'main', doc: mine });
-        } else if (s.exists()) {
+        if (s.exists()) {
+          // The shared setup always wins: a spare tablet with default prices
+          // and passcodes must never replace the booth's real ones.
           if (first) uploadedOnce.settings = true;
           applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: s.data() }]);
         } else if (first) {

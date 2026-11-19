@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { defaultSettings } from '../domain/defaults';
 import { newId } from '../domain/pricing';
 import { ALLERGENS, type AllergenTags, type MenuItem, type PrizeId, type Settings } from '../domain/types';
 import { PRIZE_LABEL } from '../domain/wheel';
@@ -18,7 +19,8 @@ export function Setup() {
 }
 
 /** The passcodes the app ships with. Anyone can read them in the public code. */
-const DEFAULT_PINS = { adminPin: '0000', managerPin: '1234', teamPin: '2468' } as const;
+/** The built-in passcodes (public in the code), read from the defaults so the warning can never go stale. */
+const DEFAULT_PINS = (({ adminPin, managerPin, teamPin }) => ({ adminPin, managerPin, teamPin }))(defaultSettings());
 
 const showNum = (n: number) => (Number.isFinite(n) ? String(n) : '0');
 
@@ -219,7 +221,12 @@ function Passcodes({ s, save }: { s: Settings; save: (patch: Partial<Settings>) 
       keepUnlocked('Setup', admin);
       keepUnlocked('Dashboard', admin);
     }
-    save({ managerPin: manager, adminPin: admin, teamPin: team });
+    // Only the passcodes typed here are saved, so one changed on another device meanwhile is not put back.
+    const patch: Partial<Settings> = {};
+    if (manager !== s.managerPin) patch.managerPin = manager;
+    if (admin !== s.adminPin) patch.adminPin = admin;
+    if (team !== s.teamPin) patch.teamPin = team;
+    save(patch);
     const stillDefault = manager === DEFAULT_PINS.managerPin || admin === DEFAULT_PINS.adminPin || team === DEFAULT_PINS.teamPin;
     setMsg({ ok: true, text: stillDefault ? 'Passcodes saved. One is still a default: change it too.' : 'Passcodes saved. Tell the team the new ones.' });
   };
@@ -620,7 +627,7 @@ function SetupInner() {
               <NumField value={s.promoLimits.minSales} onSave={(minSales) => save({ promoLimits: { ...s.promoLimits, minSales } })} />
             </label>
           </div>
-          <p className="muted small">Counts wheel prizes (cash given back + ingredient cost of free items) and vouchers used. A normal day is about 4–5%.</p>
+          <p className="muted small">Counts wheel prizes at what they cost the booth (ingredients of free meals and free items, plus ₱10-off cash) and vouchers used. A normal day is about 4–5%.</p>
         </section>
 
         <section className="panel">

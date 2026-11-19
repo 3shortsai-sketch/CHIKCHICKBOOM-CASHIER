@@ -103,4 +103,20 @@ describe('store', () => {
     expect(store.importBackup('not json').ok).toBe(false);
     expect(store.importBackup(JSON.stringify({ app: 'ccb-pos', orders: [order('a')] })).ok).toBe(false);
   });
+
+  it('restores settings only when asked (new laptop)', () => {
+    const file = JSON.stringify({ app: 'ccb-pos', orders: {}, settings: { ...store.getState().settings, dailyGoal: 12345 } });
+    store.importBackup(file);
+    expect(store.getState().settings.dailyGoal).not.toBe(12345);
+    store.importBackup(file, { withSettings: true });
+    expect(store.getState().settings.dailyGoal).toBe(12345);
+  });
+
+  it('keeps every hand stamp edit on a card, including the first on a new card', () => {
+    store.adjustStamps('CCB-900', 2, 'paper card', 'Ana');
+    store.adjustStamps('CCB-900', -1, 'mistake', 'Ben');
+    const card = Object.values(store.getState().cards).find((c) => c.number === 'CCB-900');
+    expect(card?.adjustments?.map((a) => a.delta)).toEqual([2, -1]);
+    expect(card?.name).toBe('');
+  });
 });

@@ -14,6 +14,9 @@ export function usesStock(o: Order): boolean {
  */
 export function usedAfterCount(o: Order, countAt: number, placedAt: number = o.createdAt): boolean {
   if (placedAt > countAt) return true;
+  // A voided order never moves on in the kitchen, so its status says nothing:
+  // its food was still in the counted stock only if it was voided after the count.
+  if (o.voided) return o.voided.at > countAt;
   if (o.status === 'new' || o.status === 'cooking') return true;
   const finishedAt = o.readyAt ?? o.claimedAt;
   return finishedAt !== undefined && finishedAt > countAt;
@@ -30,8 +33,13 @@ export function onHand(ing: Ingredient, orders: Order[]): number | null {
   for (const r of ing.removed ?? []) if (r.at > ing.count.at) qty -= r.qty;
   if (ing.uses && Object.keys(ing.uses).length) {
     for (const o of orders) {
-      if (!usesStock(o) || !usedAfterCount(o, ing.count.at)) continue;
-      for (const [id, n] of Object.entries(stockUsage(o.lines))) qty -= (ing.uses[id] ?? 0) * n;
+      if (!usesStock(o)) continue;
+      for (const line of o.lines) {
+        // A free prize item counts from when it was won, not when the order was paid.
+        const wonAt = o.spins.find((sp) => sp.addedLineId === line.id)?.at;
+        if (!usedAfterCount(o, ing.count.at, wonAt ?? o.createdAt)) continue;
+        for (const [id, n] of Object.entries(stockUsage([line]))) qty -= (ing.uses[id] ?? 0) * n;
+      }
     }
   }
   return Math.max(0, Math.round(qty * 1000) / 1000);
