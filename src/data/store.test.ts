@@ -119,4 +119,28 @@ describe('store', () => {
     expect(card?.adjustments?.map((a) => a.delta)).toEqual([2, -1]);
     expect(card?.name).toBe('');
   });
+
+  it('keeps changes made while signed out and sends them on sign-in, oldest first', () => {
+    store.putOrder(order('ob1') as never);
+    store.enableOutbox(true);
+    store.patchOrder('ob1', { status: 'ready' });
+    store.addCashMove({ dayId: 'd1', type: 'drop', amount: 1000, note: 'to the safe', by: 'Ana' });
+    expect(store.outboxSize()).toBe(2);
+    expect(JSON.parse(saved.get('ccb:outbox')!)).toHaveLength(2);
+    const sent: string[] = [];
+    store.setRemote({ push: (op) => sent.push(`${op.type}:${op.col}`) });
+    expect(sent).toEqual(['patch:orders', 'put:cashMoves']);
+    expect(store.outboxSize()).toBe(0);
+    expect(saved.has('ccb:outbox')).toBe(false);
+    store.setRemote(null);
+    store.enableOutbox(false);
+  });
+
+  it('cancels a cash entry without deleting it', () => {
+    const m = store.addCashMove({ dayId: 'd1', type: 'expense', amount: 120.4, note: ' ice ', by: 'Ana' });
+    expect(m.amount).toBe(120);
+    expect(m.note).toBe('ice');
+    store.cancelCashMove(m.id, 'Ben', 'typed twice');
+    expect(store.getState().cashMoves[m.id].cancelled?.by).toBe('Ben');
+  });
 });

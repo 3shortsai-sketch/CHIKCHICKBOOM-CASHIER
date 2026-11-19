@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { defaultSettings, MENU_VERSION } from '../domain/defaults';
 import { cardDocId, cleanCardName } from '../domain/cards';
-import type { BusinessDay, Card, Order, Settings } from '../domain/types';
+import type { BusinessDay, Card, CashMove, Order, Settings } from '../domain/types';
 
 /**
  * Local-first store.
@@ -12,7 +12,7 @@ import type { BusinessDay, Card, Order, Settings } from '../domain/types';
  *    every local change and feeds back changes made on other devices.
  */
 
-export type Collection = 'settings' | 'days' | 'orders' | 'cards';
+export type Collection = 'settings' | 'days' | 'orders' | 'cards' | 'cashMoves';
 
 export type Op =
   | { type: 'put'; col: Collection; id: string; doc: unknown }
@@ -27,6 +27,8 @@ export type State = {
   orders: Record<string, Order>;
   /** Loyalty card owners, keyed by cardDocId(mode, number). */
   cards: Record<string, Card>;
+  /** Drops, change added and expenses paid from the drawer. */
+  cashMoves: Record<string, CashMove>;
 };
 
 export interface Remote {
@@ -34,7 +36,7 @@ export interface Remote {
   push(op: Op): void;
 }
 
-const KEY = { settings: 'ccb:settings', days: 'ccb:days', orders: 'ccb:orders', cards: 'ccb:cards' } as const;
+const KEY = { settings: 'ccb:settings', days: 'ccb:days', orders: 'ccb:orders', cards: 'ccb:cards', cashMoves: 'ccb:cashMoves' } as const;
 const SETTINGS_ID = 'main';
 
 function read<T>(key: string, fallback: T): T {
@@ -82,6 +84,7 @@ let state: State = {
   days: read(KEY.days, {}),
   orders: read(KEY.orders, {}),
   cards: read(KEY.cards, {}),
+  cashMoves: read(KEY.cashMoves, {}),
 };
 
 const listeners = new Set<() => void>();
@@ -176,13 +179,54 @@ function applyOp(op: Op): boolean {
   return true;
 }
 
+// ---------- Changes waiting to be sent ----------
+// While sync is set up but this window is not connected (signed out, or
+// before signing in), changes are kept in an outbox and sent when it
+// connects. Without it, edits to existing orders made while signed out
+// (a void, Ready, a closed day) would be replaced by the shared copy.
+
+const OUTBOX_KEY = 'ccb:outbox';
+const OUTBOX_MAX = 5000;
+let outboxOn = false;
+let outbox: Op[] = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? '[]');
+    return Array.isArray(v) ? (v as Op[]) : [];
+  } catch {
+    return [];
+  }
+})();
+
+function saveOutbox() {
+  try {
+    if (outbox.length) localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox));
+    else localStorage.removeItem(OUTBOX_KEY);
+  } catch {
+    /* the outbox still works until the window closes */
+  }
+}
+
+/** Called by the sync once it is set up on this app: from then on, changes made while not connected wait in the outbox. */
+export function enableOutbox(on: boolean) {
+  outboxOn = on;
+}
+
+/** How many changes are waiting to be sent. */
+export function outboxSize() {
+  return outbox.length;
+}
+
 /** A change made on this device. */
 export function commit(...ops: Op[]) {
   const applied = ops.filter(applyOp);
   if (!applied.length) return;
   // One message for the whole batch: the other windows save and redraw once.
   channel?.postMessage(applied);
-  for (const op of applied) remote?.push(op);
+  if (remote) for (const op of applied) remote.push(op);
+  else if (outboxOn) {
+    outbox = [...outbox, ...applied].slice(-OUTBOX_MAX);
+    saveOutbox();
+  }
   emit();
 }
 
@@ -199,6 +243,13 @@ export function applyRemote(ops: Op[]) {
 
 export function setRemote(r: Remote | null) {
   remote = r;
+  if (r && outbox.length) {
+    // Send what was changed while not connected, oldest first.
+    const waiting = outbox;
+    outbox = [];
+    saveOutbox();
+    for (const op of waiting) r.push(op);
+  }
 }
 
 channel?.addEventListener('message', (e: MessageEvent<Op | Op[]>) => {
@@ -319,12 +370,32 @@ export function modeOrders(s: State): Order[] {
   return Object.values(s.orders).filter((o) => o.mode === s.settings.mode);
 }
 
+/** Drops, change added and expenses for the current data mode. */
+export function modeCashMoves(s: State): CashMove[] {
+  return Object.values(s.cashMoves).filter((m) => m.mode === s.settings.mode);
+}
+
+/** Record cash taken out of or put into the drawer (not a sale). */
+export function addCashMove(m: Omit<CashMove, 'id' | 'at' | 'mode'> & { at?: number }) {
+  const at = m.at ?? Date.now();
+  const id = `${m.dayId}_cash_${at.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const doc: CashMove = { ...m, id, at, mode: getState().settings.mode, amount: Math.round(m.amount), note: m.note.trim() };
+  commit({ type: 'put', col: 'cashMoves', id, doc });
+  return doc;
+}
+
+/** Cancel a mistaken cash entry. It stays in the list, crossed out. */
+export function cancelCashMove(id: string, by: string, reason: string) {
+  commit({ type: 'patch', col: 'cashMoves', id, patch: { cancelled: { at: Date.now(), by, reason: reason.trim() } } });
+}
+
 export function clearDemoData() {
   const s = getState();
   const ops: Op[] = [];
   for (const o of Object.values(s.orders)) if (o.mode === 'demo') ops.push({ type: 'remove', col: 'orders', id: o.id });
   for (const d of Object.values(s.days)) if (d.mode === 'demo') ops.push({ type: 'remove', col: 'days', id: d.id });
   for (const [id, c] of Object.entries(s.cards)) if (c.mode === 'demo') ops.push({ type: 'remove', col: 'cards', id });
+  for (const [id, m] of Object.entries(s.cashMoves)) if (m.mode === 'demo') ops.push({ type: 'remove', col: 'cashMoves', id });
   commit(...ops);
 }
 
@@ -354,6 +425,10 @@ function validDay(id: string, v: unknown): boolean {
   return isObj(v) && v.id === id && (v.mode === 'demo' || v.mode === 'live') && typeof v.date === 'string' && typeof v.openedAt === 'number' && isObj(v.stockStart) && isObj(v.soldOut);
 }
 
+function validCashMove(id: string, v: unknown): boolean {
+  return isObj(v) && v.id === id && typeof v.dayId === 'string' && (v.mode === 'demo' || v.mode === 'live') && (v.type === 'drop' || v.type === 'add' || v.type === 'expense') && typeof v.amount === 'number' && Number.isFinite(v.amount) && v.amount > 0;
+}
+
 function validCard(v: unknown): boolean {
   return isObj(v) && typeof v.number === 'string' && (v.mode === 'demo' || v.mode === 'live') && typeof v.name === 'string';
 }
@@ -376,7 +451,7 @@ export function importBackup(json: string, opts: { withSettings?: boolean } = {}
   let added = 0;
   let kept = 0;
   let bad = 0;
-  const take = (col: 'days' | 'orders' | 'cards', valid: (id: string, v: unknown) => boolean) => {
+  const take = (col: 'days' | 'orders' | 'cards' | 'cashMoves', valid: (id: string, v: unknown) => boolean) => {
     const group = data[col];
     if (group === undefined) return;
     if (!isObj(group)) {
@@ -395,6 +470,7 @@ export function importBackup(json: string, opts: { withSettings?: boolean } = {}
   take('days', validDay);
   take('orders', validOrder);
   take('cards', (_id, v) => validCard(v));
+  take('cashMoves', validCashMove);
   if (opts.withSettings && isObj(data.settings) && Array.isArray(data.settings.menu)) ops.push({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: { ...data.settings, updatedAt: Date.now() } });
   if (!ops.length && bad) return { ok: false, message: 'Nothing in that file could be read as booth data.' };
   try {

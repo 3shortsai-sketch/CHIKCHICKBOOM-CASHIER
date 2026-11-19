@@ -36,6 +36,14 @@ export function publishCart(cart: LiveCart) {
   channel?.postMessage({ type: 'cart', cart, from: TAB } satisfies Msg);
 }
 
+// Reloading or closing the cashier window mid-order clears the monitor, so
+// the customer never sees an old order that is not being rung up any more.
+if (typeof addEventListener === 'function') {
+  addEventListener('pagehide', () => {
+    if (current.stage !== 'idle') publishCart({ stage: 'idle' });
+  });
+}
+
 // A monitor that opens late asks for the current cart.
 channel?.addEventListener('message', (e: MessageEvent<Msg>) => {
   if (e.data.type === 'hello' && current.stage !== 'idle') channel.postMessage({ type: 'cart', cart: current, from: TAB } satisfies Msg);

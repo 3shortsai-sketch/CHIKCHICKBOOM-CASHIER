@@ -188,6 +188,25 @@ export type Ingredient = {
   removed?: { qty: number; reason: string; at: number; by: string }[];
 };
 
+/**
+ * Cash taken out of or put into the drawer that is not a sale: a drop to the
+ * safe, extra change added, or something bought with drawer cash (ice, LPG).
+ */
+export type CashMove = {
+  id: string;
+  dayId: string;
+  mode: DataMode;
+  /** drop = taken out to the safe; add = change put in; expense = paid out for something. */
+  type: 'drop' | 'add' | 'expense';
+  /** Whole pesos, always positive. */
+  amount: number;
+  note: string;
+  by: string;
+  at: number;
+  /** A mistaken entry is cancelled, never deleted, so the history stays complete. */
+  cancelled?: { at: number; by: string; reason: string };
+};
+
 export type WasteEntry = { id: string; itemId: string; qty: number; reason: string; at: number; by: string };
 
 export type BusinessDay = {
