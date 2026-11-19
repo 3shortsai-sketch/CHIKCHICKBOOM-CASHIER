@@ -240,7 +240,14 @@ Copy `firestore.rules` from this repo, put the booth login email(s) in place of 
 - Senior citizen / PWD discount: the team decided it is not needed.
 - Receipts: the app's screen is not a BIR official receipt. Check with whoever handles permits.
 
+## Start fresh (Setup)
+- **Clear practice (demo) data** and **Clear real data (start the bazaar fresh)** remove orders, business days, cash in/out and loyalty card records of that mode on every device. Menu, prices and passcodes stay.
+- Both need the Dashboard and Setup passcode; clearing real data also needs CLEAR typed. A backup file downloads first. Refused while a day of that mode is open.
+- What was cleared is remembered in the shared settings, so a device that was offline or signed out at the time cannot bring it back: it removes its own copy as soon as it hears about it.
+- Use it once before opening on Nov 23. Never during the bazaar.
+
 ## Booth checklist
+- On the morning of Nov 23, before opening the day: Setup → Start fresh → clear practice data (and real data if any test sales were made in Real mode), then switch to Real data.
 - Before the bazaar: change all three passcodes in Setup (4 to 8 digits). Setup shows a red banner while any of them is still a default.
 - Laptop + charger, monitor + HDMI cable (and USB-C adapter if needed), tablet + charger + stand
 - Extension cord / power strip

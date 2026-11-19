@@ -150,4 +150,38 @@ describe('store', () => {
     store.cancelCashMove(m.id, 'Ben', 'typed twice');
     expect(store.getState().cashMoves[m.id].cancelled?.by).toBe('Ben');
   });
+
+  it('starts fresh: clears one mode everywhere, and nothing cleared can come back', () => {
+    const day = (id: string, mode: string) => ({ id, mode, date: '2026-11-20', openedAt: 1, openedBy: 'Ana', openingFloat: 0, stockStart: {}, soldOut: {} });
+    store.putDay(day('live-1', 'live') as never);
+    store.putDay(day('demo-1', 'demo') as never);
+    store.putOrder(order('L1', { mode: 'live', dayId: 'live-1' }) as never);
+    store.putOrder(order('D1', { mode: 'demo', dayId: 'demo-1' }) as never);
+    store.addCashMove({ dayId: 'live-1', type: 'drop', amount: 500, note: '', by: 'Ana' });
+    store.saveSettings({ mode: 'live' });
+    store.saveCard('CCB-010', 'Test', 'Ana');
+    const r = store.startFresh('live');
+    expect(r).toEqual({ orders: 1, days: 1 });
+    const st = store.getState();
+    expect(st.orders.L1).toBeUndefined();
+    expect(st.days['live-1']).toBeUndefined();
+    expect(Object.values(st.cashMoves).some((m) => m.dayId === 'live-1')).toBe(false);
+    expect(Object.values(st.cards).some((c) => c.mode === 'live')).toBe(false);
+    expect(st.orders.D1).toBeTruthy(); // practice data untouched
+    // A device that missed it uploads the old order again: it is refused.
+    store.applyRemote([{ type: 'put', col: 'orders', id: 'L1', doc: order('L1', { mode: 'live', dayId: 'live-1' }) }]);
+    expect(store.getState().orders.L1).toBeUndefined();
+    // New sales after starting fresh are kept.
+    store.putDay(day('live-2', 'live') as never);
+    store.putOrder(order('L2', { mode: 'live', dayId: 'live-2' }) as never);
+    expect(store.getState().orders.L2).toBeTruthy();
+    store.saveSettings({ mode: 'demo' });
+  });
+
+  it('removes cleared data when the news arrives from another device', () => {
+    store.putOrder(order('X1', { mode: 'demo', dayId: 'demo-x' }) as never);
+    const settings = store.getState().settings;
+    store.applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: { ...settings, wiped: { days: [...(settings.wiped?.days ?? []), 'demo-x'], cardsBefore: {} } } }]);
+    expect(store.getState().orders.X1).toBeUndefined();
+  });
 });
