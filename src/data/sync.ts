@@ -21,7 +21,7 @@ import {
 import { waitMinutes } from '../domain/inventory';
 import { localDate } from '../domain/loyalty';
 import type { Order } from '../domain/types';
-import { applyRemote, enableOutbox, getState, openDay, setRemote, type Collection, type Op } from './store';
+import { applyRemote, enableOutbox, getState, openDay, replayOutbox, setRemote, type Collection, type Op } from './store';
 import { emulatorConfig, firebaseConfig, localOnly, useEmulator } from './firebase-config';
 
 /**
@@ -160,19 +160,21 @@ function push(op: Op) {
       updateStatus();
     }
   }).catch((e: { code?: string; message?: string }) => {
-    writeError =
-      e.code === 'permission-denied'
-        ? op.col === 'cashMoves'
-          ? CASH_RULES_MESSAGE
-          : 'This login is not allowed to save. Sign in with the booth account.'
-        : `Sync error: ${e.message ?? e.code}`;
+    if (e.code === 'permission-denied' && op.col === 'cashMoves') {
+      // Rules not published yet: the entry is still saved on this device.
+      cashBlocked = true;
+      updateStatus();
+      return;
+    }
+    writeError = e.code === 'permission-denied' ? 'This login is not allowed to save. Sign in with the booth account.' : `Sync error: ${e.message ?? e.code}`;
     writeFailed = true;
     console.error('sync write failed', e);
     updateStatus();
   });
 }
 
-const CASH_RULES_MESSAGE = 'Cash in/out entries cannot sync yet: the Firebase rules need the "cashMoves" update (see docs/PLAN.md).';
+/** True while the Firebase rules do not allow cash in/out yet (shown as a note; everything else syncs). */
+let cashBlocked = false;
 
 // ---------- Public copy for the customer page ----------
 // Customers are not signed in, so they can never read the booth data. The
@@ -277,13 +279,17 @@ function updateStatus() {
   if (writeError) return setSyncStatus({ label: 'Sync problem', detail: writeError, connected: false });
   const all = Object.values(meta);
   const pending = all.some((m) => m?.hasPendingWrites);
-  const offline = all.length < 5 || all.some((m) => m?.fromCache);
+  const offline = all.length < (cashBlocked ? 4 : 5) || all.some((m) => m?.fromCache);
+  const notes = [
+    cashBlocked && 'Cash in/out entries stay on this device until the new Firebase rules are published (see docs/PLAN.md).',
+    publicBlocked && 'The customer order page is not switched on yet: publish the new Firebase rules (see docs/PLAN.md).',
+  ].filter(Boolean);
   if (offline) setSyncStatus({ label: pending ? 'Offline · will sync' : 'Offline · up to date here', detail: 'Changes are saved on this device and will be sent when the internet is back.', connected: false });
   else if (pending) setSyncStatus({ label: 'Syncing…', detail: 'Sending the latest changes to the other devices.', connected: true });
   else
     setSyncStatus({
       label: 'Synced',
-      detail: `All devices up to date. Signed in as ${authState.email}.${publicBlocked ? ' The customer order page is not switched on yet: publish the new Firebase rules (see docs/PLAN.md).' : ''}`,
+      detail: [`All devices up to date. Signed in as ${authState.email}.`, ...notes].join(' '),
       connected: true,
     });
 }
@@ -313,9 +319,17 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
       if (!onServer.has(id) && !removed.has(id)) push({ type: 'put', col, id, doc: d });
     }
   }
+  const firstFromServer = !snap.metadata.fromCache && !replayed[col];
   applyRemote(ops);
+  if (firstFromServer) {
+    // Only now that the shared copy is here: send what this device changed while signed out.
+    replayed[col] = true;
+    replayOutbox(col);
+  }
   updateStatus();
 }
+
+const replayed: Partial<Record<Collection, boolean>> = {};
 
 function attach() {
   if (!db) return;
@@ -350,13 +364,17 @@ function attach() {
 }
 
 function onListenError(e: { code?: string; message?: string }, what?: 'cards' | 'cashMoves') {
+  if (what === 'cashMoves' && e.code === 'permission-denied') {
+    cashBlocked = true;
+    console.warn('cash in/out cannot sync yet', e);
+    updateStatus();
+    return;
+  }
   writeError =
     e.code === 'permission-denied'
       ? what === 'cards'
         ? 'Loyalty card names cannot sync yet: the Firebase rules need the "cards" update (see docs/PLAN.md).'
-        : what === 'cashMoves'
-          ? CASH_RULES_MESSAGE
-          : 'This login is not allowed to read the booth data. Sign in with the booth account.'
+        : 'This login is not allowed to read the booth data. Sign in with the booth account.'
       : `Sync error: ${e.message ?? e.code}`;
   writeFailed = false;
   console.error('sync listen failed', e);
@@ -369,6 +387,8 @@ function detach() {
   setRemote(null);
   for (const k of Object.keys(meta) as Collection[]) delete meta[k];
   for (const k of Object.keys(uploadedOnce) as Collection[]) delete uploadedOnce[k];
+  for (const k of Object.keys(replayed) as Collection[]) delete replayed[k];
+  cashBlocked = false;
   writeError = null;
   writeFailed = false;
 }

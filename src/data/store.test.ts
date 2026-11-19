@@ -13,6 +13,7 @@ const storage = {
 };
 
 type Store = typeof import('./store');
+type Op = import('./store').Op;
 let store: Store;
 
 beforeAll(async () => {
@@ -120,18 +121,24 @@ describe('store', () => {
     expect(card?.name).toBe('');
   });
 
-  it('keeps changes made while signed out and sends them on sign-in, oldest first', () => {
+  it('keeps changes made while signed out and sends them once the shared copy is loaded', () => {
     store.putOrder(order('ob1') as never);
+    store.putOrder(order('ob2') as never);
     store.enableOutbox(true);
     store.patchOrder('ob1', { status: 'ready' });
-    store.addCashMove({ dayId: 'd1', type: 'drop', amount: 1000, note: 'to the safe', by: 'Ana' });
+    store.patchOrder('ob2', { status: 'ready', readyAt: 5, customerName: 'Ana' });
+    store.saveSettings({ dailyGoal: 1 }); // settings are never queued: the shared setup wins
+    store.addCashMove({ dayId: 'd1', type: 'drop', amount: 1000, note: 'to the safe', by: 'Ana' }); // new: uploaded, not queued
     expect(store.outboxSize()).toBe(2);
-    expect(JSON.parse(saved.get('ccb:outbox')!)).toHaveLength(2);
-    const sent: string[] = [];
-    store.setRemote({ push: (op) => sent.push(`${op.type}:${op.col}`) });
-    expect(sent).toEqual(['patch:orders', 'put:cashMoves']);
+    const sent: Op[] = [];
+    store.setRemote({ push: (op) => sent.push(op) });
+    expect(sent).toHaveLength(0); // nothing goes out before the shared copy arrives
+    // The shared copy says ob2 was already picked up on another device.
+    store.applyRemote([{ type: 'put', col: 'orders', id: 'ob2', doc: order('ob2', { status: 'claimed' }) }]);
+    store.replayOutbox('orders');
+    expect(sent.map((op) => (op.type === 'patch' ? op.patch : null))).toEqual([{ status: 'ready' }, { customerName: 'Ana' }]);
+    expect(store.getState().orders.ob2.status).toBe('claimed');
     expect(store.outboxSize()).toBe(0);
-    expect(saved.has('ccb:outbox')).toBe(false);
     store.setRemote(null);
     store.enableOutbox(false);
   });

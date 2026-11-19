@@ -14,9 +14,12 @@ export function orderNumber(prefix: string, seq: number): string {
 
 /** Order numbers restart at 001 for each business day and each device letter. */
 export function nextSeq(day: BusinessDay, orders: Order[], prefix: string): number {
+  // A second day opened on the same date carries on the numbering, so an
+  // order number (and the customer page's link) is never used twice in a day.
+  const sameDate = `${day.mode}-${day.date}-`;
   let max = 0;
   for (const o of orders) {
-    if (o.dayId === day.id && o.number.startsWith(prefix + '-')) max = Math.max(max, o.seq);
+    if ((o.dayId === day.id || o.dayId.startsWith(sameDate)) && o.number.startsWith(prefix + '-')) max = Math.max(max, o.seq);
   }
   return max + 1;
 }

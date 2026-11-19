@@ -186,23 +186,35 @@ function applyOp(op: Op): boolean {
 // (a void, Ready, a closed day) would be replaced by the shared copy.
 
 const OUTBOX_KEY = 'ccb:outbox';
-const OUTBOX_MAX = 5000;
+const OUTBOX_MAX = 3000;
 let outboxOn = false;
-let outbox: Op[] = (() => {
+
+/**
+ * Only changes to documents are queued. New documents (an order or a day made
+ * while signed out) need no queue: on connecting, the sync uploads every
+ * document the server does not have. Settings are never queued: the shared
+ * setup always wins over a device that was signed out.
+ */
+function queueable(op: Op): boolean {
+  return op.col !== 'settings' && op.type !== 'put';
+}
+
+/** Read from storage every time: two windows on one device share the outbox. */
+function readOutbox(): Op[] {
   try {
     const v = JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? '[]');
     return Array.isArray(v) ? (v as Op[]) : [];
   } catch {
     return [];
   }
-})();
+}
 
-function saveOutbox() {
+function writeOutbox(ops: Op[]) {
   try {
-    if (outbox.length) localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox));
+    if (ops.length) localStorage.setItem(OUTBOX_KEY, JSON.stringify(ops.slice(-OUTBOX_MAX)));
     else localStorage.removeItem(OUTBOX_KEY);
   } catch {
-    /* the outbox still works until the window closes */
+    /* nothing more can be done; the change is still saved on this device */
   }
 }
 
@@ -213,7 +225,36 @@ export function enableOutbox(on: boolean) {
 
 /** How many changes are waiting to be sent. */
 export function outboxSize() {
-  return outbox.length;
+  return readOutbox().length;
+}
+
+const STATUS_RANK: Record<string, number> = { new: 0, cooking: 1, ready: 2, claimed: 3 };
+
+/**
+ * After the sync has loaded the shared copy of a collection, send the changes
+ * this device made to it while signed out. A change that would move an order
+ * backwards (Ready after it was already picked up elsewhere) is dropped.
+ */
+export function replayOutbox(col: Collection) {
+  if (!remote) return;
+  const all = readOutbox();
+  const mine = all.filter((op) => op.col === col);
+  if (!mine.length) return;
+  writeOutbox(all.filter((op) => op.col !== col));
+  const ops: Op[] = [];
+  for (const op of mine) {
+    if (op.type === 'patch' && col === 'orders') {
+      const now = state.orders[op.id];
+      const to = op.patch.status as string | undefined;
+      if (now && to !== undefined && STATUS_RANK[now.status] > STATUS_RANK[to]) {
+        const { status: _s, cookingAt: _c, readyAt: _r, claimedAt: _p, ...rest } = op.patch;
+        if (Object.keys(rest).length) ops.push({ ...op, patch: rest });
+        continue;
+      }
+    }
+    ops.push(op);
+  }
+  commit(...ops);
 }
 
 /** A change made on this device. */
@@ -224,8 +265,8 @@ export function commit(...ops: Op[]) {
   channel?.postMessage(applied);
   if (remote) for (const op of applied) remote.push(op);
   else if (outboxOn) {
-    outbox = [...outbox, ...applied].slice(-OUTBOX_MAX);
-    saveOutbox();
+    const waiting = applied.filter(queueable);
+    if (waiting.length) writeOutbox([...readOutbox(), ...waiting]);
   }
   emit();
 }
@@ -243,13 +284,6 @@ export function applyRemote(ops: Op[]) {
 
 export function setRemote(r: Remote | null) {
   remote = r;
-  if (r && outbox.length) {
-    // Send what was changed while not connected, oldest first.
-    const waiting = outbox;
-    outbox = [];
-    saveOutbox();
-    for (const op of waiting) r.push(op);
-  }
 }
 
 channel?.addEventListener('message', (e: MessageEvent<Op | Op[]>) => {

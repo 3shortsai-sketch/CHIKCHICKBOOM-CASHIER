@@ -1020,3 +1020,13 @@ describe('all days export', () => {
     expect(firstCol).toContain('Vouchers not used yet');
   });
 });
+
+describe('order numbers after reopening on the same date', () => {
+  it('carries on the numbering instead of starting at 001 again', () => {
+    const first = { ...day, id: `${day.mode}-${day.date}-aaa` };
+    const second = { ...day, id: `${day.mode}-${day.date}-bbb` };
+    const o = { ...order([cookie()]), dayId: first.id, seq: 7, number: 'A-007' };
+    expect(nextSeq(second, [o], 'A')).toBe(8);
+    expect(nextSeq({ ...second, date: '2099-01-01', id: `${day.mode}-2099-01-01-ccc` }, [o], 'A')).toBe(1);
+  });
+});
