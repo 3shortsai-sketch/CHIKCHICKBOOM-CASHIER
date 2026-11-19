@@ -3146,3 +3146,15 @@ th:first-child {
     break-inside: avoid;
   }
 }
+
+/* Shown instead of a blank page when a screen crashes. */
+.crash-screen {
+  max-width: 34rem;
+  margin: 12vh auto 0;
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+}
+.crash-screen .row {
+  flex-wrap: wrap;
+}

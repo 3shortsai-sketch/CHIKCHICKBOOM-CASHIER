@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, type Auth, type User } from 'firebase/auth';
 import {
+  arrayUnion,
   collection,
   connectFirestoreEmulator,
   deleteDoc,
@@ -124,6 +125,8 @@ function ref(col: Collection, id: string): DocumentReference {
 }
 
 let writeError: string | null = null;
+/** True when writeError came from a failed write (not from a listener). */
+let writeFailed = false;
 
 function push(op: Op) {
   if (!db) return;
@@ -133,9 +136,20 @@ function push(op: Op) {
       ? setDoc(r, plain(op.doc) as Record<string, unknown>)
       : op.type === 'patch'
         ? setDoc(r, patchFields(op.patch), { merge: true })
-        : deleteDoc(r);
-  done.catch((e: { code?: string; message?: string }) => {
+        : op.type === 'append'
+          ? // The server adds the entry to whatever list it has, so two devices never overwrite each other.
+            setDoc(r, { [op.field]: arrayUnion(plain(op.item)) }, { merge: true })
+          : deleteDoc(r);
+  done.then(() => {
+    // A later write that goes through means the earlier problem is over.
+    if (writeError && writeFailed) {
+      writeError = null;
+      writeFailed = false;
+      updateStatus();
+    }
+  }).catch((e: { code?: string; message?: string }) => {
     writeError = e.code === 'permission-denied' ? 'This login is not allowed to save. Sign in with the booth account.' : `Sync error: ${e.message ?? e.code}`;
+    writeFailed = true;
     console.error('sync write failed', e);
     updateStatus();
   });
@@ -166,15 +180,19 @@ const uploadedOnce: Partial<Record<Collection, boolean>> = {};
 function onCollection(col: 'orders' | 'days' | 'cards', snap: QuerySnapshot) {
   meta[col] = snap.metadata;
   const ops: Op[] = [];
+  const removed = new Set<string>();
   for (const ch of snap.docChanges()) {
-    if (ch.type === 'removed') ops.push({ type: 'remove', col, id: ch.doc.id });
-    else ops.push({ type: 'put', col, id: ch.doc.id, doc: ch.doc.data() });
+    if (ch.type === 'removed') {
+      removed.add(ch.doc.id);
+      ops.push({ type: 'remove', col, id: ch.doc.id });
+    } else ops.push({ type: 'put', col, id: ch.doc.id, doc: ch.doc.data() });
   }
   if (!snap.metadata.fromCache && !uploadedOnce[col]) {
     uploadedOnce[col] = true;
     const onServer = new Set(snap.docs.map((d) => d.id));
     for (const [id, d] of Object.entries(getState()[col])) {
-      if (!onServer.has(id)) push({ type: 'put', col, id, doc: d });
+      // Something another device just deleted must not be sent back up.
+      if (!onServer.has(id) && !removed.has(id)) push({ type: 'put', col, id, doc: d });
     }
   }
   applyRemote(ops);
@@ -194,8 +212,17 @@ function attach() {
       opts,
       (s) => {
         meta.settings = s.metadata;
-        if (s.exists()) applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: s.data() }]);
-        else if (!s.metadata.fromCache && !uploadedOnce.settings) {
+        const first = !s.metadata.fromCache && !uploadedOnce.settings;
+        const mine = getState().settings;
+        if (s.exists() && first && (mine.updatedAt ?? 0) > ((s.data().updatedAt as number | undefined) ?? 0)) {
+          // This device was set up (menu, prices, passcodes) before it first
+          // connected, and more recently than the shared copy: keep its setup.
+          uploadedOnce.settings = true;
+          push({ type: 'put', col: 'settings', id: 'main', doc: mine });
+        } else if (s.exists()) {
+          if (first) uploadedOnce.settings = true;
+          applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: s.data() }]);
+        } else if (first) {
           // First device to connect: its settings (menu, prices, PINs) become the shared ones.
           uploadedOnce.settings = true;
           push({ type: 'put', col: 'settings', id: 'main', doc: getState().settings });
@@ -214,6 +241,7 @@ function onListenError(e: { code?: string; message?: string }, what?: 'cards') {
         ? 'Loyalty card names cannot sync yet: the Firebase rules need the "cards" update (see docs/PLAN.md).'
         : 'This login is not allowed to read the booth data. Sign in with the booth account.'
       : `Sync error: ${e.message ?? e.code}`;
+  writeFailed = false;
   console.error('sync listen failed', e);
   updateStatus();
 }
@@ -225,6 +253,7 @@ function detach() {
   for (const k of Object.keys(meta) as Collection[]) delete meta[k];
   for (const k of Object.keys(uploadedOnce) as Collection[]) delete uploadedOnce[k];
   writeError = null;
+  writeFailed = false;
 }
 
 export function startSync() {

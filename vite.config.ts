@@ -36,11 +36,17 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   if (req.mode === 'navigate') {
-    // Fresh page when online, cached page when offline.
+    // Fresh page when online, saved page when offline or when the wifi is
+    // connected but dead (no answer in 4 seconds). The saved page is the one
+    // installed together with this version's files, so they always match.
+    const saved = () => caches.match('./', { ignoreVary: true });
     event.respondWith(
-      fetch(req)
-        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put('./', copy)); return res; })
-        .catch(() => caches.match('./', { ignoreVary: true }))
+      new Promise((resolve) => {
+        const timer = setTimeout(() => saved().then((hit) => hit && resolve(hit)), 4000);
+        fetch(req)
+          .then((res) => { clearTimeout(timer); if (res.ok) resolve(res); else saved().then((hit) => resolve(hit || res)); })
+          .catch(() => { clearTimeout(timer); saved().then((hit) => resolve(hit || Response.error())); });
+      })
     );
     return;
   }

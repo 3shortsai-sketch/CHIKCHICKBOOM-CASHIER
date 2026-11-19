@@ -17,6 +17,8 @@ export type Collection = 'settings' | 'days' | 'orders' | 'cards';
 export type Op =
   | { type: 'put'; col: Collection; id: string; doc: unknown }
   | { type: 'patch'; col: Collection; id: string; patch: Record<string, unknown> }
+  /** Add one entry to a list field (waste, refunds). Two devices adding at once both keep their entry. */
+  | { type: 'append'; col: Collection; id: string; field: string; item: unknown }
   | { type: 'remove'; col: Collection; id: string };
 
 export type State = {
@@ -38,17 +40,20 @@ const SETTINGS_ID = 'main';
 function read<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
+    const value = raw ? (JSON.parse(raw) as T | null) : null;
+    // A damaged save ("null", a number...) must not replace the whole list.
+    return value !== null && typeof value === 'object' ? value : fallback;
   } catch {
     return fallback;
   }
 }
 
-function loadSettings(): Settings {
-  const saved = read<Partial<Settings> | null>(KEY.settings, null);
+/** Saved or synced settings, brought up to date with this version of the app. */
+function upgradeSettings(saved: Partial<Settings> | null | undefined): Settings {
   if (!saved) return defaultSettings();
   // New settings fields get their default value.
   const merged = { ...defaultSettings(), ...saved };
+  merged.voucher = { ...defaultSettings().voucher, ...saved.voucher };
   // A device saved before the real menu was added still has the placeholder
   // menu: give it the real menu, sides, dips and rewards. Everything else
   // (PINs, goal, wheel, cashiers...) is kept.
@@ -68,6 +73,10 @@ function loadSettings(): Settings {
   return merged;
 }
 
+function loadSettings(): Settings {
+  return upgradeSettings(read<Partial<Settings> | null>(KEY.settings, null));
+}
+
 let state: State = {
   settings: loadSettings(),
   days: read(KEY.days, {}),
@@ -79,57 +88,112 @@ const listeners = new Set<() => void>();
 let remote: Remote | null = null;
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ccb-pos') : null;
 
-let saveError: string | null = null;
+// ---------- Saving on this device ----------
+// Writing a whole list to storage is slow once there are hundreds of orders,
+// so changes are saved together a moment after the last one (and right away
+// when the window is hidden or closed) instead of once per change.
+
+const SAVE_DELAY_MS = 250;
+const dirty = new Set<Collection>();
+const failed = new Set<Collection>();
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
 export function lastSaveError() {
-  return saveError;
+  return failed.size ? 'This device could not save. Export a backup now from the dashboard.' : null;
+}
+
+/** Write everything that changed to this device's storage now. */
+export function flushSaves() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  const hadError = failed.size > 0;
+  for (const col of [...dirty]) {
+    dirty.delete(col);
+    try {
+      const value = col === 'settings' ? state.settings : state[col];
+      localStorage.setItem(KEY[col], JSON.stringify(value));
+      failed.delete(col);
+    } catch (e) {
+      failed.add(col);
+      console.error(e);
+    }
+  }
+  if (hadError !== failed.size > 0) {
+    state = { ...state }; // new reference so the top bar shows or hides the warning
+    emit();
+  }
 }
 
 function persist(col: Collection) {
-  try {
-    const value = col === 'settings' ? state.settings : state[col];
-    localStorage.setItem(KEY[col], JSON.stringify(value));
-    saveError = null;
-  } catch (e) {
-    saveError = 'This device could not save. Export a backup now from the dashboard.';
-    console.error(e);
-  }
+  dirty.add(col);
+  if (!saveTimer) saveTimer = setTimeout(flushSaves, SAVE_DELAY_MS);
+}
+
+if (typeof addEventListener === 'function') {
+  addEventListener('pagehide', flushSaves);
+  addEventListener('visibilitychange', () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') flushSaves();
+  });
 }
 
 function emit() {
   for (const l of listeners) l();
 }
 
-function applyOp(op: Op) {
+/** Same entry already in the list (re-delivered by sync or sent twice)? */
+function hasEntry(list: unknown[], item: unknown): boolean {
+  const id = (item as { id?: unknown } | null)?.id;
+  if (id !== undefined) return list.some((x) => (x as { id?: unknown } | null)?.id === id);
+  const json = JSON.stringify(item);
+  return list.some((x) => JSON.stringify(x) === json);
+}
+
+/** Returns false when the change does not apply (e.g. a patch for a document this device does not have). */
+function applyOp(op: Op): boolean {
   if (op.col === 'settings') {
-    if (op.type === 'put') state = { ...state, settings: { ...defaultSettings(), ...(op.doc as Settings) } };
+    if (op.type === 'put') state = { ...state, settings: upgradeSettings(op.doc as Partial<Settings>) };
     else if (op.type === 'patch') state = { ...state, settings: { ...state.settings, ...(op.patch as Partial<Settings>) } };
+    else return false;
   } else {
     const col = { ...(state[op.col] as Record<string, unknown>) };
-    if (op.type === 'put') col[op.id] = op.doc;
-    else if (op.type === 'patch') col[op.id] = { ...(col[op.id] as object), ...op.patch };
-    else delete col[op.id];
+    if (op.type === 'put') {
+      if (!op.doc || typeof op.doc !== 'object') return false;
+      col[op.id] = op.doc;
+    } else if (op.type === 'patch') {
+      // Never invent a half-empty document from a patch.
+      if (!col[op.id]) return false;
+      col[op.id] = { ...(col[op.id] as object), ...op.patch };
+    } else if (op.type === 'append') {
+      const doc = col[op.id] as Record<string, unknown> | undefined;
+      if (!doc) return false;
+      const list = Array.isArray(doc[op.field]) ? (doc[op.field] as unknown[]) : [];
+      if (hasEntry(list, op.item)) return false;
+      col[op.id] = { ...doc, [op.field]: [...list, op.item] };
+    } else delete col[op.id];
     state = { ...state, [op.col]: col };
   }
   persist(op.col);
+  return true;
 }
 
 /** A change made on this device. */
 export function commit(...ops: Op[]) {
-  for (const op of ops) {
-    applyOp(op);
-    channel?.postMessage(op);
-    remote?.push(op);
-  }
+  const applied = ops.filter(applyOp);
+  if (!applied.length) return;
+  // One message for the whole batch: the other windows save and redraw once.
+  channel?.postMessage(applied);
+  for (const op of applied) remote?.push(op);
   emit();
 }
 
-/** A change that came from another device (via the remote sync). */
+/**
+ * Changes that came from another device (via the remote sync). Other windows
+ * on this device are not told: each has its own connection and hears the same
+ * news itself, so passing it on would make every window do the work twice.
+ */
 export function applyRemote(ops: Op[]) {
   if (!ops.length) return;
-  for (const op of ops) {
-    applyOp(op);
-    channel?.postMessage(op);
-  }
+  for (const op of ops) applyOp(op);
   emit();
 }
 
@@ -137,9 +201,16 @@ export function setRemote(r: Remote | null) {
   remote = r;
 }
 
-channel?.addEventListener('message', (e: MessageEvent<Op>) => {
-  applyOp(e.data);
-  emit();
+/** True while this window is connected to the sync (it then hears remote changes itself). */
+export function hasRemote() {
+  return remote !== null;
+}
+
+channel?.addEventListener('message', (e: MessageEvent<Op | Op[]>) => {
+  const ops = Array.isArray(e.data) ? e.data : [e.data];
+  let changed = false;
+  for (const op of ops) changed = applyOp(op) || changed;
+  if (changed) emit();
 });
 
 export function getState(): State {
@@ -175,12 +246,23 @@ export function patchDay(id: string, patch: Partial<BusinessDay>) {
   commit({ type: 'patch', col: 'days', id, patch: patch as Record<string, unknown> });
 }
 
+/** Add one entry to a list on the day (e.g. a waste entry) without overwriting entries from other devices. */
+export function appendToDay(id: string, field: 'waste', item: { id: string }) {
+  commit({ type: 'append', col: 'days', id, field, item });
+}
+
+/** Add one entry to a list on an order (e.g. a refund) without overwriting entries from other devices. */
+export function appendToOrder(id: string, field: 'refunds', item: object) {
+  commit({ type: 'append', col: 'orders', id, field, item });
+}
+
 export function saveSettings(patch: Partial<Settings>) {
   commit({ type: 'patch', col: 'settings', id: SETTINGS_ID, patch: { ...patch, updatedAt: Date.now() } });
 }
 
+/** Back to the built-in menu, prices and passcodes. Demo/real data mode stays as it is. */
 export function resetSettings() {
-  commit({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: { ...defaultSettings(), updatedAt: Date.now() } });
+  commit({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: { ...defaultSettings(), mode: getState().settings.mode, updatedAt: Date.now() } });
 }
 
 /** The day currently open for the current data mode (demo or live). */
@@ -252,20 +334,82 @@ export function exportBackup(): string {
   return JSON.stringify({ app: 'ccb-pos', version: 1, exportedAt: Date.now(), ...getState() }, null, 1);
 }
 
-export function importBackup(json: string): { ok: boolean; message: string } {
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+function validOrder(id: string, v: unknown): boolean {
+  if (!isObj(v) || v.id !== id) return false;
+  const pay = v.payment;
+  return (
+    typeof v.dayId === 'string' &&
+    (v.mode === 'demo' || v.mode === 'live') &&
+    typeof v.number === 'string' &&
+    Array.isArray(v.lines) &&
+    Array.isArray(v.spins) &&
+    Array.isArray(v.rewardsRedeemed) &&
+    isObj(pay) &&
+    typeof pay.due === 'number' &&
+    typeof v.createdAt === 'number'
+  );
+}
+
+function validDay(id: string, v: unknown): boolean {
+  return isObj(v) && v.id === id && (v.mode === 'demo' || v.mode === 'live') && typeof v.date === 'string' && typeof v.openedAt === 'number' && isObj(v.stockStart) && isObj(v.soldOut);
+}
+
+function validCard(v: unknown): boolean {
+  return isObj(v) && typeof v.number === 'string' && (v.mode === 'demo' || v.mode === 'live') && typeof v.name === 'string';
+}
+
+/**
+ * Restore a backup file. Only adds what this device does not have: orders,
+ * days and cards already here are kept as they are (they may be newer).
+ * Settings come along only when asked (a brand-new laptop).
+ */
+export function importBackup(json: string, opts: { withSettings?: boolean } = {}): { ok: boolean; message: string } {
+  let data: unknown;
   try {
-    const data = JSON.parse(json) as Partial<State> & { app?: string };
-    if (data.app !== 'ccb-pos') return { ok: false, message: 'Not a Chick Chick Boom backup file.' };
-    const ops: Op[] = [];
-    for (const [id, d] of Object.entries(data.days ?? {})) ops.push({ type: 'put', col: 'days', id, doc: d });
-    for (const [id, o] of Object.entries(data.orders ?? {})) ops.push({ type: 'put', col: 'orders', id, doc: o });
-    for (const [id, c] of Object.entries(data.cards ?? {})) ops.push({ type: 'put', col: 'cards', id, doc: c });
-    if (data.settings) ops.push({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: data.settings });
-    commit(...ops);
-    return { ok: true, message: `Restored ${Object.keys(data.orders ?? {}).length} orders.` };
+    data = JSON.parse(json);
   } catch {
     return { ok: false, message: 'Could not read that file.' };
   }
+  if (!isObj(data) || data.app !== 'ccb-pos') return { ok: false, message: 'Not a Chick Chick Boom backup file.' };
+  const have = getState();
+  const ops: Op[] = [];
+  let added = 0;
+  let kept = 0;
+  let bad = 0;
+  const take = (col: 'days' | 'orders' | 'cards', valid: (id: string, v: unknown) => boolean) => {
+    const group = data[col];
+    if (group === undefined) return;
+    if (!isObj(group)) {
+      bad += 1;
+      return;
+    }
+    for (const [id, doc] of Object.entries(group)) {
+      if (!valid(id, doc)) bad += 1;
+      else if (id in have[col]) kept += 1;
+      else {
+        ops.push({ type: 'put', col, id, doc });
+        if (col === 'orders') added += 1;
+      }
+    }
+  };
+  take('days', validDay);
+  take('orders', validOrder);
+  take('cards', (_id, v) => validCard(v));
+  if (opts.withSettings && isObj(data.settings) && Array.isArray(data.settings.menu)) ops.push({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: { ...data.settings, updatedAt: Date.now() } });
+  if (!ops.length && bad) return { ok: false, message: 'Nothing in that file could be read as booth data.' };
+  try {
+    commit(...ops);
+  } catch (e) {
+    console.error(e);
+    return { ok: false, message: 'Restore stopped part-way. Check the orders, then try the file again.' };
+  }
+  flushSaves();
+  const parts = [`Restored ${added} order${added === 1 ? '' : 's'}.`];
+  if (kept) parts.push(`${kept} record${kept === 1 ? '' : 's'} already here were kept.`);
+  if (bad) parts.push(`${bad} damaged record${bad === 1 ? '' : 's'} skipped.`);
+  return { ok: true, message: parts.join(' ') };
 }
 
 // ---------- This device only (not synced) ----------
