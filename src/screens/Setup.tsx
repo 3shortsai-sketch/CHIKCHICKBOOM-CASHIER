@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { defaultSettings } from '../domain/defaults';
 import { newId } from '../domain/pricing';
-import { ALLERGENS, type AllergenTags, type MenuItem, type PrizeId, type Settings } from '../domain/types';
+import { ALLERGENS, type AllergenTags, type DataMode, type MenuItem, type PrizeId, type Settings } from '../domain/types';
 import { PRIZE_LABEL } from '../domain/wheel';
-import { clearDemoData, openDay, resetSettings, saveSettings, setDevice, useDevice, useStore } from '../data/store';
+import { exportBackup, openDay, resetSettings, saveSettings, setDevice, startFresh, useDevice, useStore, type State } from '../data/store';
 import { signOutBooth, useAuthState, useSyncStatus } from '../data/sync';
 import { askToSignIn } from '../ui/BoothLogin';
 import { TopBar } from '../ui/TopBar';
-import { keepUnlocked, PinGate } from '../ui/ui';
+import { download, keepUnlocked, Modal, PinGate } from '../ui/ui';
 
 export function Setup() {
   const pin = useStore((s) => s.settings.adminPin);
@@ -385,14 +385,9 @@ function SetupInner() {
             </p>
           )}
           <p className="muted small">Demo and real orders are kept apart. {day ? `A ${day.mode === 'live' ? 'real' : 'demo'} day is open (${day.date}).` : ''}</p>
-          <button
-            className="btn danger small"
-            onClick={() => confirm('Delete ALL practice (demo) orders, days and cards? This clears practice data on every device, not only this one. Real data is not touched.') && clearDemoData()}
-          >
-            Clear demo data
-          </button>
-          <p className="muted small">Clears practice data on every device. Real orders stay.</p>
         </section>
+
+        <StartFreshPanel state={state} />
 
         <section className="panel wide">
           <h2>Menu</h2>
@@ -797,5 +792,95 @@ function SetupInner() {
         </section>
       </div>
     </div>
+  );
+}
+
+/** How much a "Start fresh" would remove for one data mode. */
+function countsFor(state: State, mode: DataMode) {
+  return {
+    orders: Object.values(state.orders).filter((o) => o.mode === mode).length,
+    days: Object.values(state.days).filter((d) => d.mode === mode).length,
+    cards: Object.values(state.cards).filter((c) => c.mode === mode).length,
+    cash: Object.values(state.cashMoves).filter((m) => m.mode === mode).length,
+    open: Object.values(state.days).find((d) => d.mode === mode && !d.closedAt),
+  };
+}
+
+/**
+ * Clear practice data, or clear the real data to start the bazaar fresh.
+ * Needs the Setup passcode; clearing real data also needs CLEAR typed.
+ * A backup file is downloaded first, every time.
+ */
+function StartFreshPanel({ state }: { state: State }) {
+  const [mode, setMode] = useState<DataMode | null>(null);
+  const [done, setDone] = useState('');
+  const demo = countsFor(state, 'demo');
+  const live = countsFor(state, 'live');
+  const line = (c: ReturnType<typeof countsFor>) => `${c.orders} order${c.orders === 1 ? '' : 's'}, ${c.days} day${c.days === 1 ? '' : 's'}, ${c.cards} card record${c.cards === 1 ? '' : 's'}, ${c.cash} cash entr${c.cash === 1 ? 'y' : 'ies'}`;
+  return (
+    <section className="panel start-fresh">
+      <h2>Start fresh</h2>
+      <p className="muted small">
+        Clears orders, business days, cash in/out and loyalty card records on <b>every device</b>, so practice sales never mix with the bazaar numbers. Menu, prices and passcodes stay. A backup file downloads first.
+      </p>
+      <div className="row">
+        <button className="btn danger" onClick={() => { setDone(''); setMode('demo'); }}>
+          Clear practice (demo) data
+        </button>
+        <span className="muted small">{line(demo)}</span>
+      </div>
+      <div className="row">
+        <button className="btn danger" onClick={() => { setDone(''); setMode('live'); }}>
+          Clear real data (start the bazaar fresh)
+        </button>
+        <span className="muted small">{line(live)}</span>
+      </div>
+      {done && <p className="ok-note">{done}</p>}
+      {mode && <StartFreshConfirm mode={mode} counts={mode === 'demo' ? demo : live} pin={state.settings.adminPin} onDone={(msg) => { setDone(msg); setMode(null); }} onClose={() => setMode(null)} />}
+    </section>
+  );
+}
+
+function StartFreshConfirm({ mode, counts, pin, onDone, onClose }: { mode: DataMode; counts: ReturnType<typeof countsFor>; pin: string; onDone: (msg: string) => void; onClose: () => void }) {
+  const real = mode === 'live';
+  const [code, setCode] = useState('');
+  const [word, setWord] = useState('');
+  const [error, setError] = useState('');
+  const submit = () => {
+    if (counts.open) return setError(`A ${real ? 'real' : 'practice'} day is open (${counts.open.date}). Close it on the Dashboard first.`);
+    if (code !== pin) return setError('Wrong passcode. Use the Dashboard and Setup passcode.');
+    if (real && word.trim().toUpperCase() !== 'CLEAR') return setError('Type CLEAR in the box to confirm.');
+    download(`chick-chick-boom-backup-before-clearing-${real ? 'real' : 'demo'}-${new Date().toISOString().slice(0, 10)}.json`, exportBackup(), 'application/json');
+    const r = startFresh(mode);
+    onDone(`${real ? 'Real' : 'Practice'} data cleared on every device: ${r.orders} order${r.orders === 1 ? '' : 's'} and ${r.days} day${r.days === 1 ? '' : 's'} removed. The backup file is in your downloads.`);
+  };
+  return (
+    <Modal title={real ? 'Clear real data?' : 'Clear practice data?'} onClose={onClose}>
+      <div className="stack">
+        <p>
+          This removes <b>{counts.orders}</b> {real ? 'real' : 'practice'} orders, <b>{counts.days}</b> business days, {counts.cash} cash entries and {counts.cards} loyalty card records from <b>every device</b>. It cannot be undone here (only by restoring the backup file).
+        </p>
+        {real && <p className="error">Only do this before the bazaar starts, to remove test sales made in Real mode. Never during the bazaar.</p>}
+        <label className="field">
+          <span>Dashboard and Setup passcode</span>
+          <input className="input" type="password" inputMode="numeric" autoFocus value={code} onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 8)); setError(''); }} onKeyDown={(e) => e.key === 'Enter' && submit()} />
+        </label>
+        {real && (
+          <label className="field">
+            <span>Type CLEAR to confirm</span>
+            <input className="input" value={word} onChange={(e) => { setWord(e.target.value); setError(''); }} onKeyDown={(e) => e.key === 'Enter' && submit()} />
+          </label>
+        )}
+        {error && <p className="error" role="alert">{error}</p>}
+        <div className="row">
+          <button className="btn danger" onClick={submit}>
+            {real ? 'Clear real data' : 'Clear practice data'}
+          </button>
+          <button className="btn ghost" onClick={onClose}>
+            Keep everything
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

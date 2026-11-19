@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { defaultSettings, MENU_VERSION } from '../domain/defaults';
 import { cardDocId, cleanCardName } from '../domain/cards';
-import type { BusinessDay, Card, CashMove, Order, Settings } from '../domain/types';
+import type { BusinessDay, Card, CashMove, DataMode, Order, Settings } from '../domain/types';
 
 /**
  * Local-first store.
@@ -88,6 +88,7 @@ let state: State = {
 };
 
 const listeners = new Set<() => void>();
+queueMicrotask(() => dropWiped() && emit());
 let remote: Remote | null = null;
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ccb-pos') : null;
 
@@ -151,16 +152,47 @@ function hasEntry(list: unknown[], item: unknown): boolean {
   return list.some((x) => JSON.stringify(x) === json);
 }
 
+/** Was this document removed by "Start fresh"? Then it must never come back. */
+export function isWiped(col: Collection, doc: unknown, s: Settings = state.settings): boolean {
+  const w = s.wiped;
+  if (!w || !doc || typeof doc !== 'object') return false;
+  const d = doc as { id?: string; dayId?: string; mode?: DataMode; updatedAt?: number };
+  if (col === 'days') return !!d.id && w.days.includes(d.id);
+  if (col === 'orders' || col === 'cashMoves') return !!d.dayId && w.days.includes(d.dayId);
+  if (col === 'cards') {
+    const before = d.mode ? w.cardsBefore[d.mode] : undefined;
+    return before !== undefined && (d.updatedAt ?? 0) <= before;
+  }
+  return false;
+}
+
+/** Remove from this device anything a "Start fresh" on another device cleared. */
+function dropWiped(): boolean {
+  if (!state.settings.wiped) return false;
+  let changed = false;
+  for (const col of ['days', 'orders', 'cashMoves', 'cards'] as const) {
+    const list = state[col] as Record<string, unknown>;
+    const keep = Object.fromEntries(Object.entries(list).filter(([, d]) => !isWiped(col, d)));
+    if (Object.keys(keep).length !== Object.keys(list).length) {
+      state = { ...state, [col]: keep };
+      persist(col);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 /** Returns false when the change does not apply (e.g. a patch for a document this device does not have). */
 function applyOp(op: Op): boolean {
   if (op.col === 'settings') {
     if (op.type === 'put') state = { ...state, settings: upgradeSettings(op.doc as Partial<Settings>) };
     else if (op.type === 'patch') state = { ...state, settings: { ...state.settings, ...(op.patch as Partial<Settings>) } };
     else return false;
+    dropWiped();
   } else {
     const col = { ...(state[op.col] as Record<string, unknown>) };
     if (op.type === 'put') {
-      if (!op.doc || typeof op.doc !== 'object') return false;
+      if (!op.doc || typeof op.doc !== 'object' || isWiped(op.col, op.doc)) return false;
       col[op.id] = op.doc;
     } else if (op.type === 'patch') {
       // Never invent a half-empty document from a patch.
@@ -423,14 +455,46 @@ export function cancelCashMove(id: string, by: string, reason: string) {
   commit({ type: 'patch', col: 'cashMoves', id, patch: { cancelled: { at: Date.now(), by, reason: reason.trim() } } });
 }
 
-export function clearDemoData() {
+/**
+ * Start fresh: remove every order, business day, cash entry and loyalty card
+ * record of one data mode, on every device. What was removed is remembered in
+ * the shared settings, so a device that was offline cannot bring it back.
+ * Settings (menu, prices, passcodes) are kept.
+ */
+export function startFresh(mode: DataMode): { orders: number; days: number } {
   const s = getState();
+  const now = Date.now();
+  const days = Object.values(s.days).filter((d) => d.mode === mode);
+  const dayIds = new Set(days.map((d) => d.id));
   const ops: Op[] = [];
-  for (const o of Object.values(s.orders)) if (o.mode === 'demo') ops.push({ type: 'remove', col: 'orders', id: o.id });
-  for (const d of Object.values(s.days)) if (d.mode === 'demo') ops.push({ type: 'remove', col: 'days', id: d.id });
-  for (const [id, c] of Object.entries(s.cards)) if (c.mode === 'demo') ops.push({ type: 'remove', col: 'cards', id });
-  for (const [id, m] of Object.entries(s.cashMoves)) if (m.mode === 'demo') ops.push({ type: 'remove', col: 'cashMoves', id });
+  let orders = 0;
+  for (const o of Object.values(s.orders))
+    if (o.mode === mode || dayIds.has(o.dayId)) {
+      dayIds.add(o.dayId);
+      ops.push({ type: 'remove', col: 'orders', id: o.id });
+      orders += 1;
+    }
+  for (const m of Object.values(s.cashMoves))
+    if (m.mode === mode || dayIds.has(m.dayId)) {
+      dayIds.add(m.dayId);
+      ops.push({ type: 'remove', col: 'cashMoves', id: m.id });
+    }
+  for (const d of days) ops.push({ type: 'remove', col: 'days', id: d.id });
+  for (const [id, c] of Object.entries(s.cards)) if (c.mode === mode) ops.push({ type: 'remove', col: 'cards', id });
+  const before = s.settings.wiped ?? { days: [], cardsBefore: {} };
+  const wiped = { days: [...new Set([...before.days, ...dayIds])], cardsBefore: { ...before.cardsBefore, [mode]: now } };
+  ops.push({ type: 'patch', col: 'settings', id: SETTINGS_ID, patch: { wiped, updatedAt: now } });
   commit(...ops);
+  flushSaves();
+  // Set-aside and half-rung orders on this device belong to the cleared data too.
+  try {
+    localStorage.removeItem('ccb:parked');
+    localStorage.removeItem('ccb:draft');
+    sessionStorage.removeItem('ccb:afterpay');
+  } catch {
+    /* ignore */
+  }
+  return { orders, days: days.length };
 }
 
 export function exportBackup(): string {

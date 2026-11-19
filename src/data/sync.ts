@@ -21,7 +21,7 @@ import {
 import { waitMinutes } from '../domain/inventory';
 import { localDate } from '../domain/loyalty';
 import type { Order } from '../domain/types';
-import { applyRemote, enableOutbox, getState, openDay, replayOutbox, setRemote, type Collection, type Op } from './store';
+import { applyRemote, enableOutbox, getState, isWiped, openDay, replayOutbox, setRemote, type Collection, type Op } from './store';
 import { emulatorConfig, firebaseConfig, localOnly, useEmulator } from './firebase-config';
 
 /**
@@ -309,6 +309,10 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
     if (ch.type === 'removed') {
       removed.add(ch.doc.id);
       ops.push({ type: 'remove', col, id: ch.doc.id });
+    } else if (isWiped(col, ch.doc.data())) {
+      // A device that missed "Start fresh" uploaded it again: remove it for good.
+      removed.add(ch.doc.id);
+      push({ type: 'remove', col, id: ch.doc.id });
     } else ops.push({ type: 'put', col, id: ch.doc.id, doc: ch.doc.data() });
   }
   if (!snap.metadata.fromCache && !uploadedOnce[col]) {
@@ -316,7 +320,7 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
     const onServer = new Set(snap.docs.map((d) => d.id));
     for (const [id, d] of Object.entries(getState()[col])) {
       // Something another device just deleted must not be sent back up.
-      if (!onServer.has(id) && !removed.has(id)) push({ type: 'put', col, id, doc: d });
+      if (!onServer.has(id) && !removed.has(id) && !isWiped(col, d)) push({ type: 'put', col, id, doc: d });
     }
   }
   const firstFromServer = !snap.metadata.fromCache && !replayed[col];

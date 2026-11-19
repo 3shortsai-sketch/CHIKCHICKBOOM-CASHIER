@@ -268,6 +268,13 @@ export type Settings = {
   mode: DataMode;
   /** Minutes a "ready" number stays on the monitor before it drops off on its own. */
   servingClearMinutes: number;
+  /**
+   * What "Start fresh" cleared, so a device that was offline at the time
+   * cannot bring it back: the business days removed (their orders and cash
+   * entries go with them) and, per data mode, the time before which loyalty
+   * card records were removed.
+   */
+  wiped?: { days: string[]; cardsBefore: Partial<Record<DataMode, number>> };
   /** Minutes after which a kitchen card turns red. */
   kitchenLateMinutes: number;
   updatedAt: number;
