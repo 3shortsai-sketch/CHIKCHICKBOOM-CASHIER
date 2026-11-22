@@ -10,7 +10,7 @@ import { StampEditor } from './StampEditor';
 import { StampDots } from './payflow';
 
 /**
- * Look up a loyalty card by number or by name: stamps, rewards, visits.
+ * Look up a Boom Card by number or by name: stamps, rewards, visits.
  * Also where a card's name is typed in the first time.
  */
 export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; orders: Order[]; cashier: string; onClose: () => void }) {
@@ -32,7 +32,7 @@ export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; order
   const nameLookupFailed = input.trim() && !typedNumber && matches.length === 0;
 
   return (
-    <Modal title="Loyalty cards" onClose={onClose}>
+    <Modal title="Boom Cards" onClose={onClose}>
       <div className="mini-form">
         <input
           className="input"
@@ -42,11 +42,11 @@ export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; order
             setInput(e.target.value);
             setPicked(null);
           }}
-          placeholder="Card number (37) or name (Ana)"
-          aria-label="Card number or name"
+          placeholder="Boom Card number (37) or name (Ana)"
+          aria-label="Boom Card number or name"
         />
       </div>
-      {nameLookupFailed && <p className="muted">No card with that number or name yet. Type the card number to register it.</p>}
+      {nameLookupFailed && <p className="muted">No Boom Card with that number or name yet. Type the Boom Card number to register it.</p>}
       {matches.length > 1 && !picked && (
         <ul className="card-matches">
           {matches.map((m) => (
@@ -74,7 +74,7 @@ export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; order
             Edit stamps (manager PIN)
           </button>
           {rewards.length > 0 ? (
-            <p className="ok-note">Reward ready: {rewards.map((r) => r.label).join(', ')}. Add the card to an order to use it.</p>
+            <p className="ok-note">Reward ready: {rewards.map((r) => r.label).join(', ')}. Add the Boom Card to an order to use it.</p>
           ) : next ? (
             <p className="muted">
               {next.at - st.stamps} more stamp{next.at - st.stamps === 1 ? '' : 's'} to {next.label}.
@@ -82,14 +82,14 @@ export function CardLookup({ s, orders, cashier, onClose }: { s: Settings; order
           ) : null}
           <p className="muted small">
             {visits.length} visit{visits.length === 1 ? '' : 's'}
-            {st.cardsCompleted > 0 && ` · ${st.cardsCompleted} full card${st.cardsCompleted === 1 ? '' : 's'} completed`}
+            {st.cardsCompleted > 0 && ` · ${st.cardsCompleted} full Boom Card${st.cardsCompleted === 1 ? '' : 's'} completed`}
             {visits[0] && ` · last visit ${new Date(visits[0].createdAt).toLocaleDateString()} (${visits[0].number})`}
             {row && !row.registered && visits.length === 0 && ' · not used yet'}
           </p>
         </div>
       )}
       <p className="muted small">
-        <a href="#cards">See all cards →</a> (team passcode)
+        <a href="#cards">See all Boom Cards →</a> (team passcode)
       </p>
       {editStamps && number && st && (
         <StampEditor number={number} name={row?.name} stamps={st.stamps} size={s.loyalty.cardSize} cards={cards} by={cashier} pin={s.managerPin} onClose={() => setEditStamps(false)} />

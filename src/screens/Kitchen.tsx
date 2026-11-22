@@ -13,6 +13,7 @@ function partText(p: ComboPart | OrderLine['choices']): string[] {
   if (p.extraSides?.length) out.push(`EXTRA ${p.extraSides.join(', ')}`);
   if (p.extraSauce) out.push(`+${p.extraSauce} SAUCE`);
   if (p.dip) out.push(`dip: ${p.dip}`);
+  if (p.topping === 'fries') out.push('FRIES ON TOP');
   return out;
 }
 

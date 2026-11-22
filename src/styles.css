@@ -3687,3 +3687,95 @@ th:first-child {
   flex-direction: column;
   gap: 0.3rem;
 }
+
+/* ---- menu UI: photos, drink topping, wheel ---- */
+/* Small photo beside a cashier tile's name (above it would make the tiles taller and push
+   the Popular tab off a 1280x720 screen). Fixed box, so tiles keep one size before and after it loads. */
+.tile-head {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding-right: 1.4rem;
+}
+.tile-head .tile-name {
+  padding-right: 0;
+  min-width: 0;
+  font-size: 1.32rem;
+}
+.tile-photo {
+  display: block;
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 2px solid var(--ink);
+  background: var(--line-soft);
+  flex: none;
+}
+.tile-combos .tile-photo {
+  width: 74px;
+}
+.tile.out .tile-photo {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+/* Fruit or fries on top: two big buttons side by side. */
+.topping-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* Nine prizes: as many across as fit (5 on a 1280 screen, 3 on 1024), so the backup wheel button stays in view. */
+.prize-grid.nine {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.prize-comboVoucher {
+  background: var(--yellow);
+}
+.voucher-slip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.voucher-slip + .voucher-slip {
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 2px dashed var(--line);
+}
+/* Combo photos are wide: shown whole, above the combo's name. */
+.serving-menu .menu-row.combo-row {
+  flex-direction: column;
+  gap: 0.25em;
+}
+.menu-photo.menu-photo-combo {
+  width: 100%;
+  max-width: 11em;
+  height: auto;
+  aspect-ratio: 2 / 1;
+}
+.serving-menu .menu-row.combo-row .menu-text {
+  width: 100%;
+}
+/* Monitor menu: with photos and the longer descriptions, keep each column inside the screen. */
+.serving-menu .menu-col {
+  min-width: 0;
+}
+.serving-menu .menu-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* The four bowls all start "Crispy, juicy chicken fillet...": the photo says it, and the column needs the room. */
+.serving-menu .menu-col-bowls .menu-desc {
+  display: none;
+}
+.serving-menu .menu-photo:not(.menu-photo-combo) {
+  width: 3em;
+  height: 3em;
+}
+/* A long name and its price share a narrow column: the price drops under the name instead of sticking out. */
+.serving-menu .menu-line {
+  flex-wrap: wrap;
+  column-gap: 0.4em;
+  row-gap: 0;
+}

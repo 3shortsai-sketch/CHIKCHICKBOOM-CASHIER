@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { allergenHint, allergenText, itemTags } from '../../domain/allergens';
-import { makeComboLine, newId, peso } from '../../domain/pricing';
+import { makeComboLine, needsPicker, newId, peso } from '../../domain/pricing';
 import type { Choices, Combo, ComboPart, MenuItem, OrderLine, Settings } from '../../domain/types';
 import { Modal } from '../../ui/ui';
 
@@ -115,12 +115,51 @@ function BowlChoices({ s, value, onChange }: { s: Settings; value: Choices; onCh
   );
 }
 
+/** Items that open a picker when tapped: the domain's list, plus slushies (fruit or fries on top). */
+export function opensPicker(item: MenuItem): boolean {
+  return needsPicker(item) || item.kind === 'slushie';
+}
+
+type Topping = NonNullable<Choices['topping']>;
+const TOPPINGS: { id: Topping; label: string }[] = [
+  { id: 'fruit', label: 'Fruit on top' },
+  { id: 'fries', label: 'Fries on top' },
+];
+
+/** Two big buttons: more fresh fruit on top (the default) or fries on top. Keys 1 and 2. */
+function ToppingChoice({ value, onPick, enterPicks }: { value: Topping; onPick: (t: Topping) => void; enterPicks?: boolean }) {
+  useNumberKeys(TOPPINGS.length, (i) => onPick(TOPPINGS[i].id));
+  // In the combo picker, Enter takes the topping shown as picked (fruit at first).
+  useEffect(() => {
+    if (!enterPicks) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || e.repeat) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onPick(value);
+    };
+    addEventListener('keydown', onKey, true);
+    return () => removeEventListener('keydown', onKey, true);
+  });
+  return (
+    <div className="option-grid big topping-grid">
+      {TOPPINGS.map((o, i) => (
+        <button key={o.id} className={`option ${value === o.id ? 'selected' : ''}`} onClick={() => onPick(o.id)}>
+          <kbd>{i + 1}</kbd>
+          <span className="option-label">{o.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function clean(c: Choices): Choices {
   const out: Choices = {};
   if (c.side) out.side = c.side;
   if (c.extraSides?.length) out.extraSides = c.extraSides;
   if (c.extraSauce) out.extraSauce = c.extraSauce;
   if (c.dip) out.dip = c.dip;
+  if (c.topping) out.topping = c.topping;
   return out;
 }
 
@@ -149,6 +188,7 @@ export function ItemPicker({
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const isBowl = item.kind === 'bowl';
   const isFries = item.kind === 'fries';
+  const isDrink = item.kind === 'slushie';
   const lineFree = initial?.free ?? free;
 
   const build = (c: Choices): OrderLine => ({
@@ -169,11 +209,12 @@ export function ItemPicker({
 
   const save = () => {
     if (isBowl && !choices.side) return;
-    onAdd(build(choices));
+    onAdd(build(isDrink ? { ...choices, topping: choices.topping ?? 'fruit' } : choices));
   };
 
   useEffect(() => {
-    if (!editing) return;
+    // Enter saves an edit, and adds a drink with the topping shown as picked (fruit at first).
+    if (!editing && !isDrink) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
@@ -198,16 +239,25 @@ export function ItemPicker({
           <input className="input note-input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Note for the kitchen, e.g. no cucumber" aria-label="Note for the kitchen" />
         </div>
       )}
-      <h3 className="pick-title">
-        {isBowl ? (editing ? 'Free side' : 'Tap the free side to add') : isFries ? (editing ? 'Dip' : 'Tap the free dip to add') : 'Which side?'}
-      </h3>
-      <Options
-        big
-        options={options}
-        value={isFries ? choices.dip : choices.side}
-        onPick={(v) => pick(isFries ? { ...choices, dip: v } : { ...choices, side: v })}
-        hint={(o) => allergenHint(isFries ? s.dipAllergens[o] : s.sideAllergens[o])}
-      />
+      {isDrink ? (
+        <>
+          <h3 className="pick-title">What goes on top? Tap to add</h3>
+          <ToppingChoice value={choices.topping ?? 'fruit'} onPick={(topping) => pick({ ...choices, topping })} />
+        </>
+      ) : (
+        <>
+          <h3 className="pick-title">
+            {isBowl ? (editing ? 'Free side' : 'Tap the free side to add') : isFries ? (editing ? 'Dip' : 'Tap the free dip to add') : 'Which side?'}
+          </h3>
+          <Options
+            big
+            options={options}
+            value={isFries ? choices.dip : choices.side}
+            onPick={(v) => pick(isFries ? { ...choices, dip: v } : { ...choices, side: v })}
+            hint={(o) => allergenHint(isFries ? s.dipAllergens[o] : s.sideAllergens[o])}
+          />
+        </>
+      )}
       {editing && isBowl && (
         <div className="modal-foot">
           <button className="btn ghost" onClick={onClose}>
@@ -223,7 +273,7 @@ export function ItemPicker({
 }
 
 type PartKind = Combo['parts'][number];
-const PART_TITLE: Record<PartKind, string> = { bowl: 'Pick the bowl', fries: 'Fries dip', slushie: 'Pick the slushie', cookie: 'Pick the cookie' };
+const PART_TITLE: Record<PartKind, string> = { bowl: 'Pick the bowl', fries: 'Fries dip', slushie: 'Pick the shake or juice', cookie: 'Pick the cookie' };
 
 /** Step-by-step combo picker: bowl → side & extras → dip / cookie → slushie. */
 export function ComboPicker({
@@ -239,12 +289,15 @@ export function ComboPicker({
   onAdd: (line: OrderLine) => void;
   onClose: () => void;
 }) {
-  type Step = { kind: PartKind; sub?: 'choices' };
-  const steps: Step[] = combo.parts.flatMap((k): Step[] => (k === 'bowl' ? [{ kind: k }, { kind: k, sub: 'choices' }] : [{ kind: k }]));
+  type Step = { kind: PartKind; sub?: 'choices' | 'topping' };
+  const steps: Step[] = combo.parts.flatMap((k): Step[] =>
+    k === 'bowl' ? [{ kind: k }, { kind: k, sub: 'choices' }] : k === 'slushie' ? [{ kind: k }, { kind: k, sub: 'topping' }] : [{ kind: k }],
+  );
   const [stepIdx, setStepIdx] = useState(0);
   const [parts, setParts] = useState<Partial<Record<PartKind, ComboPart>>>({});
   const step = steps[stepIdx];
 
+  const itemName = (id: string) => s.menu.find((m) => m.id === id)?.name ?? 'drink';
   const itemsFor = (kind: PartKind) =>
     s.menu.filter((m) => m.active && (kind === 'fries' ? m.kind === 'fries' && m.regular : m.kind === kind));
 
@@ -273,12 +326,13 @@ export function ComboPicker({
   useNumberKeys(step.sub ? 0 : options.length, (i) => !options[i].disabled && options[i].onPick());
 
   const bowl = parts.bowl;
+  const drink = parts.slushie;
   return (
     <Modal title={`${combo.name} · ${peso(combo.price)} — step ${stepIdx + 1} of ${steps.length}`} onClose={onClose} wide>
       <ol className="steps">
         {steps.map((st, i) => (
           <li key={i} className={i === stepIdx ? 'current' : i < stepIdx ? 'done' : ''}>
-            {st.sub ? 'Side & extras' : PART_TITLE[st.kind]}
+            {st.sub === 'choices' ? 'Side & extras' : st.sub === 'topping' ? 'Fruit or fries on top' : PART_TITLE[st.kind]}
           </li>
         ))}
       </ol>
@@ -298,6 +352,13 @@ export function ComboPicker({
             ))}
           </div>
         </>
+      ) : step.sub === 'topping' ? (
+        drink && (
+          <>
+            <h3>What goes on top of the {itemName(drink.itemId)}?</h3>
+            <ToppingChoice enterPicks value={drink.topping ?? 'fruit'} onPick={(topping) => setPart('slushie', { ...drink, topping })} />
+          </>
+        )
       ) : (
         bowl && (
           <>

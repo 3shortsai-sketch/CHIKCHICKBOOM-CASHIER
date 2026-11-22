@@ -183,7 +183,7 @@ function BazaarDays({ s, save }: { s: Settings; save: (patch: Partial<Settings>)
         <span>On the last day the voucher slot gives</span>
         <select className="input" value={standIn} onChange={(e) => save({ voucher: { ...s.voucher, lastDayPrize: e.target.value as PrizeId } })}>
           {(Object.keys(PRIZE_LABEL) as PrizeId[])
-            .filter((p) => p !== 'voucher')
+            .filter((p) => p !== 'voucher' && p !== 'comboVoucher')
             .map((p) => (
               <option key={p} value={p}>
                 {PRIZE_LABEL[p]}
@@ -595,10 +595,6 @@ function SetupInner() {
             <input type="checkbox" checked={s.payments.gcash} onChange={(e) => save({ payments: { ...s.payments, gcash: e.target.checked } })} />
             <b>Accept GCash</b>
           </label>
-          <label className="row">
-            <input type="checkbox" checked={s.payments.maya} onChange={(e) => save({ payments: { ...s.payments, maya: e.target.checked } })} />
-            <b>Accept Maya</b>
-          </label>
           <label className="field">
             <span>GCash number to show on the customer screen (optional)</span>
             <input className="input" inputMode="tel" defaultValue={s.payments.gcashNumber} onBlur={(e) => e.target.value.trim() !== s.payments.gcashNumber && save({ payments: { ...s.payments, gcashNumber: e.target.value.trim() } })} placeholder="09XX XXX XXXX" />
@@ -608,40 +604,46 @@ function SetupInner() {
 
         <section className="panel">
           <h2>Prize limit</h2>
-          <div className="grid-2">
-            <label className="field">
-              <span>Warn the cashier at (% of sales)</span>
-              <NumField decimals max={100} value={s.promoLimits.warnPct} onSave={(warnPct) => save({ promoLimits: { ...s.promoLimits, warnPct } })} />
-            </label>
-            <label className="field">
-              <span>Ask to pause the wheel at (% of sales)</span>
-              <NumField decimals max={100} value={s.promoLimits.pausePct} onSave={(pausePct) => save({ promoLimits: { ...s.promoLimits, pausePct } })} />
-            </label>
-            <label className="field">
-              <span>Start checking after sales of (₱)</span>
-              <NumField value={s.promoLimits.minSales} onSave={(minSales) => save({ promoLimits: { ...s.promoLimits, minSales } })} />
-            </label>
-          </div>
-          <p className="muted small">Counts wheel prizes at what they cost the booth (ingredients of free meals and free items, plus ₱10-off cash) and vouchers used. A normal day is about 4–5%.</p>
+          <label className="row">
+            <input type="checkbox" checked={!s.promoLimits.off} onChange={(e) => save({ promoLimits: { ...s.promoLimits, off: !e.target.checked } })} />
+            <b>Warn the cashier when prizes run high</b>
+          </label>
+          {!s.promoLimits.off && (
+            <div className="grid-2">
+              <label className="field">
+                <span>Warn the cashier at (% of sales)</span>
+                <NumField decimals max={100} value={s.promoLimits.warnPct} onSave={(warnPct) => save({ promoLimits: { ...s.promoLimits, warnPct } })} />
+              </label>
+              <label className="field">
+                <span>Ask to pause the wheel at (% of sales)</span>
+                <NumField decimals max={100} value={s.promoLimits.pausePct} onSave={(pausePct) => save({ promoLimits: { ...s.promoLimits, pausePct } })} />
+              </label>
+              <label className="field">
+                <span>Start checking after sales of (₱)</span>
+                <NumField value={s.promoLimits.minSales} onSave={(minSales) => save({ promoLimits: { ...s.promoLimits, minSales } })} />
+              </label>
+            </div>
+          )}
+          <p className="muted small">Counts wheel prizes at what they cost the booth (ingredients of free meals and free items, plus ₱10-off cash) and vouchers used. The wheel now gives a spin for every item bought, so a normal day is about 8 to 10%.</p>
         </section>
 
         <section className="panel">
-          <h2>Loyalty card</h2>
+          <h2>Boom Card</h2>
           <div className="grid-2">
             <label className="field">
-              <span>Card prefix</span>
+              <span>Boom Card number prefix</span>
               <input className="input" defaultValue={s.loyalty.prefix} onBlur={(e) => e.target.value !== s.loyalty.prefix && save({ loyalty: { ...s.loyalty, prefix: e.target.value } })} />
             </label>
             <label className="field">
-              <span>Stamps to fill a card</span>
+              <span>Stamps to fill a Boom Card</span>
               <NumField min={2} value={s.loyalty.cardSize} onSave={(cardSize) => save({ loyalty: { ...s.loyalty, cardSize } })} />
             </label>
             <label className="field">
-              <span>First card number</span>
+              <span>First Boom Card number</span>
               <NumField min={1} max={s.loyalty.last} value={s.loyalty.first} onSave={(first) => save({ loyalty: { ...s.loyalty, first } })} />
             </label>
             <label className="field">
-              <span>Last card number</span>
+              <span>Last Boom Card number</span>
               <NumField min={Math.max(1, s.loyalty.first)} value={s.loyalty.last} onSave={(last) => save({ loyalty: { ...s.loyalty, last } })} />
             </label>
           </div>
@@ -816,12 +818,12 @@ function StartFreshPanel({ state }: { state: State }) {
   const [done, setDone] = useState('');
   const demo = countsFor(state, 'demo');
   const live = countsFor(state, 'live');
-  const line = (c: ReturnType<typeof countsFor>) => `${c.orders} order${c.orders === 1 ? '' : 's'}, ${c.days} day${c.days === 1 ? '' : 's'}, ${c.cards} card record${c.cards === 1 ? '' : 's'}, ${c.cash} cash entr${c.cash === 1 ? 'y' : 'ies'}`;
+  const line = (c: ReturnType<typeof countsFor>) => `${c.orders} order${c.orders === 1 ? '' : 's'}, ${c.days} day${c.days === 1 ? '' : 's'}, ${c.cards} Boom Card record${c.cards === 1 ? '' : 's'}, ${c.cash} cash entr${c.cash === 1 ? 'y' : 'ies'}`;
   return (
     <section className="panel start-fresh">
       <h2>Start fresh</h2>
       <p className="muted small">
-        Clears orders, business days, cash in/out and loyalty card records on <b>every device</b>, so practice sales never mix with the bazaar numbers. Menu, prices and passcodes stay. A backup file downloads first.
+        Clears orders, business days, cash in/out and Boom Card records on <b>every device</b>, so practice sales never mix with the bazaar numbers. Menu, prices and passcodes stay. A backup file downloads first.
       </p>
       <div className="row">
         <button className="btn danger" onClick={() => { setDone(''); setMode('demo'); }}>
@@ -858,7 +860,7 @@ function StartFreshConfirm({ mode, counts, pin, onDone, onClose }: { mode: DataM
     <Modal title={real ? 'Clear real data?' : 'Clear practice data?'} onClose={onClose}>
       <div className="stack">
         <p>
-          This removes <b>{counts.orders}</b> {real ? 'real' : 'practice'} orders, <b>{counts.days}</b> business days, {counts.cash} cash entries and {counts.cards} loyalty card records from <b>every device</b>. It cannot be undone here (only by restoring the backup file).
+          This removes <b>{counts.orders}</b> {real ? 'real' : 'practice'} orders, <b>{counts.days}</b> business days, {counts.cash} cash entries and {counts.cards} Boom Card records from <b>every device</b>. It cannot be undone here (only by restoring the backup file).
         </p>
         {real && <p className="error">Only do this before the bazaar starts, to remove test sales made in Real mode. Never during the bazaar.</p>}
         <label className="field">

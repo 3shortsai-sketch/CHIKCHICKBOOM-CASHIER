@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { amountDue, checkCart, createOrder, duplicateReference, nextSeq, orderNumber } from '../../domain/checkout';
 import { cardStateFor } from '../../domain/cards';
 import { availableRewards, canRedeem, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
-import { applyCombo, itemById, needsPicker, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
+import { applyCombo, itemById, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
 import { allergenText, itemTags } from '../../domain/allergens';
 import { promoStatus } from '../../domain/promo';
 import { isAvailable, orderNet, pendingSpins, popularToday, stockLeft, summarize } from '../../domain/reports';
@@ -12,13 +12,16 @@ import { modeCards, modeOrders, openDay, patchDay, patchOrder, putOrder, saveSet
 import { TopBar } from '../../ui/TopBar';
 import { OpenDayForm } from './OpenDay';
 import { AfterPay, PayModal, StampDots, type AfterPayMode } from './payflow';
-import { ComboPicker, ItemPicker } from './pickers';
+import { ComboPicker, ItemPicker, opensPicker } from './pickers';
 import { CardNameField, useCardName } from './CardName';
 import { CardLookup, WasteLog } from './tools';
 import { CashMoves } from './CashMoves';
 import { minutesAgo } from '../../ui/ui';
 
 type TabId = Category | 'popular';
+
+/** How a combo's parts read on its tile, in the menu page's words. */
+const COMBO_PART: Record<Combo['parts'][number], string> = { bowl: 'bowl', fries: 'Fries with Dip', slushie: 'shake or juice', cookie: 'cookie' };
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'popular', label: '★ Popular' },
@@ -37,7 +40,7 @@ type Parked = {
   cardId?: string;
   voucher?: { code: string; amount: number };
   name?: string;
-  /** The name was filled in from the loyalty card, not typed. */
+  /** The name was filled in from the Boom Card, not typed. */
   nameFromCard?: boolean;
   at: number;
   /** Demo or real data, and the day it was parked on: it only comes back there. */
@@ -154,7 +157,7 @@ export function Cashier() {
   const [tool, setTool] = useState<'card' | 'waste' | 'cash' | null>(null);
   const [promoDismissed, setPromoDismissed] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
-  /** The name the loyalty card filled in (empty when the cashier typed it). */
+  /** The name the Boom Card filled in (empty when the cashier typed it). */
   const [cardFilledName, setCardFilledName] = useState('');
   const [staleOk, setStaleOk] = useState('');
   const [parked, setParkedState] = useState<Parked[]>(loadParked);
@@ -223,6 +226,8 @@ export function Cashier() {
     const freed = existing ? stockUsage([existing]) : {};
     const use = stockUsage([line]);
     for (const [id, n] of Object.entries(use)) {
+      // Only menu items have a stock count (fries on top of a drink comes from the fries ingredient).
+      if (!(id in left)) continue;
       const avail = remaining(id) + (freed[id] ?? 0);
       if (avail < n) {
         flash(`Not enough ${itemById(s, id)?.name ?? id} left (${Math.max(0, avail)}).`, true);
@@ -248,21 +253,22 @@ export function Cashier() {
       return;
     }
     if (!canUse(item.id)) return flash(`${item.name} is sold out.`, true);
-    if (needsPicker(item)) setPicking({ type: 'item', item });
+    if (opensPicker(item)) setPicking({ type: 'item', item });
     else addLine({ id: newId('l'), itemId: item.id, name: item.name, qty: 1, unitPrice: item.price });
   };
 
   /** Smallest saving a combo gives versus buying its cheapest parts separately. */
+  /** Most a combo saves versus buying its dearest parts separately (the menu page's "Save up to ₱38"). */
   const comboSaving = (c: Combo) =>
     c.parts.reduce((sum, k) => {
       const prices = s.menu.filter((m) => m.active && (k === 'fries' ? m.kind === 'fries' && m.regular : m.kind === k)).map((m) => m.price);
-      return sum + (prices.length ? Math.min(...prices) : 0);
+      return sum + (prices.length ? Math.max(...prices) : 0);
     }, 0) - c.price;
 
   const editLine = (l: OrderLine) => {
     if (l.combo) return flash('To change a combo, remove it and add it again.');
     const item = itemById(s, l.itemId);
-    if (!item || !needsPicker(item)) return;
+    if (!item || !opensPicker(item)) return;
     setPicking({ type: 'item', item, initial: l });
   };
 
@@ -274,7 +280,7 @@ export function Cashier() {
     if (d > 0) {
       if (line.free) return flash('Free items are one each.', true);
       for (const [itemId, n] of Object.entries(stockUsage([{ ...line, qty: 1 }]))) {
-        if (remaining(itemId) < n) return flash(`No more ${itemById(s, itemId)?.name ?? itemId} left.`, true);
+        if (itemId in left && remaining(itemId) < n) return flash(`No more ${itemById(s, itemId)?.name ?? itemId} left.`, true);
       }
     }
     setLines(lines.flatMap((l) => (l.id !== id ? [l] : l.qty + d <= 0 ? [] : [{ ...l, qty: l.qty + d }])));
@@ -284,7 +290,7 @@ export function Cashier() {
   const applyCard = () => {
     if (!cardInput.trim()) return;
     const id = parseCard(cardInput, s);
-    if (!id) return flash(`Unknown card number. Cards run ${s.loyalty.prefix}${String(s.loyalty.first).padStart(3, '0')}–${s.loyalty.prefix}${s.loyalty.last}.`, true);
+    if (!id) return flash(`Unknown Boom Card number. Boom Cards run ${s.loyalty.prefix}${String(s.loyalty.first).padStart(3, '0')}–${s.loyalty.prefix}${s.loyalty.last}.`, true);
     setCardId(id);
     setCardInput('');
   };
@@ -302,20 +308,24 @@ export function Cashier() {
   };
 
   const applyVoucher = () => {
-    const r = checkVoucher(voucherInput, orders, s, localDate(), sub);
+    const r = checkVoucher(voucherInput, orders, s, localDate(), sub, lines);
     if (!r.ok) return flash(r.message, true);
     setVoucher({ code: r.code, amount: r.amount });
     setVoucherInput('');
-    flash('Voucher applied. Orders with a voucher do not get spins.');
+    flash('Voucher applied.');
   };
 
-  // Drop the voucher if the order falls below the minimum.
+  // Drop the voucher when the order no longer fits it: under the ₱20 voucher's
+  // minimum, or the combo taken out of an order with a ₱15-off-a-combo voucher.
   useEffect(() => {
-    if (voucher && sub < s.voucher.minOrder) {
+    if (!voucher) return;
+    const r = checkVoucher(voucher.code, orders, s, localDate(), sub, lines);
+    if (!r.ok) {
       setVoucher(undefined);
-      flash(`Voucher removed: order is under ₱${s.voucher.minOrder}.`, true);
+      flash(`Voucher removed: ${r.message}`, true);
     }
-  }, [sub, voucher, s.voucher.minOrder]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sub, lines, voucher]);
 
   const clearOrder = () => {
     setLines([]);
@@ -363,18 +373,18 @@ export function Cashier() {
       const at = l.free.stampsAt;
       const ok = !!cardNow && !seen.includes(at) && canRedeem(cardNow, at, s).ok;
       if (ok) seen.push(at);
-      else problems.push(`${l.name} removed: the card's reward is not there any more.`);
+      else problems.push(`${l.name} removed: the Boom Card's reward is not there any more.`);
       return ok;
     });
     let v = p.voucher;
     if (v) {
-      const r = checkVoucher(v.code, orders, s, localDate(), subtotal(kept, s));
+      const r = checkVoucher(v.code, orders, s, localDate(), subtotal(kept, s), kept);
       if (!r.ok) {
         problems.push(`Voucher ${v.code} removed: ${r.message}`);
         v = undefined;
       }
     }
-    const short = Object.entries(stockUsage(kept)).filter(([id, n]) => (left[id] ?? 0) < n);
+    const short = Object.entries(stockUsage(kept)).filter(([id, n]) => id in left && left[id] < n);
     if (short.length) problems.push(`Not enough left now: ${short.map(([id]) => itemById(s, id)?.name ?? id).join(', ')}. Check the order.`);
 
     setLines(kept);
@@ -495,6 +505,7 @@ export function Cashier() {
           if (c?.extraSides?.length) bits.push(`+${c.extraSides.join(', ')}`);
           if (c?.extraSauce) bits.push(`+${c.extraSauce} sauce`);
           if (c?.dip) bits.push(c.dip);
+          if (c?.topping === 'fries') bits.push('fries on top');
         };
         add(l.choices);
         l.combo?.parts.forEach((p) => add(p));
@@ -586,7 +597,7 @@ export function Cashier() {
   const soldOutCount = s.menu.filter((m) => m.active && day.soldOut[m.id]).length;
   const promo = promoStatus(summarize(day, orders, s), s);
   const promoKey = `${day.id}:${promo.level}`;
-  const methods: PaymentMethod[] = ['cash', ...(s.payments.gcash ? (['gcash'] as const) : []), ...(s.payments.maya ? (['maya'] as const) : [])];
+  const methods: PaymentMethod[] = ['cash', ...(s.payments.gcash ? (['gcash'] as const) : [])];
   const tabCount = (id: TabId) =>
     id === 'popular' ? 0 : lines.reduce((n, l) => n + (id === 'combos' ? (l.combo ? l.qty : 0) : !l.combo && itemById(s, l.itemId)?.category === id ? l.qty : 0), 0);
 
@@ -684,11 +695,14 @@ export function Cashier() {
                     return (
                       <button key={`c-${c.id}`} className={`tile tile-combos ${ok ? '' : 'out'}`} onClick={() => activate(e)}>
                         {i < 9 && <kbd>{i + 1}</kbd>}
-                        <span className="tile-name">{c.name}</span>
-                        <span className="tile-sub">{c.parts.map((p) => (p === 'fries' ? 'regular fries' : p)).join(' + ')}</span>
+                        <span className="tile-head">
+                          <TilePhoto src={c.photo} />
+                          <span className="tile-name">{c.name}</span>
+                        </span>
+                        <span className="tile-sub">{c.parts.map((p) => COMBO_PART[p]).join(' + ')}</span>
                         <span className="tile-foot">
                           <span className="tile-price">{peso(c.price)}</span>
-                          {ok ? save > 0 && <span className="tile-save">save {peso(save)}+</span> : <span className="tile-out">sold out</span>}
+                          {ok ? save > 0 && <span className="tile-save">save up to {peso(save)}</span> : <span className="tile-out">sold out</span>}
                         </span>
                       </button>
                     );
@@ -704,7 +718,10 @@ export function Cashier() {
                     return (
                       <button key={m.id} className={`tile tile-${m.category} ${out ? 'out' : ''} ${!out && n <= 5 ? 'low' : ''}`} onClick={() => activate(e)} aria-label={`${m.name}, ${peso(m.price)}, ${out ? 'sold out' : `${n} left`}`}>
                         {i < 9 && <kbd>{i + 1}</kbd>}
-                        <span className="tile-name">{m.name}</span>
+                        <span className="tile-head">
+                          <TilePhoto src={m.photo} />
+                          <span className="tile-name">{m.name}</span>
+                        </span>
                         {allergenText(itemTags(m), true) && <span className="tile-allergens">{allergenText(itemTags(m), true)}</span>}
                         <span className="tile-foot">
                           <span className="tile-price">{peso(m.price)}</span>
@@ -774,8 +791,8 @@ export function Cashier() {
               )}
               <div className="tools-row">
                 <div className="tools" aria-label="Tools">
-              <button className="btn small ghost tool-btn" title="Check a loyalty card's stamps" onClick={() => setTool('card')}>
-                    Card
+              <button className="btn small ghost tool-btn" title="Check a Boom Card's stamps" onClick={() => setTool('card')}>
+                    Boom Card
                   </button>
                   <button className="btn small ghost tool-btn" title="Log dropped or spoiled items" onClick={() => setTool('waste')}>
                     Waste
@@ -813,7 +830,7 @@ export function Cashier() {
                 <ul className="lines">
                   {lines.map((l) => {
                     const lineItem = itemById(s, l.itemId);
-                    const editable = !l.combo && !!lineItem && needsPicker(lineItem);
+                    const editable = !l.combo && !!lineItem && opensPicker(lineItem);
                     return (
                       <li key={l.id} className={`line ${l.free ? 'free' : ''}`}>
                         <div className="line-main">
@@ -899,13 +916,13 @@ export function Cashier() {
                     <StampDots n={card.stamps} size={s.loyalty.cardSize} />
                     <CardNameField number={card.cardId} by={device.cashier || day.openedBy} onSaved={(n) => !customerName.trim() && fillNameFromCard(n)} />
                   </div>
-                  <button className="btn ghost small" aria-label="Remove card" onClick={removeCard}>
+                  <button className="btn ghost small" aria-label="Remove Boom Card" onClick={removeCard}>
                     ✕
                   </button>
                 </div>
               ) : (
                 <div className="mini-form">
-                  <input className="input" value={cardInput} onChange={(e) => setCardInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), applyCard())} placeholder="Loyalty card no." aria-label="Loyalty card number" />
+                  <input className="input" value={cardInput} onChange={(e) => setCardInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), applyCard())} placeholder="Boom Card no." aria-label="Boom Card number" />
                   <button className="btn small" onClick={applyCard} disabled={!cardInput.trim()}>
                     Add
                   </button>
@@ -1005,6 +1022,12 @@ export function Cashier() {
   );
 }
 
+/** Small photo beside a menu tile's name. No photo (bottled water): nothing, so no gap. */
+function TilePhoto({ src }: { src?: string }) {
+  if (!src) return null;
+  return <img className="tile-photo" src={`./${src}`} alt="" loading="lazy" decoding="async" draggable={false} />;
+}
+
 export function LineDetails({ line }: { line: OrderLine }) {
   const bits: string[] = [];
   const add = (c?: OrderLine['choices']) => {
@@ -1013,6 +1036,7 @@ export function LineDetails({ line }: { line: OrderLine }) {
     if (c.extraSides?.length) bits.push(`+ extra ${c.extraSides.join(', ')}`);
     if (c.extraSauce) bits.push(`+ ${c.extraSauce} extra sauce`);
     if (c.dip) bits.push(`dip: ${c.dip}`);
+    if (c.topping === 'fries') bits.push('fries on top');
   };
   add(line.choices);
   line.combo?.parts.forEach((p) => add(p));

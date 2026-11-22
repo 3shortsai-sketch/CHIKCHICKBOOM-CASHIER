@@ -229,7 +229,7 @@ function ProfitInner() {
                 ))}
               </tbody>
             </table>
-            <p className="muted small">Range depends on which bowl, slushie or cookie the customer picks.</p>
+            <p className="muted small">Range depends on which bowl, drink or cookie the customer picks.</p>
           </section>
 
           <section className="panel">
@@ -245,7 +245,7 @@ function ProfitInner() {
                   <td>{peso(sum.promo.vouchers)}</td>
                 </tr>
                 <tr>
-                  <td>Loyalty rewards (ingredient cost)</td>
+                  <td>Boom Card rewards (ingredient cost)</td>
                   <td>{peso(Math.round(sum.promo.rewards * 100) / 100)}</td>
                 </tr>
               </tbody>
