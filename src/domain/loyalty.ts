@@ -1,4 +1,4 @@
-import type { Order, Reward, Settings, StampAdjustment } from './types';
+import type { Order, OrderLine, Reward, Settings, SpinResult, StampAdjustment } from './types';
 
 /**
  * Accepts "37", "037", "ccb37", "CCB-037", "ccb 37". Returns "CCB-037", or null
@@ -119,7 +119,23 @@ export function voucherWindow(issuedDate: string, s: Settings): { validFrom: str
   return { validFrom: after[0], validTo: after[n - 1] };
 }
 
-export type VoucherInfo = { code: string; issuedOrder: string; issuedDate: string; validFrom: string; validTo: string; usedBy?: string };
+export type VoucherInfo = { code: string; prize: 'voucher' | 'comboVoucher'; issuedOrder: string; issuedDate: string; validFrom: string; validTo: string; usedBy?: string };
+
+export type VoucherTerms = { amount: number; minOrder: number; validFrom: string; validTo: string; needsCombo: boolean; label: string };
+
+/**
+ * What a voucher won on the wheel is worth and when it can be used.
+ *  - ₱20 off: from the next selling day, orders of ₱150 and up.
+ *  - ₱15 off a combo: on a later order the same day or the next selling day, on an order with a combo.
+ */
+export function voucherTerms(spin: Pick<SpinResult, 'prize' | 'at'>, s: Settings): VoucherTerms {
+  const issued = localDate(spin.at);
+  if (spin.prize === 'comboVoucher') {
+    const amount = s.voucher.comboAmount ?? 15;
+    return { amount, minOrder: 0, validFrom: issued, validTo: nextSellingDay(issued, s) ?? addDays(issued, 1), needsCombo: true, label: `₱${amount} off a combo` };
+  }
+  return { amount: s.voucher.amount, minOrder: s.voucher.minOrder, ...voucherWindow(issued, s), needsCombo: false, label: `₱${s.voucher.amount} off` };
+}
 
 export function findVoucher(code: string, orders: Order[], s: Settings): VoucherInfo | null {
   const want = normalizeVoucher(code);
@@ -129,13 +145,8 @@ export function findVoucher(code: string, orders: Order[], s: Settings): Voucher
     if (!spin) continue;
     const issuedDate = localDate(spin.at);
     const usedBy = orders.find((u) => !u.voided && u.voucher?.code === want)?.number;
-    return {
-      code: want,
-      issuedOrder: o.number,
-      issuedDate,
-      ...voucherWindow(issuedDate, s),
-      usedBy,
-    };
+    const t = voucherTerms(spin, s);
+    return { code: want, prize: spin.prize === 'comboVoucher' ? 'comboVoucher' : 'voucher', issuedOrder: o.number, issuedDate, validFrom: t.validFrom, validTo: t.validTo, usedBy };
   }
   return null;
 }
@@ -152,12 +163,18 @@ export function checkVoucher(
   s: Settings,
   today: string,
   orderSubtotal: number,
+  /** The cart, so a ₱15-off-a-combo voucher can check there is a combo in it. */
+  lines?: OrderLine[],
 ): { ok: true; amount: number; code: string } | { ok: false; message: string } {
   const v = findVoucher(code, orders, s);
   if (!v) return { ok: false, message: 'Unknown voucher code.' };
   if (v.usedBy) return { ok: false, message: `Already used on order ${v.usedBy}.` };
   if (today < v.validFrom) return { ok: false, message: `Valid from ${v.validFrom}.` };
   if (today > v.validTo) return { ok: false, message: `Expired on ${v.validTo}.` };
+  if (v.prize === 'comboVoucher') {
+    if (!lines?.some((l) => l.combo && !l.free)) return { ok: false, message: 'This voucher is for an order with a combo. Add a combo first.' };
+    return { ok: true, amount: s.voucher.comboAmount ?? 15, code: v.code };
+  }
   if (orderSubtotal < s.voucher.minOrder) return { ok: false, message: `Order must be at least ₱${s.voucher.minOrder}.` };
   return { ok: true, amount: s.voucher.amount, code: v.code };
 }

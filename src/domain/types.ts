@@ -23,7 +23,7 @@ export type MenuItem = {
   allergens?: string[];
   /** Allergens that may be present (brand ingredients vary: "check the label"). */
   mayContain?: string[];
-  /** Photo file in public/menu/, e.g. "menu/ala-king.jpg". */
+  /** Photo file in public/, e.g. "menu/alaking.webp". */
   photo?: string;
 };
 
@@ -35,6 +35,8 @@ export type AllergenTags = { contains?: string[]; may?: string[] };
 export type Combo = {
   id: 'comboA' | 'comboB';
   name: string;
+  /** Photo file in public/, e.g. "menu/comboA.webp". */
+  photo?: string;
   price: number;
   /** Item kinds, in the order the picker asks for them. */
   parts: ('bowl' | 'fries' | 'slushie' | 'cookie')[];
@@ -47,6 +49,8 @@ export type Choices = {
   extraSides?: string[];
   extraSauce?: number;
   dip?: string;
+  /** Mango Shake / Watermelon Juice: more fresh fruit on top (default), or fries (80 g). */
+  topping?: 'fruit' | 'fries';
 };
 
 export type ComboPart = Choices & { itemId: string };
@@ -87,17 +91,21 @@ export type PrizeId =
   | 'doubleStamp'
   | 'tenOff'
   | 'voucher'
+  /** ₱15 off a combo on the next order, today or the next selling day. */
+  | 'comboVoucher'
   | 'tryAgain';
 
 export type WheelSlot = { prize: PrizeId; label: string; slots: number };
 
 export type SpinResult = {
-  /** Which bowl (line id + unit index) this spin belongs to. */
+  /** Which item (line id + unit index; a combo has 3 units per combo) this spin belongs to. */
   lineId: string;
   unit: number;
   prize: PrizeId;
   /** Cash handed back to the customer for this prize. */
   refund: number;
+  /** Set when the prize was a percentage off instead (Free meal on a combo, or a second Free meal). */
+  pct?: number;
   voucherCode?: string;
   /** Line added to the order for free items. */
   addedLineId?: string;
@@ -247,7 +255,7 @@ export type Settings = {
   wheel: { paused: boolean; slots: WheelSlot[] };
   loyalty: { prefix: string; first: number; last: number; cardSize: number; rewards: Reward[]; rewardOrderEarnsStamp: boolean };
   /** lastDayPrize: what a "voucher" spin gives on the last selling day (no tomorrow to use it). */
-  voucher: { amount: number; minOrder: number; validDays: number; lastDayPrize: PrizeId };
+  voucher: { amount: number; minOrder: number; validDays: number; /** ₱ off a combo for the 'comboVoucher' prize. */ comboAmount?: number; lastDayPrize: PrizeId };
   /** The days the booth sells (YYYY-MM-DD, sorted). A voucher starts on the next one. */
   sellingDays: string[];
   dailyGoal: number;

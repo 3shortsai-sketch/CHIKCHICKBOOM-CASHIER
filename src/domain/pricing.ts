@@ -41,9 +41,11 @@ export function stockUsage(lines: OrderLine[]): Record<string, number> {
   const add = (id: string, n: number) => {
     if (n > 0) used[id] = (used[id] ?? 0) + n;
   };
-  const addChoices = (c: { extraSides?: string[]; extraSauce?: number } | undefined, qty: number) => {
+  const addChoices = (c: { extraSides?: string[]; extraSauce?: number; topping?: string } | undefined, qty: number) => {
     add('extra-side', (c?.extraSides?.length ?? 0) * qty);
     add('extra-sauce', (c?.extraSauce ?? 0) * qty);
+    // Fries on top of a drink (80 g) comes out of the fries ingredient, not a Fries with Dip portion.
+    if (c?.topping === 'fries') add('topping-fries', qty);
   };
   for (const line of lines) {
     if (line.combo) {
@@ -71,26 +73,41 @@ export function snapshotLine(line: OrderLine, s: Settings): OrderLine {
   return { ...line, extraSidePrice: s.extraSidePrice, extraSaucePrice: s.extraSaucePrice, costEach: lineCostEach(line, s) };
 }
 
+/** Spins one combo earns. */
+export const COMBO_SPINS = 3;
+
+/** Does this line earn spins? Everything bought except bottled water, add-ons and free items. */
+function spins(l: OrderLine, s: Settings): number {
+  if (l.free) return 0;
+  if (l.combo) return COMBO_SPINS;
+  const item = itemById(s, l.itemId);
+  if (!item || item.kind === 'water' || item.category === 'addons') return 0;
+  return 1;
+}
+
 /**
- * Spins an order earns: one per bowl that is not in a combo and not free.
- * An order paid with a voucher earns none.
+ * Spins an order earns: one for every item bought (not bottled water, add-ons
+ * or free items), three for a combo. An order paid with a voucher earns none.
  */
 export function spinsEarned(lines: OrderLine[], s: Settings, hasVoucher: boolean): number {
   if (hasVoucher || s.wheel.paused) return 0;
-  return lines
-    .filter((l) => !l.combo && !l.free && itemById(s, l.itemId)?.kind === 'bowl')
-    .reduce((n, l) => n + l.qty, 0);
+  return lines.reduce((n, l) => n + spins(l, s) * l.qty, 0);
 }
 
-/** The bowl units that can spin, as {lineId, unit}. */
-export function spinnableBowls(lines: OrderLine[], s: Settings): { lineId: string; unit: number; name: string; price: number }[] {
-  const out: { lineId: string; unit: number; name: string; price: number }[] = [];
+export type SpinUnit = { lineId: string; unit: number; name: string; price: number; combo: boolean };
+
+/** Everything on the order that can spin, one entry per spin: {lineId, unit}. A combo gives 3 units per combo. */
+export function spinnableUnits(lines: OrderLine[], s: Settings): SpinUnit[] {
+  const out: SpinUnit[] = [];
   for (const l of lines) {
-    if (l.combo || l.free || itemById(s, l.itemId)?.kind !== 'bowl') continue;
-    for (let u = 0; u < l.qty; u++) out.push({ lineId: l.id, unit: u, name: l.name, price: lineUnitTotal(l, s) });
+    const n = spins(l, s) * l.qty;
+    for (let u = 0; u < n; u++) out.push({ lineId: l.id, unit: u, name: l.name, price: lineUnitTotal(l, s), combo: !!l.combo });
   }
   return out;
 }
+
+/** Older name, kept so existing screens keep working. */
+export const spinnableBowls = spinnableUnits;
 
 type PartKind = Combo['parts'][number];
 

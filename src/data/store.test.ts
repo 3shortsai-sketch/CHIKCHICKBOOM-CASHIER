@@ -184,4 +184,17 @@ describe('store', () => {
     store.applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: { ...settings, wiped: { days: [...(settings.wiped?.days ?? []), 'demo-x'], cardsBefore: {} } } }]);
     expect(store.getState().orders.X1).toBeUndefined();
   });
+
+  it('moves a device to the menu page names and prices, keeping costs and stock edited in Setup', () => {
+    const old = { ...store.getState().settings, menuVersion: 2, promoLimits: { warnPct: 6.5, pausePct: 8, minSales: 5000 } };
+    old.menu = old.menu.map((m) => (m.id === 'bowl-original' ? { ...m, name: 'Regular (Original) Chicken Rice Bowl', price: 149, unitCost: 90, startStock: 33 } : m));
+    store.applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: old }]);
+    const now = store.getState().settings;
+    const og = now.menu.find((m) => m.id === 'bowl-original')!;
+    expect([og.name, og.price, og.unitCost, og.startStock, og.photo]).toEqual(['OG Chicken Rice Bowl', 139, 90, 33, 'menu/og.webp']);
+    expect(now.menuVersion).toBe(3);
+    expect(now.combos.map((c) => c.price)).toEqual([339, 359]);
+    expect(now.promoLimits.pausePct).toBe(12);
+    expect(now.wheel.slots.find((w) => w.prize === 'comboVoucher')?.slots).toBe(1);
+  });
 });

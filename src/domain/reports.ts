@@ -88,7 +88,7 @@ export type DaySummary = {
   gross: number;
   /** Menu-price sales of live orders, with FREE MEAL bowls taken out (a giveaway, not a sale). */
   grossSales: number;
-  /** Vouchers used + ₱10-off cash given back. grossSales − discounts − manualRefunds = net. */
+  /** Vouchers used + ₱10-off and 30%-off cash given back. grossSales − discounts − manualRefunds = net. */
   discounts: number;
   /** Free-meal bowls, free prize items and loyalty reward items, at ingredient cost. */
   giveawaysAtCost: number;
@@ -198,8 +198,8 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
   }
   const hours = [...hourMap.values()].sort((a, b) => a.hour - b.hour);
 
-  // Wheel, at cost: a FREE MEAL costs the ingredients of that bowl (not its
-  // menu price), ₱10 off costs the cash, a free item its ingredients. Vouchers
+  // Wheel, at cost: a FREE MEAL costs the ingredients of that item (not its
+  // menu price); ₱10 off and 30% off cost the cash; a free item its ingredients. Vouchers
   // cost nothing until someone uses one (counted under promo.vouchers).
   let freeMealRefunds = 0;
   let freeMealCost = 0;
@@ -212,7 +212,7 @@ export function summarize(day: BusinessDay | undefined, all: Order[], s: Setting
       spins += 1;
       const w = wheelMap.get(sp.prize) ?? { prize: sp.prize, label: PRIZE_LABEL[sp.prize], count: 0, cost: 0 };
       w.count += 1;
-      if (sp.prize === 'freeMeal') {
+      if (sp.prize === 'freeMeal' && !sp.pct) {
         const spun = o.lines.find((l) => l.id === sp.lineId);
         // Nothing handed back (order already refunded) = nothing given away.
         const c = spun && sp.refund > 0 ? unitCost(spun, s) : 0;

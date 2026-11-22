@@ -5,24 +5,28 @@ and can be changed in `#setup` without touching code.
 
 ## Menu
 
+Names, prices and photos match the booth's menu page (menu version 3). Photos are in `public/menu/`.
+
 | Item | Price | Unit cost |
 | --- | ---: | ---: |
-| Regular (Original) Chicken Rice Bowl | ₱149 | ₱96.04 |
-| Soy Garlic Chicken Rice Bowl | ₱159 | ₱108.22 |
-| Garlic Butter Chicken Rice Bowl | ₱159 | ₱99.56 |
-| Ala King Chicken Rice Bowl | ₱169 | ₱107.93 |
-| Regular Fries (crinkle cut, 1 free dip) | ₱79 | ₱44.98 |
-| Overload Fries | ₱109 | ₱79.21 |
-| Watermelon Slushie | ₱129 | ₱88.87 |
-| Mango Slushie | ₱129 | ₱90.49 |
-| Bottled Water | ₱29 | ₱13.00 |
-| Choco Chip Cookie | ₱89 | ₱34.08 |
-| Cookie Monster Velvet Cookie | ₱99 | ₱26.16 |
+| OG Chicken Rice Bowl | ₱139 | ₱96.04 |
+| Chicken Ala King Rice Bowl | ₱169 | ₱107.93 |
+| Soy Garlic Chicken Rice Bowl | ₱149 | ₱108.22 |
+| Garlic Butter Chicken Rice Bowl | ₱149 | ₱99.56 |
+| Fries with Dip | ₱79 | ₱44.98 |
+| Overloaded Fries | ₱119 | ₱79.21 |
+| Mango Shake | ₱129 | ₱90.49 |
+| Watermelon Juice | ₱129 | ₱88.87 |
+| Bottled Water | ₱24 | ₱13.00 |
+| OG Chocolate Chip Cookie | ₱89 | ₱34.08 |
 | Biscoff Cookie | ₱89 | ₱37.02 |
+| Cookie Monster Velvet | ₱99 | ₱26.16 |
 
-- Bowls: 1 free side: Butter Corn Carrot, Shredded Cabbage or Cucumber Salad.
-- Regular Fries: 1 free dip: Ketchup, Ketchup-Mayo or Ranch. Overload Fries comes with ranch, no dip choice.
-- Combo A ₱329 (any bowl + Regular Fries + any slushie), Combo B ₱339 (any bowl + any slushie + any cookie).
+- Bowls: 1 free side: Cucumbers, Buttered Carrots & Corn or Shredded Cabbage.
+- Fries with Dip: 1 free dip: Ranch, Ketchup or Ketchup Mayo.
+- Mango Shake / Watermelon Juice: topped with more fresh fruit or with fries. Fries on top is 80 g, taken from the fries ingredient count (not from the Fries with Dip portions).
+- Boom Combo A ₱339 (any bowl + Fries with Dip + a shake or juice), Boom Combo B ₱359 (any bowl + any cookie + a shake or juice). Save up to ₱38.
+- A device that had the old menu gets these names, prices, photos, combos and the new wheel on its next start; costs, starting stock and which items are on (Setup) are kept.
 
 ### Allergens (from the ingredient list)
 "Contains" = in the recipe. "May contain" = depends on a brand product (Knorr, bread crumbs, frying oil, HyFun fries, choco chips): check the label and update Setup.
@@ -86,24 +90,27 @@ but the kitchen tablet is not.
 
 ### Spin-to-Win: the customer spins **after paying, at the pickup spot**
 1. Cashier takes the order and the payment, and moves on to the next customer straight away. The order goes to the kitchen.
-2. The customer spins the wheel at the pickup spot, once per bowl that isn't in a combo.
+2. The customer spins the wheel at the pickup spot: **one spin for every item bought** (not bottled water, add-ons or free/reward items), **three for a combo**.
 3. The wheel person calls out the prize. The cashier taps the order in **Spins waiting** and taps the prize (or uses the digital backup wheel). Spins stay waiting for 45 minutes.
 
 | Prize | What the app does |
 | --- | --- |
-| FREE MEAL | Shows "Give back ₱X cash" (the price of that bowl, extras included, never more than the customer paid) |
+| FREE MEAL | **The item that spin belongs to is free**: "Give back ₱X cash" (its price, extras included, never more than the customer paid). Only one free item per order: a second Free meal, or a Free meal on a combo spin, gives **30% off** that item or combo instead |
 | ₱10 off | Shows "Give back ₱10 cash" |
 | Free cookie / water / extra sauce | Adds it to the order at ₱0; the kitchen sees it highlighted. If it's sold out, the app says so and the cashier logs "Try again" + sticker |
 | Double stamp | +1 stamp (needs the loyalty card; the cashier can add it after paying) |
 | ₱20 off next day | Shows a code like `V-K7PM` to write on a voucher slip. On the last selling day there is no next day, so the slot gives the stand-in prize instead (₱10 off unless Setup says otherwise) |
+| ₱15 off a combo | A code to write on a slip, valid on a later order the same day or the next selling day, only on an order with a combo |
 | Try again | Sticker |
 
-- Money given back is always **cash from the drawer**, even if the customer paid by GCash or Maya. The cash drawer count accounts for it.
-- One prize per bowl. A bowl from a loyalty reward doesn't spin. An order paid with a voucher doesn't spin at all.
+- Money given back is always **cash from the drawer**, even if the customer paid by GCash. The cash drawer count accounts for it.
+- One prize per spin. An item from a Boom Card reward doesn't spin. An order paid with a voucher doesn't spin at all.
+- Wheel (20 slots, same as the menu page): Free meal 1, Free cookie 1, Free water 2, Free sauce 2, Double stamp 2, ₱10 off 2, ₱20 off next day 1, ₱15 off a combo 1, Try again 8.
+- With every item spinning, prizes cost about ₱10 per spin at cost, roughly 8–10% of sales. The prize alarm warns at 10% and suggests pausing at 12%.
 - "Undo last spin" fixes a wrong tap. "Customer skipped the spin" moves on.
 - The pause switch in Setup turns the wheel off.
 
-### Loyalty card
+### Boom Card (loyalty card)
 - Cards CCB-001 to CCB-500. The cashier can type just `37`.
 - 1 stamp per order (+1 for each double-stamp prize).
 - 5 stamps: Free Regular Fries. 10 stamps: Free Regular (Original) Chicken Rice Bowl.
