@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { isLow, onHand, servingsLeft } from '../domain/inventory';
+import { blankList, EXAMPLE, importPrompt, parseInventory, planInventory, planUndo, summary, type Plan, type Row, type UndoInfo } from '../domain/inventoryImport';
 import { newId } from '../domain/pricing';
 import { stockLeft } from '../domain/reports';
 import type { BusinessDay, Ingredient, MenuItem, Settings, WasteEntry } from '../domain/types';
 import { appendToDay, modeOrders, openDay, patchDay, saveSettings, useDevice, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
+import { download } from '../ui/ui';
 
 const CATEGORY_LABEL: Record<MenuItem['category'], string> = { bowls: 'Rice bowls', fries: 'Fries', drinks: 'Drinks', cookies: 'Cookies', addons: 'Add-ons' };
 
@@ -164,6 +166,264 @@ function IngredientRow({ ing, s, orders, who }: { ing: Ingredient; s: Settings; 
   );
 }
 
+/** "3 ingredients", "1 ingredient". */
+function count(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** Put text on the clipboard; older browsers get the select-and-copy way. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const box = document.createElement('textarea');
+    box.value = text;
+    box.style.position = 'fixed';
+    box.style.opacity = '0';
+    document.body.appendChild(box);
+    box.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    box.remove();
+    return ok;
+  }
+}
+
+/** Make the store calls of an import (or of its undo): one for the day, one for settings. */
+function runPlan(plan: Pick<Plan, 'stockCounts' | 'menu' | 'ingredients'>, day: BusinessDay | undefined) {
+  if (plan.stockCounts && day) patchDay(day.id, { stockCounts: plan.stockCounts });
+  if (plan.menu || plan.ingredients) saveSettings({ ...(plan.menu ? { menu: plan.menu } : {}), ...(plan.ingredients ? { ingredients: plan.ingredients } : {}) });
+}
+
+/**
+ * Load many counts at once: paste a list (or pick a file), check the preview, apply.
+ * Problem lines never stop the good ones. The last import can be undone until the screen is left.
+ */
+function ImportPanel({ s, day, orders, left, who }: { s: Settings; day: BusinessDay | undefined; orders: ReturnType<typeof modeOrders>; left: Record<string, number>; who: string }) {
+  const [text, setText] = useState('');
+  /** Line numbers of new ingredients the user unticked. */
+  const [skip, setSkip] = useState<number[]>([]);
+  const [alsoStart, setAlsoStart] = useState(false);
+  const [done, setDone] = useState<{ note: string; undo?: UndoInfo } | null>(null);
+  const [fileNote, setFileNote] = useState('');
+  const [copyNote, setCopyNote] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const { rows, blank } = useMemo(() => parseInventory(text, s), [text, s]);
+  const sum = summary(rows);
+  const newRows = rows.filter((r) => r.kind === 'new');
+  const adding = newRows.filter((r) => !skip.includes(r.line)).length;
+  const valid = sum.menu + sum.ingredient + adding;
+  const prompt = useMemo(() => importPrompt(s), [s]);
+
+  const change = (value: string) => {
+    setText(value);
+    setSkip([]);
+    if (value.trim()) setDone(null);
+  };
+
+  const pickFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (/\.(xlsx?|numbers|ods|pdf|png|jpe?g)$/i.test(file.name)) {
+      setFileNote('That file cannot be read here. In Excel or Sheets, save or download it as CSV first.');
+      return;
+    }
+    change(await file.text());
+    setFileNote(`Loaded ${file.name}.`);
+  };
+
+  const apply = () => {
+    const plan = planInventory(rows, { settings: s, day, who, now: Date.now(), alsoStart, skipNew: skip, newId: () => newId('ing-') });
+    runPlan(plan, day);
+    const parts = [
+      plan.done.menu ? count(plan.done.menu, 'menu item') : '',
+      plan.done.ingredient ? count(plan.done.ingredient, 'ingredient') : '',
+      plan.done.added ? `${count(plan.done.added, 'new ingredient')} added` : '',
+    ].filter(Boolean);
+    setDone({ note: `Counts updated: ${parts.join(', ')}.`, undo: plan.undo });
+    setText('');
+    setSkip([]);
+    setFileNote('');
+  };
+
+  const undo = () => {
+    if (!done?.undo) return;
+    runPlan(planUndo(done.undo, s, day), day);
+    setDone({ note: 'Undone. The counts are back to what they were.' });
+  };
+
+  /** The number we have now, to show next to the new one. */
+  const before = (r: Row): string => {
+    if (r.kind === 'menu' && r.id) return String(Math.max(0, day ? (left[r.id] ?? 0) : (s.menu.find((m) => m.id === r.id)?.startStock ?? 0)));
+    const ing = r.kind === 'ingredient' ? s.ingredients.find((i) => i.id === r.id) : undefined;
+    const have = ing ? onHand(ing, orders) : null;
+    return have === null ? '–' : fmt(have);
+  };
+
+  return (
+    <section className="panel imp">
+      <h2>Import counts</h2>
+      <p className="muted small imp-lead">
+        Load all your counts in one go. Write one line for each thing: the name, a comma, then the amount. Like this:
+      </p>
+      <pre className="imp-example">{EXAMPLE}</pre>
+
+      <textarea
+        className="input imp-text"
+        rows={6}
+        value={text}
+        placeholder="Paste your list here"
+        aria-label="Your list of counts"
+        spellCheck={false}
+        onChange={(e) => {
+          change(e.target.value);
+          setFileNote('');
+        }}
+      />
+      <div className="row imp-tools">
+        <button className="btn small" onClick={() => fileRef.current?.click()}>
+          Choose a file
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,.tsv,.txt,text/csv,text/plain"
+          hidden
+          aria-label="File with your counts"
+          onChange={(e) => {
+            void pickFile(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+        <button className="btn small" onClick={() => download('stock-count-list.csv', blankList(s), 'text/csv')}>
+          Download a blank list
+        </button>
+        <button
+          className="btn small"
+          onClick={async () => {
+            const ok = await copyText(prompt);
+            setCopyNote(ok ? 'Copied. Paste it into Claude with a screenshot of your sheet, then paste the answer here.' : 'Could not copy. Tap "Show the prompt" and copy it by hand.');
+          }}
+        >
+          Copy the prompt for Claude
+        </button>
+        {text && (
+          <button className="link-btn" onClick={() => change('')}>
+            Clear
+          </button>
+        )}
+      </div>
+      {fileNote && (
+        <p className="muted small" role="status">
+          {fileNote}
+        </p>
+      )}
+      {copyNote && (
+        <p className="imp-ok small" role="status">
+          {copyNote}
+        </p>
+      )}
+      <p className="muted small">
+        The blank list has every name filled in: open it in Excel or Sheets, type the amounts, then choose the file here. Have a sheet already? Copy the prompt, send it to Claude with a screenshot of your sheet, and paste the answer in the box.
+      </p>
+      <details className="imp-prompt">
+        <summary>Show the prompt</summary>
+        <textarea className="input" rows={10} readOnly value={prompt} aria-label="Prompt for Claude" onFocus={(e) => e.target.select()} />
+      </details>
+
+      {rows.length > 0 && (
+        <>
+          <div className="table-scroll">
+            <table className="imp-table">
+              <thead>
+                <tr>
+                  <th>You wrote</th>
+                  <th>Goes to</th>
+                  <th>Now → new</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.line} className={r.kind === 'error' ? 'imp-bad' : ''}>
+                    <td className="imp-raw">{r.name}</td>
+                    <td>
+                      {r.kind === 'menu' && <span className="imp-ok">✔ menu item{r.close ? `: ${r.matchedName}` : ''}</span>}
+                      {r.kind === 'ingredient' && <span className="imp-ok">✔ ingredient{r.close ? `: ${r.matchedName}` : ''}</span>}
+                      {r.kind === 'new' && (
+                        <label className="imp-new">
+                          <input type="checkbox" checked={!skip.includes(r.line)} onChange={(e) => setSkip(e.target.checked ? skip.filter((n) => n !== r.line) : [...skip, r.line])} />
+                          <span>＋ new ingredient ({r.unit})</span>
+                        </label>
+                      )}
+                      {r.kind === 'error' && <span className="imp-err">✖ {r.problem}</span>}
+                    </td>
+                    <td className="imp-num">
+                      {r.kind === 'error' ? (
+                        ''
+                      ) : (
+                        <>
+                          {r.typed && <span className="muted small imp-typed">{r.typed} → </span>}
+                          <span className="muted">{before(r)} → </span>
+                          <b>{fmt(r.amount)}</b>
+                          {r.kind !== 'menu' && r.unit ? ` ${r.kind === 'ingredient' ? (s.ingredients.find((i) => i.id === r.id)?.unit ?? r.unit) : r.unit}` : ''}
+                          {r.low !== undefined && <span className="muted small"> · warn at {fmt(r.low)}</span>}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="imp-summary" role="status">
+            {count(sum.menu, 'menu item')}, {count(sum.ingredient, 'ingredient')}, {adding} new will be added, {count(sum.error, 'problem')}
+            {blank > 0 && `, ${blank} left blank`}
+            {newRows.length > 0 && (
+              <>
+                {' '}
+                <button className="link-btn" onClick={() => setSkip(adding > 0 ? newRows.map((r) => r.line) : [])}>
+                  {adding > 0 ? 'Untick all new' : 'Tick all new'}
+                </button>
+              </>
+            )}
+          </p>
+          {sum.menu > 0 &&
+            (day ? (
+              <label className="imp-check">
+                <input type="checkbox" checked={alsoStart} onChange={(e) => setAlsoStart(e.target.checked)} />
+                <span>Also use these as the starting stock for new days</span>
+              </label>
+            ) : (
+              <p className="muted small">The day is not open yet, so the menu item counts become the starting stock for the next day.</p>
+            ))}
+        </>
+      )}
+      {text.trim() !== '' && rows.length === 0 && <p className="muted small">No counts found yet{blank > 0 ? `: ${blank} lines have no amount` : ''}.</p>}
+
+      <div className="row">
+        <button className="btn primary" disabled={valid === 0} onClick={apply}>
+          Apply {count(valid, 'count')}
+        </button>
+      </div>
+      {done && (
+        <p className="imp-done" role="status">
+          <span>{done.note}</span>
+          {done.undo && (
+            <button className="btn small" onClick={undo}>
+              Undo
+            </button>
+          )}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function Inventory() {
   const state = useStore((st) => st);
   const s = state.settings;
@@ -191,6 +451,8 @@ export function Inventory() {
           </label>
           {lowCount > 0 && <span className="banner warn">{lowCount} ingredient{lowCount > 1 ? 's are' : ' is'} running low</span>}
         </div>
+
+        <ImportPanel s={s} day={day} orders={orders} left={left} who={who || 'Kitchen'} />
 
         <section className="panel">
           <h2>Menu items today</h2>

@@ -3779,3 +3779,113 @@ th:first-child {
   column-gap: 0.4em;
   row-gap: 0;
 }
+
+/* ---- inventory import ---- */
+.imp-lead {
+  margin: 0;
+}
+.imp-example {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--cream);
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.imp-text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+}
+.imp-tools .link-btn {
+  min-height: 36px;
+  padding: 0 0.4rem;
+  cursor: pointer;
+}
+.imp-prompt summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--blue);
+  padding: 0.3rem 0;
+}
+.imp-prompt textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.8rem;
+}
+.imp-table {
+  width: 100%;
+}
+.imp-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.imp-raw {
+  font-weight: 700;
+}
+.imp-typed {
+  white-space: nowrap;
+}
+.imp-ok {
+  color: var(--green);
+  font-weight: 700;
+}
+.imp-err {
+  color: var(--red-deep);
+  font-weight: 700;
+}
+.imp-bad td {
+  background: var(--danger-soft);
+}
+.imp-new,
+.imp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.imp-new input,
+.imp-check input {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: none;
+  accent-color: var(--green);
+}
+.imp-summary {
+  margin: 0;
+  font-weight: 700;
+}
+.imp-summary .link-btn {
+  margin-left: 0.4rem;
+  cursor: pointer;
+}
+.imp-done {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 12px;
+  background: var(--green-soft);
+  border: 2px solid var(--green);
+  font-weight: 700;
+}
+/* Long problem texts wrap instead of making the preview scroll sideways. */
+.imp-table td,
+.imp-table th {
+  white-space: normal;
+}
+.imp-table .imp-num {
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .imp-table .imp-num {
+    white-space: normal;
+  }
+}
