@@ -128,11 +128,18 @@ export type VoucherTerms = { amount: number; minOrder: number; validFrom: string
  *  - ₱20 off: from the next selling day, orders of ₱150 and up.
  *  - ₱15 off a combo: on a later order the same day or the next selling day, on an order with a combo.
  */
+/** Last day a ₱15 combo voucher works: the next selling day, or only today on the last day of the bazaar. */
+function comboVoucherEnd(issued: string, s: Settings): string {
+  const next = nextSellingDay(issued, s);
+  if (next) return next;
+  return (s.sellingDays ?? []).length ? issued : addDays(issued, 1);
+}
+
 export function voucherTerms(spin: Pick<SpinResult, 'prize' | 'at'>, s: Settings): VoucherTerms {
   const issued = localDate(spin.at);
   if (spin.prize === 'comboVoucher') {
     const amount = s.voucher.comboAmount ?? 15;
-    return { amount, minOrder: 0, validFrom: issued, validTo: nextSellingDay(issued, s) ?? addDays(issued, 1), needsCombo: true, label: `₱${amount} off a combo` };
+    return { amount, minOrder: 0, validFrom: issued, validTo: comboVoucherEnd(issued, s), needsCombo: true, label: `₱${amount} off a combo` };
   }
   return { amount: s.voucher.amount, minOrder: s.voucher.minOrder, ...voucherWindow(issued, s), needsCombo: false, label: `₱${s.voucher.amount} off` };
 }

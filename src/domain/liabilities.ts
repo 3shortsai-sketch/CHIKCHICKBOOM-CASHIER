@@ -31,11 +31,15 @@ function openVouchers(orders: Order[], s: Settings, today: string): { count: num
     for (const sp of o.spins) if (sp.voucherCode) codes.add(sp.voucherCode);
   }
   let count = 0;
+  let amount = 0;
   for (const code of codes) {
     const v = findVoucher(code, orders, s);
-    if (v && !v.usedBy && v.validTo >= today) count += 1;
+    if (v && !v.usedBy && v.validTo >= today) {
+      count += 1;
+      amount += v.prize === 'comboVoucher' ? (s.voucher.comboAmount ?? 15) : s.voucher.amount;
+    }
   }
-  return { count, amount: count * s.voucher.amount };
+  return { count, amount };
 }
 
 /** `orders` and `cards` may hold both modes; only the current mode counts. */

@@ -1103,3 +1103,45 @@ describe('menu page wheel rules', () => {
     expect(s.payments.maya).toBe(false);
   });
 });
+
+describe('fixes from the cashier-seat bug hunt', () => {
+  it('never hands out a voucher code that already exists', () => {
+    const o = order([bowl(1, { id: 'b1' })]);
+    const codes = ['V-AAAA', 'V-AAAA', 'V-BBBB'];
+    let i = 0;
+    // rand is called 4 times per code; feed fixed letters per attempt.
+    const seq = [0, 0, 0, 0, 0, 0, 0, 0, 0.05, 0.05, 0.05, 0.05];
+    const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'voucher', { ...ctx, rand: () => seq[i++ % seq.length], codeTaken: (c) => c === 'V-AAAA' });
+    if (!r.ok) throw new Error(r.message);
+    expect(r.spin.voucherCode).not.toBe('V-AAAA');
+    expect(codes).toContain('V-AAAA');
+  });
+
+  it('gives a combo its 30% off only once', () => {
+    const forCombo = [bowl(), fries(), slush()];
+    const o = order(applyCombo(forCombo, suggestCombo(forCombo, s)!, s));
+    const id = o.lines[0].id;
+    const a = applyPrize(o, { lineId: id, unit: 0 }, 'freeMeal', ctx);
+    if (!a.ok) throw new Error(a.message);
+    const b = applyPrize(a.order, { lineId: id, unit: 1 }, 'freeMeal', ctx);
+    if (!b.ok) throw new Error(b.message);
+    expect(a.spin.refund).toBe(102);
+    expect(b.spin.refund).toBe(0);
+  });
+
+  it('a combo voucher won on the last selling day is for that day only', () => {
+    expect(voucherTerms({ prize: 'comboVoucher', at: at('2026-11-27T12:00:00') }, s)).toMatchObject({ validFrom: '2026-11-27', validTo: '2026-11-27' });
+  });
+
+  it('counts a ₱15 combo voucher as ₱15 owed', () => {
+    const o = { ...order([bowl(1, { id: 'b1' })], { now: at('2026-11-23T12:00:00') }) };
+    const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'comboVoucher', { ...ctx, now: at('2026-11-23T12:00:00') });
+    if (!r.ok) throw new Error(r.message);
+    expect(liabilities([r.order], [], s, '2026-11-23').vouchers).toEqual({ count: 1, amount: 15 });
+  });
+
+  it('writes fries on top in the export', () => {
+    const o = order([{ ...slush(), choices: { topping: 'fries' } }]);
+    expect(ordersCsv(day, [o], s)).toContain('fries on top');
+  });
+});

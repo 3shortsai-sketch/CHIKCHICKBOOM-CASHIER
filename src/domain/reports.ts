@@ -347,6 +347,7 @@ export function orderRows(day: BusinessDay | undefined, all: Order[], s: Setting
         l.choices?.extraSides?.length && `extra sides: ${l.choices.extraSides.join('/')}`,
         l.choices?.extraSauce && `extra sauce x${l.choices.extraSauce}`,
         l.choices?.dip && `dip: ${l.choices.dip}`,
+        (l.choices?.topping === 'fries' || l.combo?.parts.some((p) => p.topping === 'fries')) && 'fries on top',
         l.combo && l.combo.parts.map((p) => itemById(s, p.itemId)?.name ?? p.itemId).join(' + '),
         l.free && (l.free.reason === 'prize' ? `wheel: ${PRIZE_LABEL[l.free.prize]}` : `reward: ${l.free.stampsAt} stamps`),
         l.notes,

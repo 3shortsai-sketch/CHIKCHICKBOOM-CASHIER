@@ -49,7 +49,8 @@ export function PayModal({
   const [tendered, setTendered] = useState<number | null>(null);
   const [typed, setTyped] = useState('');
   const [reference, setReference] = useState('');
-  const cash = typed ? Number(typed) : (tendered ?? 0);
+  // Nothing typed and no button tapped: Enter means the customer paid the exact amount.
+  const cash = typed ? Number(typed) : (tendered ?? due);
   const change = cash - due;
   const ref = reference.trim();
   const canPay = method === 'cash' ? cash >= due : ref.length >= MIN_REFERENCE;
@@ -93,7 +94,7 @@ export function PayModal({
       {method === 'cash' ? (
         <>
           <div className="quick-cash">
-            <button className={`btn ${tendered === due && !typed ? 'primary' : ''}`} onClick={() => { setTendered(due); setTyped(''); }}>Exact</button>
+            <button className={`btn ${(tendered === due || tendered === null) && !typed ? 'primary' : ''}`} onClick={() => { setTendered(due); setTyped(''); }}>Exact ↵</button>
             {cashSuggestions(due).map((n) => (
               <button key={n} className={`btn ${tendered === n && !typed ? 'primary' : ''}`} onClick={() => { setTendered(n); setTyped(''); }}>
                 {peso(n)}
@@ -197,7 +198,7 @@ export function AfterPay({
   const log = (landed: PrizeId, via: 'physical' | 'digital') => {
     // A past order is only for looking: nothing is logged from here.
     if (past || !nextUnit) return;
-    const r = applyPrize(order, nextUnit, landed, { settings: s, pickFree, via, now: Date.now() });
+    const r = applyPrize(order, nextUnit, landed, { settings: s, pickFree, via, now: Date.now(), codeTaken: (code) => orders.some((o) => o.spins.some((x) => x.voucherCode === code)) });
     if (!r.ok) return setMessage({ text: r.message, bad: true });
     onPatch(spinPatch(r.order));
     setMessage({ text: via === 'digital' ? `Digital wheel landed on ${PRIZE_LABEL[landed]}. ${r.message}` : r.message });
@@ -233,7 +234,9 @@ export function AfterPay({
         return;
       }
       const n = Number(e.key);
-      if (!past && spinsLeft > 0 && n >= 1 && n <= PRIZE_ORDER.length) log(PRIZE_ORDER[n - 1], 'physical');
+      // Number keys log a prize only on a screen opened from "Spins waiting": on the
+      // change screen a 1 is far more likely the next customer's first item.
+      if (mode === 'spin' && spinsLeft > 0 && n >= 1 && n <= PRIZE_ORDER.length) log(PRIZE_ORDER[n - 1], 'physical');
     };
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);

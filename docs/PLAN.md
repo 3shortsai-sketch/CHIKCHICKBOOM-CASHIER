@@ -107,7 +107,7 @@ but the kitchen tablet is not.
 - One prize per spin. An item from a Boom Card reward doesn't spin. An order paid with a voucher still spins.
 - Wheel (20 slots, same as the menu page): Free meal 1, Free cookie 1, Free water 2, Free sauce 2, Double stamp 2, ₱10 off 2, ₱20 off next day 1, ₱15 off a combo 1, Try again 8.
 - With every item spinning, prizes cost about ₱10 per spin at cost, roughly 8–10% of sales. The prize warning is switched off (the booth's choice); the dashboard still shows the %. It can be switched back on in Setup (warn 10%, pause 12%).
-- "Undo last spin" fixes a wrong tap. "Customer skipped the spin" moves on.
+- "Undo last spin" fixes a wrong tap. A customer who skips the wheel: tap "Next order"; the spin stays under Spins waiting for 45 minutes.
 - The pause switch in Setup turns the wheel off.
 
 ### Boom Card (loyalty card)
@@ -121,7 +121,7 @@ but the kitchen tablet is not.
 ### Vouchers (₱20 off on the next selling day)
 - Valid on the **next selling day** after it was won, on orders of ₱150 or more, once. The selling days are listed in Setup ("Bazaar days": Nov 23, 24, 25 and 27; Nov 26 is a holiday), so a voucher won on Nov 25 works on Nov 27. How many selling days it stays valid is a setting (1).
 - **Last-day swap**: on the last selling day a voucher could never be used, so the voucher slot gives another prize instead. Setup picks which one ("On the last day the voucher slot gives"); it starts as ₱10 off.
-- Orders with a voucher get no spins.
+- Orders with a voucher still get their spins.
 
 ### Stock
 - Starting stock is set when the day opens. Combos use up their bowl, fries and slushie; extras and free prize items count too.

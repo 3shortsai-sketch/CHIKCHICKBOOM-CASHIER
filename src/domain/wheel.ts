@@ -1,5 +1,5 @@
 import { isLastSellingDay, localDate } from './loyalty';
-import { lineUnitTotal, newId, snapshotLine, spinnableUnits } from './pricing';
+import { COMBO_SPINS, lineUnitTotal, newId, snapshotLine, spinnableUnits } from './pricing';
 import type { MenuItem, Order, OrderLine, PrizeId, Settings, SpinResult, WheelSlot } from './types';
 
 export const PRIZE_LABEL: Record<PrizeId, string> = {
@@ -41,6 +41,8 @@ export type PrizeContext = {
   via: 'physical' | 'digital';
   now: number;
   rand?: () => number;
+  /** Is this voucher code already on another order? Then another one is drawn. */
+  codeTaken?: (code: string) => boolean;
 };
 
 export type PrizeOutcome =
@@ -62,6 +64,13 @@ function freeLine(item: MenuItem, prize: PrizeId, s: Settings): OrderLine {
 }
 
 /** What the customer has paid net so far: the amount due minus prize cash and refunds already handed back. */
+/** A voucher code no other voucher has (checked on this order and, through ctx, on all others). */
+function freshCode(order: Order, ctx: PrizeContext): string {
+  let code = makeVoucherCode(ctx.rand);
+  for (let i = 0; i < 50 && (order.spins.some((x) => x.voucherCode === code) || ctx.codeTaken?.(code)); i++) code = makeVoucherCode(ctx.rand);
+  return code;
+}
+
 /** Free meal on a combo (or a second Free meal on one order) gives this % off instead. */
 export const FREE_MEAL_FALLBACK_PCT = 30;
 
@@ -107,7 +116,12 @@ export function applyPrize(order: Order, unit: { lineId: string; unit: number },
       // item: both give 30% off that item instead.
       const price = lineUnitTotal(line, s);
       const alreadyFree = order.spins.some((x) => x.prize === 'freeMeal' && !x.pct && x.refund > 0);
-      if (line.combo || alreadyFree) {
+      const sameCombo = !!line.combo && order.spins.some((x) => x.prize === 'freeMeal' && x.lineId === line.id && Math.floor(x.unit / COMBO_SPINS) === Math.floor(unit.unit / COMBO_SPINS));
+      if (sameCombo) {
+        // The 30% for this combo was already given: a combo can't be won bit by bit.
+        spin.pct = FREE_MEAL_FALLBACK_PCT;
+        message = 'This combo already got its 30% off. Give a sticker.';
+      } else if (line.combo || alreadyFree) {
         spin.pct = FREE_MEAL_FALLBACK_PCT;
         spin.refund = Math.min(Math.round((price * FREE_MEAL_FALLBACK_PCT) / 100), paid);
         message = `${line.combo ? 'Free meal on a combo' : 'Only one free item per order'}: 30% off ${line.combo ? 'the combo' : 'this item'}. Give back ₱${spin.refund} cash.`;
@@ -147,12 +161,12 @@ export function applyPrize(order: Order, unit: { lineId: string; unit: number },
       break;
     }
     case 'voucher': {
-      spin.voucherCode = makeVoucherCode(ctx.rand);
+      spin.voucherCode = freshCode(order, ctx);
       message = `Write this code on a voucher slip: ${spin.voucherCode}`;
       break;
     }
     case 'comboVoucher': {
-      spin.voucherCode = makeVoucherCode(ctx.rand);
+      spin.voucherCode = freshCode(order, ctx);
       message = `₱${s.voucher.comboAmount ?? 15} off a combo on the next order, today or the next selling day. Write this code on a voucher slip: ${spin.voucherCode}`;
       break;
     }

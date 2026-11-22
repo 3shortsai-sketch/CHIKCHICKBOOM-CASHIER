@@ -327,6 +327,20 @@ export function ComboPicker({
 
   const bowl = parts.bowl;
   const drink = parts.slushie;
+  // Enter moves on from the side-and-extras step, like the "Next" button.
+  const sideStep = !!step.sub && step.kind === 'bowl';
+  useEffect(() => {
+    if (!sideStep) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || e.repeat || !bowl?.side) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (stepIdx + 1 < steps.length) setStepIdx(stepIdx + 1);
+      else finish(parts);
+    };
+    addEventListener('keydown', onKey, true);
+    return () => removeEventListener('keydown', onKey, true);
+  });
   return (
     <Modal title={`${combo.name} · ${peso(combo.price)} — step ${stepIdx + 1} of ${steps.length}`} onClose={onClose} wide>
       <ol className="steps">

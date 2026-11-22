@@ -84,7 +84,7 @@ function upgradeSettings(saved: Partial<Settings> | null | undefined): Settings 
       loyalty: { ...merged.loyalty, rewards: fresh.loyalty.rewards },
       // The booth chose to switch the prize warning off with the new wheel.
       promoLimits: { ...(oldLimits ? fresh.promoLimits : merged.promoLimits), off: true },
-      ingredients: merged.ingredients.map((i) => (i.id === 'ing-fries' && !i.uses ? { ...i, uses: { 'topping-fries': 0.08 } } : i)),
+      ingredients: merged.ingredients.map((i) => (i.id === 'ing-fries' && i.uses?.['topping-fries'] === undefined ? { ...i, uses: { ...i.uses, 'topping-fries': 0.08 } } : i)),
       menuVersion: MENU_VERSION,
     };
   }
