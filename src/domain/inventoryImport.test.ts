@@ -129,7 +129,7 @@ describe('parseInventory: messy input', () => {
 
   it('gives a plain message for a bad amount', () => {
     expect(one('Rice, -3')).toMatchObject({ kind: 'error', problem: 'The amount cannot be less than 0.' });
-    expect(one('Rice, lots')).toMatchObject({ kind: 'error', problem: 'The amount is not a number.' });
+    expect(one('Rice, lots')).toMatchObject({ kind: 'error', problem: 'Write one number, then one unit, like 25 kg. Notes and ranges are not read.' });
     expect(one('Rice')).toMatchObject({ kind: 'error', problem: 'No amount. Write it like this: Rice, 20' });
     expect(one(', 5')).toMatchObject({ kind: 'error', problem: 'No name.' });
     expect(one('Rice, 99999999').kind).toBe('error');
@@ -159,10 +159,9 @@ describe('parseInventory: messy input', () => {
   });
 
   it('says so when the unit cannot be changed to the ingredient\'s unit', () => {
-    const problem = 'This is counted in kg here. Change the unit in the sheet or in the list.';
-    expect(one('Rice, 3 packs')).toMatchObject({ kind: 'error', id: 'ing-rice', problem });
-    expect(one('Rice, 2 L')).toMatchObject({ kind: 'error', problem });
-    expect(one('Eggs, 2 kg')).toMatchObject({ kind: 'error', problem: 'This is counted in pcs here. Change the unit in the sheet or in the list.' });
+    expect(one('Rice, 3 packs')).toMatchObject({ kind: 'error', id: 'ing-rice', problem: 'This is counted in kg here, not in pack. Write the amount in kg.' });
+    expect(one('Rice, 2 L').kind).toBe('error');
+    expect(one('Eggs, 2 kg')).toMatchObject({ kind: 'error', problem: 'This is counted in pcs here, not in kg. Write the amount in pcs.' });
     // Ways of counting pieces are left alone.
     expect(one('Agave syrup, 2 pcs')).toMatchObject({ kind: 'ingredient', amount: 2 });
     expect(one('Slushie cups, 150 cups')).toMatchObject({ kind: 'ingredient', amount: 150 });
@@ -411,5 +410,22 @@ describe('importPrompt and what Claude sends back', () => {
       ['error', 'Eggs', 'Check this number in your sheet'],
       ['menu', 'Bottled Water', undefined],
     ]);
+  });
+});
+
+describe('never a silently wrong count (final check)', () => {
+  const kind = (line: string) => parseInventory(line, s).rows[0]?.kind;
+  it('flags packs, notes, ranges and multiplications instead of guessing', () => {
+    for (const line of ['Eggs, 1 tray (30 pcs)', 'Eggs, 2 trays', 'Slushie cups, 2 packs', 'Rice bowl containers, 1 box', 'Eggs, 30-40', 'Agave syrup, 2 x 500ml', 'Slushie cups, 16 oz, 200', 'Bottled Water, 2 cases', 'Cookie Monster Velvet, 1 dozen', 'OG Chicken Rice Bowl, 60 kg']) {
+      expect([line, kind(line)]).toEqual([line, 'error']);
+    }
+  });
+  it('flags a decimal comma instead of reading a warn-at level', () => {
+    for (const line of ['Cabbage, 1,5 kg', 'Rice, 0,5 kg']) expect([line, kind(line)]).toEqual([line, 'error']);
+    expect(parseInventory('Rice, 20 kg, 500 g', s).rows[0]).toMatchObject({ kind: 'ingredient', amount: 20, low: 0.5 });
+    expect(parseInventory('Rice, 20 kg, 5', s).rows[0]).toMatchObject({ kind: 'ingredient', amount: 20, low: 5 });
+  });
+  it('flags totals and dates', () => {
+    for (const line of ['TOTAL, 45', 'Date, 2026-11-22', 'Grand total, 120 kg']) expect([line, kind(line)]).toEqual([line, 'error']);
   });
 });

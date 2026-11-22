@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react';
  * first visit every screen opens with no internet.
  */
 /** Food photos in public/menu, saved for offline use with everything else. */
-const MENU_PHOTOS = readdirSync(new URL('./public/menu', import.meta.url)).filter((f) => /\.(webp|jpg|png)$/.test(f)).map((f) => './menu/' + f);
+const MENU_PHOTOS = readdirSync(new URL('./public/menu', import.meta.url)).filter((f) => /\.(webp|jpe?g|png)$/i.test(f)).map((f) => './menu/' + f);
 
 function offlineServiceWorker(): Plugin {
   return {

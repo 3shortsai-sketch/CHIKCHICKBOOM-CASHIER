@@ -275,12 +275,12 @@ export function AfterPay({
               {nextUnit.combo ? ',' : ''} <span className="muted">{spinHeading(nextUnit).rest}</span>
             </h2>
             <p className="muted">
-              The customer spins at the pickup wheel. Tap the prize when it's called out, here or later from <b>Spins waiting</b> (keys 1–9).
+              The customer spins at the pickup wheel. Tap the prize when it's called out, here or later from <b>Spins waiting</b>{mode === 'spin' ? ' (keys 1–9)' : ''}.
             </p>
             <div className="prize-grid nine">
               {PRIZE_ORDER.map((p, i) => (
                 <button key={p} className={`prize prize-${p}`} onClick={() => log(p, 'physical')}>
-                  <kbd>{i + 1}</kbd>
+                  {mode === 'spin' && <kbd>{i + 1}</kbd>}
                   {PRIZE_LABEL[p]}
                 </button>
               ))}

@@ -247,6 +247,12 @@ Copy `firestore.rules` from this repo, put the booth login email(s) in place of 
 - Senior citizen / PWD discount: the team decided it is not needed.
 - Receipts: the app's screen is not a BIR official receipt. Check with whoever handles permits.
 
+## Inventory import (Inventory screen → Import counts)
+- Paste lines like `Chicken thigh fillet, 25 kg` (one per line: name, amount and unit), or upload a CSV. A preview shows what matched before anything is saved; **Apply** saves, **Undo** puts it back.
+- **Copy the prompt for Claude**: paste it into Claude with a screenshot of the ingredient sheet, then paste Claude's answer into the box.
+- g↔kg and ml↔L are converted. Packs, trays, boxes, ranges ("3-4 kg"), notes ("1 tray (30 pcs)"), decimal commas and totals are flagged as problems, never guessed. Unknown names are added as new ingredients (untick to skip).
+- **Import from one device only, while it shows Synced.** Ingredient counts are saved as one list, so two devices importing in the same second would overwrite each other.
+
 ## Start fresh (Setup)
 - **Clear practice (demo) data** and **Clear real data (start the bazaar fresh)** remove orders, business days, cash in/out and loyalty card records of that mode on every device. Menu, prices and passcodes stay.
 - Both need the Dashboard and Setup passcode; clearing real data also needs CLEAR typed. A backup file downloads first. Refused while a day of that mode is open.
@@ -255,6 +261,7 @@ Copy `firestore.rules` from this repo, put the booth login email(s) in place of 
 
 ## Booth checklist
 - On the morning of Nov 23, before opening the day: Setup → Start fresh → clear practice data (and real data if any test sales were made in Real mode), then switch to Real data.
+- Sign in on every device before anyone opens the day on it. A device used with "this device only" and signed in later adds a second open day.
 - Before the bazaar: change all three passcodes in Setup (4 to 8 digits). Setup shows a red banner while any of them is still a default.
 - Laptop + charger, monitor + HDMI cable (and USB-C adapter if needed), tablet + charger + stand
 - Extension cord / power strip

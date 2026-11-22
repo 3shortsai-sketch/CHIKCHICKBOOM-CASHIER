@@ -46,7 +46,10 @@ const UNIT_ALIAS: Record<string, string> = {
   can: 'can', cans: 'can',
   tray: 'tray', trays: 'tray',
   dozen: 'dozen', dozens: 'dozen', doz: 'dozen',
+  sack: 'sack', sacks: 'sack', case: 'case', cases: 'case', bag: 'bag', bags: 'bag', carton: 'carton', cartons: 'carton', bundle: 'bundle', bundles: 'bundle',
 };
+/** Units that hold many pieces: never read as a number of pieces or kilos. */
+const PACKS = ['pack', 'box', 'tray', 'dozen', 'sack', 'case', 'bag', 'carton', 'bundle'];
 /** How many of the smallest unit of its family one unit is: g and kg convert, kg and L do not. */
 const SCALE: Record<string, { family: string; size: number }> = {
   mg: { family: 'weight', size: 0.001 },
@@ -138,7 +141,9 @@ function toNumber(text: string): number {
 
 /** "12 kg" / "12kg" / "1,250" -> the number and the unit after it. */
 function parseAmount(cell: string): { amount: number; unit?: string } {
-  const m = /^([+-]?[\d.,\s]*\d\.?)\s*([^\d\s.,].*)?$/.exec(cell.trim());
+  // One number, then at most one unit word. Anything more ("1 tray (30 pcs)",
+  // "30-40", "2 x 500ml") is not safe to guess, so it is not a number.
+  const m = /^([+-]?[\d.,\s]*\d\.?)\s*([a-zA-Z]+\.?)?$/.exec(cell.trim());
   if (!m) return { amount: NaN };
   return { amount: toNumber(m[1]), unit: m[2] ? cleanUnit(m[2]) : undefined };
 }
@@ -207,28 +212,43 @@ function parseLine(line: number, raw: string, all: Candidate[]): Row | 'blank' {
   const base = { line, raw, name, amount, unit, id: hit?.id, matchedName: hit?.name, close: found.close };
   const err = (problem: string): Row => ({ ...base, kind: 'error', problem });
 
-  if (Number.isNaN(amount)) return err('The amount is not a number.');
+  if (/^(sub|grand)?\s*totals?\b|^date$|^as of\b/i.test(name.trim())) return err('This looks like a total or a date, not something to count. Delete the line.');
+  if (Number.isNaN(amount)) return err('Write one number, then one unit, like 25 kg. Notes and ranges are not read.');
   if (amount < 0) return err('The amount cannot be less than 0.');
   if (amount > TOO_BIG) return err('That number looks too big.');
   if (found.many) return err(whichOne(found.many));
 
   if (hit?.kind === 'menu') {
     if (!Number.isInteger(amount)) return err('Menu items are counted in whole pieces.');
+    if (unit && (measured || PACKS.includes(unit))) return err(`Menu items are counted in pieces, not in ${unit}. Write how many pieces.`);
+    if (lowCell) return err('Menu items take one number only. Is there a comma inside the number?');
     return { ...base, kind: 'menu' };
   }
 
   let low: number | undefined;
   if (lowCell) {
-    low = parseAmount(lowCell).amount;
+    const warn = parseAmount(lowCell);
+    low = warn.amount;
     if (Number.isNaN(low) || low < 0) return err('The warn-at number is not a number.');
+    // "Cabbage, 1,5 kg" splits into 1 and "5 kg": a decimal comma, not a warn-at level.
+    if (warn.unit && !unit) return err(`Is this ${plainNumber(amount)}.${lowCell.trim()}? Write decimals with a point, like 1.5 kg.`);
+    if (warn.unit && unit && warn.unit !== unit) {
+      const same = convert(low, warn.unit, unit);
+      if (same === null) return err('The warn-at number uses another unit than the amount.');
+      low = same;
+    }
   }
   if (hit) {
     // The sheet may use another unit than the list: change g to kg, never guess packs to kg.
     const own = cleanUnit(hit.unit ?? '');
     if (unit && own && unit !== own) {
       const changed = convert(amount, unit, own);
-      if (changed !== null) return { ...base, kind: 'ingredient', low, amount: changed, unit: own, typed: `${plainNumber(amount)} ${unit}` };
-      if (measured || MEASURES.includes(own)) return err(`This is counted in ${hit.unit} here. Change the unit in the sheet or in the list.`);
+      const lowChanged = low === undefined ? undefined : (convert(low, unit, own) ?? low);
+      if (changed !== null) return { ...base, kind: 'ingredient', low: lowChanged, amount: changed, unit: own, typed: `${plainNumber(amount)} ${unit}` };
+      // Trays, packs, boxes, sacks: never guessed into pieces or kilos.
+      // A unit the app does not know ("oz") is only fine when it is the thing's own name ("150 cups" of Slushie cups).
+      const known = unit.toLowerCase() in UNIT_ALIAS || words(hit.name).includes(words(unit)[0] ?? '');
+      if (measured || MEASURES.includes(own) || PACKS.includes(unit) || !known) return err(`This is counted in ${hit.unit} here, not in ${unit}. Write the amount in ${hit.unit}.`);
     }
     return { ...base, kind: 'ingredient', low };
   }
