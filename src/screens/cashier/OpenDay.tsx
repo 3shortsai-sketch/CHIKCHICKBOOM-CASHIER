@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { localDate } from '../../domain/loyalty';
 import { latestDay, putDay, setDevice, useDevice, useStore } from '../../data/store';
+import { useSyncStatus } from '../../data/sync';
 import { TopBar } from '../../ui/TopBar';
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -9,6 +10,7 @@ export function OpenDayForm() {
   const state = useStore((s) => s);
   const s = state.settings;
   const device = useDevice();
+  const sync = useSyncStatus();
   const last = latestDay(state);
   const [cashier, setCashier] = useState(device.cashier || s.cashiers[0] || '');
   const [float, setFloat] = useState('');
@@ -42,6 +44,11 @@ export function OpenDayForm() {
       <div className="center-screen">
         <div className="card open-day">
           <h1>Open the day</h1>
+          {sync.needsSignIn && (
+            <p className="error" role="alert">
+              This device is not signed in, so its sales will not reach the other devices. Sign in first (tap the status at the top right), then open the day.
+            </p>
+          )}
           {last?.closedAt && <p className="muted">Last day ({last.date}) is closed.</p>}
           <div className="grid-2">
             <label className="field">

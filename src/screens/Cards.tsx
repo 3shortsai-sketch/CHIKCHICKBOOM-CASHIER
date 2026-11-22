@@ -8,11 +8,11 @@ import { StampEditor } from './cashier/StampEditor';
 import { TopBar } from '../ui/TopBar';
 import { download, PinGate } from '../ui/ui';
 
-/** All loyalty cards: number, name, stamps and rewards. Team passcode (customer names are personal). */
+/** All Boom Cards: number, name, stamps and rewards. Team passcode (customer names are personal). */
 export function Cards() {
   const s = useStore((st) => st.settings);
   return (
-    <PinGate pin={s.teamPin} also={[s.adminPin]} label="Cards">
+    <PinGate pin={s.teamPin} also={[s.adminPin]} label="Boom Cards">
       <CardsInner />
     </PinGate>
   );
@@ -37,9 +37,9 @@ function CardsInner() {
 
   const register = () => {
     const number = parseCard(newNumber, s);
-    if (!number) return setMessage({ text: `Unknown card number. Cards run ${s.loyalty.prefix}${String(s.loyalty.first).padStart(3, '0')} to ${s.loyalty.prefix}${s.loyalty.last}.`, bad: true });
+    if (!number) return setMessage({ text: `Unknown Boom Card number. Boom Cards run ${s.loyalty.prefix}${String(s.loyalty.first).padStart(3, '0')} to ${s.loyalty.prefix}${s.loyalty.last}.`, bad: true });
     const name = cleanCardName(newName);
-    if (!name) return setMessage({ text: 'Type the name on the card.', bad: true });
+    if (!name) return setMessage({ text: 'Type the name on the Boom Card.', bad: true });
     const had = rows.find((r) => r.number === number)?.name;
     saveCard(number, name, by);
     setMessage({ text: had ? `${number} renamed from ${had} to ${name}.` : `${number} saved for ${name}.` });
@@ -52,11 +52,11 @@ function CardsInner() {
     const when = (ts?: number) => (ts ? new Date(ts).toLocaleString() : '');
     const bytes = buildXlsx([
       {
-        name: 'Loyalty cards',
+        name: 'Boom Cards',
         widths: [12, 28, 8, 8, 8, 18, 36, 20, 14],
         freezeHeader: true,
         rows: [
-          head('Card', 'Name', 'Stamps', 'Of', 'Visits', 'Full cards done', 'Rewards ready', 'Last visit', 'Added by hand'),
+          head('Boom Card', 'Name', 'Stamps', 'Of', 'Visits', 'Full cards done', 'Rewards ready', 'Last visit', 'Added by hand'),
           ...rows.map((r): XCell[] => [r.number, r.name, r.stamps, r.size, r.visits, r.cardsCompleted, r.rewardsReady.join(', '), when(r.lastVisit), r.adjusted]),
         ],
       },
@@ -69,24 +69,24 @@ function CardsInner() {
 
   return (
     <div className="screen cards">
-      <TopBar title="Loyalty cards">
+      <TopBar title="Boom Cards">
         <button className="btn small" onClick={exportXlsx} disabled={!rows.length}>
           Download Excel
         </button>
       </TopBar>
       <div className="dash-body">
         <section className="panel">
-          <h2>Register a card</h2>
+          <h2>Register a Boom Card</h2>
           <div className="row">
-            <input className="input" style={{ maxWidth: '12rem' }} value={newNumber} onChange={(e) => setNewNumber(e.target.value)} placeholder="Card number, e.g. 37" aria-label="Card number" />
+            <input className="input" style={{ maxWidth: '12rem' }} value={newNumber} onChange={(e) => setNewNumber(e.target.value)} placeholder="Boom Card number, e.g. 37" aria-label="Boom Card number" />
             <input
               className="input"
               value={newName}
               maxLength={30}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && register()}
-              placeholder="Name on the card"
-              aria-label="Name on the card"
+              placeholder="Name on the Boom Card"
+              aria-label="Name on the Boom Card"
             />
             <button className="btn primary" onClick={register}>
               Save card
@@ -94,28 +94,28 @@ function CardsInner() {
           </div>
           {message && <p className={message.bad ? 'error' : 'ok-note'}>{message.text}</p>}
           <p className="muted small">
-            Saved on every device. Cashiers can also type the name when a card is added to an order. {s.mode === 'demo' ? 'These are practice cards; real ones are kept separately.' : ''}
+            Saved on every device. Cashiers can also type the name when a Boom Card is added to an order. {s.mode === 'demo' ? 'These are practice Boom Cards. Real ones are kept separately.' : ''}
           </p>
         </section>
 
         <section className="panel wide">
           <div className="row">
             <h2 style={{ margin: 0 }}>
-              All cards <span className="muted">({rows.length})</span>
+              All Boom Cards <span className="muted">({rows.length})</span>
             </h2>
             <span className="spacer" />
             {withReward > 0 && <span className="pill ok">{withReward} with a reward ready</span>}
             {unnamed > 0 && <span className="pill off">{unnamed} without a name</span>}
           </div>
-          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by number or name" aria-label="Search cards" />
+          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by number or name" aria-label="Search Boom Cards" />
           {shown.length === 0 ? (
-            <p className="muted">{rows.length === 0 ? 'No cards yet. Register one above, or add a card number to an order at the cashier.' : 'No card matches that.'}</p>
+            <p className="muted">{rows.length === 0 ? 'No Boom Cards yet. Register one above, or add a Boom Card number to an order at the cashier.' : 'No Boom Card matches that.'}</p>
           ) : (
             <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
-                    <th>Card</th>
+                    <th>Boom Card</th>
                     <th>Name</th>
                     <th>Stamps</th>
                     <th>Visits</th>
@@ -174,7 +174,7 @@ function CardsInner() {
                         </button>
                         <StampDots n={r.stamps} size={r.size} />
                         {r.adjusted !== 0 && <div className="muted small">{r.adjusted > 0 ? `+${r.adjusted}` : `−${Math.abs(r.adjusted)}`} added by hand</div>}
-                        {r.cardsCompleted > 0 && <div className="muted small">{r.cardsCompleted} full card{r.cardsCompleted > 1 ? 's' : ''} done</div>}
+                        {r.cardsCompleted > 0 && <div className="muted small">{r.cardsCompleted} full Boom Card{r.cardsCompleted > 1 ? 's' : ''} done</div>}
                       </td>
                       <td>{r.visits}</td>
                       <td>{r.rewardsReady.join(', ') || '—'}</td>

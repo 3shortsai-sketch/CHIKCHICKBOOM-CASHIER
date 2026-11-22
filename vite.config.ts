@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
@@ -6,13 +7,16 @@ import react from '@vitejs/plugin-react';
  * Writes dist/sw.js with the exact list of built files, so that after the
  * first visit every screen opens with no internet.
  */
+/** Food photos in public/menu, saved for offline use with everything else. */
+const MENU_PHOTOS = readdirSync(new URL('./public/menu', import.meta.url)).filter((f) => /\.(webp|jpe?g|png)$/i.test(f)).map((f) => './menu/' + f);
+
 function offlineServiceWorker(): Plugin {
   return {
     name: 'ccb-offline-sw',
     apply: 'build',
     generateBundle(_options, bundle) {
       const files = Object.keys(bundle).filter((f) => !f.endsWith('.map'));
-      const precache = ['./', ...files.map((f) => './' + f), './manifest.webmanifest', './icon-192.png', './logo.png', './logo-small.png', './gcash-qr.jpg', './track-qr.png'];
+      const precache = ['./', ...files.map((f) => './' + f), './manifest.webmanifest', './icon-192.png', './logo.png', './logo-small.png', './gcash-qr.jpg', './track-qr.png', ...MENU_PHOTOS];
       const version = Date.now().toString(36);
       const source = `// Generated at build time. Do not edit.
 const CACHE = 'ccb-pos-${version}';

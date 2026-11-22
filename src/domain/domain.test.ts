@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { cashSuggestions, checkCart, cleanName, createOrder, duplicateReference, nextSeq } from './checkout';
 import { defaultSettings } from './defaults';
-import { availableRewards, canRedeem, cardState, checkVoucher, isLastSellingDay, nextSellingDay, normalizeVoucher, parseCard, voucherWindow } from './loyalty';
-import { applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
+import { availableRewards, canRedeem, cardState, checkVoucher, isLastSellingDay, nextSellingDay, normalizeVoucher, parseCard, voucherTerms, voucherWindow } from './loyalty';
+import { spinnableUnits, applyCombo, lineTotal, needsPicker, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from './pricing';
 import { allergenHint, allergenText, itemTags } from './allergens';
 import { cardDocId, cardRows, cardStateFor, cleanCardName, searchCards } from './cards';
 import { isLow, margins, onHand, servingsLeft, waitMinutes } from './inventory';
@@ -61,10 +61,10 @@ describe('combo prompt', () => {
     const lines = [bowl(), fries(), slush()];
     const sug = suggestCombo(lines, s)!;
     expect(sug.combo.id).toBe('comboA');
-    expect(sug.saving).toBe(169 + 79 + 129 - 329);
+    expect(sug.saving).toBe(169 + 79 + 129 - 339);
     const after = applyCombo(lines, sug, s);
     expect(after).toHaveLength(1);
-    expect(subtotal(after, s)).toBe(329);
+    expect(subtotal(after, s)).toBe(339);
     expect(after[0].combo!.parts.map((p) => p.dip ?? p.side)).toEqual(['Butter Corn Carrot', 'Ranch', undefined]);
   });
 
@@ -82,13 +82,17 @@ describe('combo prompt', () => {
 });
 
 describe('spins', () => {
-  it('gives one spin per bowl outside a combo', () => {
+  it('gives one spin per item bought and three per combo, none for water or add-ons', () => {
     const forCombo = [bowl(), fries(), slush()];
     const lines = [bowl(2), ...applyCombo(forCombo, suggestCombo(forCombo, s)!, s)];
-    expect(spinsEarned(lines, s, false)).toBe(2);
+    expect(spinsEarned(lines, s, false)).toBe(2 + 3);
+    const water: OrderLine = { id: 'w', itemId: 'water', name: 'Bottled Water', qty: 2, unitPrice: 24 };
+    const sauce: OrderLine = { id: 'x', itemId: 'extra-sauce', name: 'Extra Sauce', qty: 1, unitPrice: 10 };
+    expect(spinsEarned([cookie(), fries(), water, sauce], s, false)).toBe(2);
+    expect(spinnableUnits(lines, s).filter((u) => u.combo)).toHaveLength(3);
   });
-  it('gives no spins with a voucher, for reward bowls, or when paused', () => {
-    expect(spinsEarned([bowl()], s, true)).toBe(0);
+  it('still spins with a voucher; no spins for reward items or when paused', () => {
+    expect(spinsEarned([bowl()], s, true)).toBe(1);
     expect(spinsEarned([bowl(1, { unitPrice: 0, free: { reason: 'reward', stampsAt: 10 } })], s, false)).toBe(0);
     expect(spinsEarned([bowl()], { ...s, wheel: { ...s.wheel, paused: true } }, false)).toBe(0);
   });
@@ -102,7 +106,7 @@ describe('spins', () => {
 
 describe('prizes (spin after paying)', () => {
   it('FREE MEAL pays back the bowl, extras included', () => {
-    const o = order([bowl(1, { id: 'b1', choices: { side: 'Butter Corn Carrot', extraSauce: 1 } })]);
+    const o = order([bowl(1, { id: 'b1', choices: { side: 'Buttered Carrots & Corn', extraSauce: 1 } })]);
     const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'freeMeal', ctx);
     expect(r.ok && r.spin.refund).toBe(179);
   });
@@ -111,7 +115,7 @@ describe('prizes (spin after paying)', () => {
     const o = order([bowl(2, { id: 'b1' })]);
     const r1 = applyPrize(o, { lineId: 'b1', unit: 0 }, 'tenOff', ctx);
     if (!r1.ok) throw new Error(r1.message);
-    expect(applyPrize(r1.order, { lineId: 'b1', unit: 0 }, 'freeMeal', ctx)).toEqual({ ok: false, message: 'This bowl already spun. One prize per meal.' });
+    expect(applyPrize(r1.order, { lineId: 'b1', unit: 0 }, 'freeMeal', ctx)).toEqual({ ok: false, message: 'This item already spun. One spin per item.' });
   });
 
   it('blocks spins beyond what was earned', () => {
@@ -265,20 +269,26 @@ describe('waste log', () => {
 });
 
 describe('prize limit', () => {
-  it('expects about ₱11 per spin at cost with the starting menu', () => {
+  it('expects about ₱10 per spin at cost with the starting menu', () => {
     const e = expectedSpinCost(s);
-    expect(e.perSpin).toBeGreaterThan(10);
-    expect(e.perSpin).toBeLessThan(12);
+    expect(e.perSpin).toBeGreaterThan(9);
+    expect(e.perSpin).toBeLessThan(11);
   });
 
-  it('waits for minimum sales, then warns and asks to pause', () => {
+  it('is off by default (the booth chose no warnings)', () => {
     const base = summarize(day, [], s);
-    const at = (gross: number, wheel: number) => promoStatus({ ...base, gross, promo: { ...base.promo, wheel, vouchers: 0 } }, s);
+    expect(promoStatus({ ...base, gross: 10000, promo: { ...base.promo, wheel: 5000, vouchers: 0 } }, s).level).toBe('ok');
+  });
+
+  it('when switched on: waits for minimum sales, then warns and asks to pause', () => {
+    const base = summarize(day, [], s);
+    const on = { ...s, promoLimits: { ...s.promoLimits, off: false } };
+    const at = (gross: number, wheel: number) => promoStatus({ ...base, gross, promo: { ...base.promo, wheel, vouchers: 0 } }, on);
     expect(at(1000, 189).level).toBe('early');
-    expect(at(10000, 400).level).toBe('ok');
-    expect(at(10000, 700).level).toBe('warn');
-    expect(at(10000, 800).level).toBe('pause');
-    expect(at(10000, 800).pct).toBe(8);
+    expect(at(10000, 900).level).toBe('ok');
+    expect(at(10000, 1000).level).toBe('warn');
+    expect(at(10000, 1200).level).toBe('pause');
+    expect(at(10000, 1200).pct).toBe(12);
   });
 });
 
@@ -308,13 +318,13 @@ describe('one name per item', () => {
   it('uses the same menu name on every screen and in the export', () => {
     const names = s.menu.map((m) => m.name);
     expect(new Set(names).size).toBe(names.length);
-    expect(s.menu.filter((m) => m.kind === 'bowl').map((m) => m.name)).toEqual(['Regular (Original) Chicken Rice Bowl', 'Soy Garlic Chicken Rice Bowl', 'Garlic Butter Chicken Rice Bowl', 'Ala King Chicken Rice Bowl']);
+    expect(s.menu.filter((m) => m.kind === 'bowl').map((m) => m.name)).toEqual(['OG Chicken Rice Bowl', 'Chicken Ala King Rice Bowl', 'Soy Garlic Chicken Rice Bowl', 'Garlic Butter Chicken Rice Bowl']);
     const forCombo = [bowl(), fries(), slush()];
     const combo = applyCombo(forCombo, suggestCombo(forCombo, s)!, s);
-    expect(combo[0].name).toBe('Combo A: Ala King Chicken Rice Bowl + Regular Fries + Watermelon Slushie');
+    expect(combo[0].name).toBe('Boom Combo A: Chicken Ala King Rice Bowl + Fries with Dip + Watermelon Juice');
     const o = { ...order(combo), status: 'ready' as const };
-    expect(kitchenMadeCounts(day, [o], s).map((r) => r.name)).toEqual(['Ala King Chicken Rice Bowl', 'Regular Fries', 'Watermelon Slushie']);
-    expect(ordersCsv(day, [o], s)).toContain('Ala King Chicken Rice Bowl + Regular Fries + Watermelon Slushie');
+    expect(kitchenMadeCounts(day, [o], s).map((r) => r.name)).toEqual(['Chicken Ala King Rice Bowl', 'Fries with Dip', 'Watermelon Juice']);
+    expect(ordersCsv(day, [o], s)).toContain('Chicken Ala King Rice Bowl + Fries with Dip + Watermelon Juice');
   });
 });
 
@@ -326,7 +336,7 @@ describe('real menu and allergens', () => {
     expect(allergenText(itemTags(item('bowl-soygarlic')))).toBe('Contains: Egg, Wheat, Milk, Soy, Sesame, Shellfish');
     expect(allergenText(itemTags(item('fries-overload')))).toContain('Pork');
     expect(allergenText(itemTags(item('slush-mango')))).toBeNull();
-    expect(allergenHint(s.sideAllergens['Cucumber Salad'])).toBe('soy, wheat, sesame');
+    expect(allergenHint(s.sideAllergens['Cucumbers'])).toBe('soy, wheat, sesame');
     expect(allergenHint(s.sideAllergens['Shredded Cabbage'])).toBeUndefined();
     expect(allergenHint(s.dipAllergens['Ranch'])).toBe('egg, milk');
   });
@@ -390,10 +400,10 @@ describe('profit per item', () => {
     const ala = m.items.find((x) => x.id === 'bowl-alaking')!;
     expect(ala.profit).toBeCloseTo(61.07, 2);
     expect(Math.round(ala.pct)).toBe(36);
-    const a = m.combos.find((c) => c.name === 'Combo A')!;
+    const a = m.combos.find((c) => c.name === 'Boom Combo A')!;
     expect(a.low.cost).toBeCloseTo(108.22 + 44.98 + 90.49, 2); // Soy Garlic is the costliest bowl
-    expect(Math.round(a.low.pct)).toBe(26);
-    expect(Math.round(a.high.pct)).toBe(30);
+    expect(Math.round(a.low.pct)).toBe(28);
+    expect(Math.round(a.high.pct)).toBe(32);
   });
 });
 
@@ -431,7 +441,7 @@ describe('Excel export', () => {
 describe('Popular tab and customer names', () => {
   it('starts from the menu order, then follows what sells today', () => {
     const empty = popularToday(day, [], s);
-    expect(empty.slice(0, 4).map((e) => e.id)).toEqual(['bowl-original', 'bowl-soygarlic', 'bowl-garlicbutter', 'bowl-alaking']);
+    expect(empty.slice(0, 4).map((e) => e.id)).toEqual(['bowl-original', 'bowl-alaking', 'bowl-soygarlic', 'bowl-garlicbutter']);
     expect(empty).toHaveLength(8);
     const a = order([cookie(), cookie(), cookie()]);
     const forCombo = [bowl(), fries(), slush()];
@@ -459,7 +469,7 @@ describe('loyalty card list', () => {
     expect(rows.map((r) => r.number)).toEqual(['CCB-090', 'CCB-037', 'CCB-012']); // newest activity first
     const ana = rows.find((r) => r.number === 'CCB-037')!;
     expect([ana.name, ana.registered, ana.stamps, ana.visits]).toEqual(['Ana Reyes', true, 5, 5]);
-    expect(ana.rewardsReady).toEqual(['Free Regular Fries']);
+    expect(ana.rewardsReady).toEqual(['Free Fries with Dip']);
     const unnamed = rows.find((r) => r.number === 'CCB-090')!;
     expect([unnamed.registered, unnamed.name, unnamed.stamps]).toEqual([false, '', 1]);
     expect(rows.find((r) => r.number === 'CCB-012')!.visits).toBe(0);
@@ -687,14 +697,14 @@ describe('checking the cart again before paying', () => {
   it('catches a loyalty reward that is no longer there', () => {
     const state = { cardId: 'CCB-001', stamps: 6, used: [5], cardsCompleted: 0, orders: 6 };
     expect(checkCart({ ...base, lines: [fries()], orders: [], cardState: state, rewardsRedeemed: [5] })).toContain('already used');
-    expect(checkCart({ ...base, lines: [fries()], orders: [], cardState: null, rewardsRedeemed: [5] })).toContain('loyalty card');
+    expect(checkCart({ ...base, lines: [fries()], orders: [], cardState: null, rewardsRedeemed: [5] })).toContain('Boom Card');
     expect(checkCart({ ...base, lines: [fries()], orders: [], cardState: { ...state, used: [] }, rewardsRedeemed: [5] })).toBeNull();
   });
 
   it('catches items that sold out or ran short, by name', () => {
-    expect(checkCart({ ...base, lines: [cookie()], orders: [], soldOut: { 'cookie-choco': true } })).toContain('Choco Chip Cookie');
+    expect(checkCart({ ...base, lines: [cookie()], orders: [], soldOut: { 'cookie-choco': true } })).toContain('OG Chocolate Chip Cookie');
     const short = checkCart({ ...base, lines: [bowl(3)], orders: [], left: { ...left, 'bowl-alaking': 2 } });
-    expect(short).toBe('Only 2 Ala King Chicken Rice Bowl left, but the order has 3.');
+    expect(short).toBe('Only 2 Chicken Ala King Rice Bowl left, but the order has 3.');
     const sauce = checkCart({ ...base, lines: [bowl(1, { choices: { extraSauce: 2 } })], orders: [], left: { ...left, 'extra-sauce': 0 } });
     expect(sauce).toContain('Extra Sauce');
   });
@@ -761,7 +771,7 @@ describe('reports: promo at cost, voids, recounts', () => {
   };
 
   it('counts a FREE MEAL at the cost of the bowl, and keeps the books adding up', () => {
-    const a = spin(order([bowl(1, { id: 'b1', choices: { side: 'Butter Corn Carrot', extraSauce: 1 } })]), 'freeMeal');
+    const a = spin(order([bowl(1, { id: 'b1', choices: { side: 'Buttered Carrots & Corn', extraSauce: 1 } })]), 'freeMeal');
     const b = spin(order([bowl(1, { id: 'b1' }), cookie()], {}, [a]), 'tenOff');
     const c = spin(order([bowl(1, { id: 'b1' })], {}, [a, b]), 'freeCookie');
     const won = { ...order([bowl(1, { id: 'b1' })], { now: at('2026-11-14T12:00:00') }), id: 'yesterday', dayId: 'other', spinsEarned: 1, spins: [{ lineId: 'b1', unit: 0, prize: 'voucher' as const, refund: 0, voucherCode: 'V-AAAA', via: 'physical' as const, at: at('2026-11-14T12:00:00') }] };
@@ -886,10 +896,10 @@ describe('reports: promo at cost, voids, recounts', () => {
     expect(text).toContain('>AnaB<');
   });
 
-  it('promo limit: 6.499999999999999% counts as 6.5%', () => {
+  it('promo limit: 9.999999999999998% counts as 10%', () => {
     const base = summarize(day, [], s);
-    const st = promoStatus({ ...base, gross: 10000, promo: { ...base.promo, wheel: 649.9999999, vouchers: 0 } }, s);
-    expect(st.pct).toBeLessThan(6.5);
+    const st = promoStatus({ ...base, gross: 10000, promo: { ...base.promo, wheel: 999.9999999, vouchers: 0 } }, { ...s, promoLimits: { ...s.promoLimits, off: false } });
+    expect(st.pct).toBeLessThan(10);
     expect(st.level).toBe('warn');
   });
 });
@@ -1028,5 +1038,110 @@ describe('order numbers after reopening on the same date', () => {
     const o = { ...order([cookie()]), dayId: first.id, seq: 7, number: 'A-007' };
     expect(nextSeq(second, [o], 'A')).toBe(8);
     expect(nextSeq({ ...second, date: '2099-01-01', id: `${day.mode}-2099-01-01-ccc` }, [o], 'A')).toBe(1);
+  });
+});
+
+describe('menu page wheel rules', () => {
+  const spinOf = (o: Order, lineId: string, unit: number, prize: Parameters<typeof applyPrize>[2]) => {
+    const r = applyPrize(o, { lineId, unit }, prize, ctx);
+    if (!r.ok) throw new Error(r.message);
+    return r;
+  };
+  const shake = (): OrderLine => ({ ...slush(), id: 'd1', choices: { topping: 'fries' } });
+
+  it('Free meal makes the item that spin belongs to free, one item per order', () => {
+    const o = order([cookie(), bowl(1, { id: 'b1' })]);
+    const cookieLine = o.lines[0];
+    const a = spinOf(o, cookieLine.id, 0, 'freeMeal');
+    expect(a.spin.refund).toBe(cookieLine.unitPrice);
+    expect(a.spin.pct).toBeUndefined();
+    const b = spinOf(a.order, 'b1', 0, 'freeMeal'); // second Free meal: 30% off instead
+    expect(b.spin.pct).toBe(30);
+    expect(b.spin.refund).toBe(Math.round(169 * 0.3));
+  });
+
+  it('a combo spins three times and a Free meal on it is 30% off the combo', () => {
+    const forCombo = [bowl(), fries(), slush()];
+    const o = order(applyCombo(forCombo, suggestCombo(forCombo, s)!, s));
+    expect(o.spinsEarned).toBe(3);
+    const id = o.lines[0].id;
+    const r = spinOf(o, id, 2, 'freeMeal');
+    expect(r.spin.pct).toBe(30);
+    expect(r.spin.refund).toBe(Math.round(339 * 0.3));
+    expect(applyPrize(r.order, { lineId: id, unit: 3 }, 'tryAgain', ctx).ok).toBe(false);
+    // In the report a 30% off is a discount, not a giveaway.
+    const sum = summarize(day, [r.order], s);
+    expect(sum.grossSales - sum.discounts - sum.manualRefunds).toBe(sum.net);
+    expect(sum.giveawaysAtCost).toBe(0);
+  });
+
+  it('₱15 off a combo: same day or next selling day, only with a combo in the cart', () => {
+    const o = { ...order([bowl(1, { id: 'b1' })], { now: at('2026-11-25T12:00:00') }), createdAt: at('2026-11-25T12:00:00') };
+    const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'comboVoucher', { ...ctx, now: at('2026-11-25T12:05:00') });
+    if (!r.ok) throw new Error(r.message);
+    const code = r.spin.voucherCode!;
+    expect(voucherTerms(r.spin, s)).toMatchObject({ amount: 15, validFrom: '2026-11-25', validTo: '2026-11-27', needsCombo: true });
+    const forCombo = [bowl(), fries(), slush()];
+    const comboCart = applyCombo(forCombo, suggestCombo(forCombo, s)!, s);
+    expect(checkVoucher(code, [r.order], s, '2026-11-25', 169, [bowl()])).toMatchObject({ ok: false });
+    expect(checkVoucher(code, [r.order], s, '2026-11-25', 339, comboCart)).toEqual({ ok: true, amount: 15, code });
+    expect(checkVoucher(code, [r.order], s, '2026-11-27', 339, comboCart).ok).toBe(true);
+    expect(checkVoucher(code, [r.order], s, '2026-11-28', 339, comboCart).ok).toBe(false);
+  });
+
+  it('fries on top of a drink comes out of the fries ingredient (80 g), not a fries portion', () => {
+    expect(stockUsage([shake()])).toEqual({ 'slush-watermelon': 1, 'topping-fries': 1 });
+    const fries = s.ingredients.find((i) => i.id === 'ing-fries')!;
+    const counted = { ...fries, count: { qty: 10, at: 0, by: 'K' } };
+    expect(onHand(counted, [order([shake(), shake()])])).toBeCloseTo(10 - 0.16, 6);
+  });
+
+  it('matches the menu page names and prices', () => {
+    const price = Object.fromEntries(s.menu.map((m) => [m.name, m.price]));
+    expect(price).toMatchObject({ 'OG Chicken Rice Bowl': 139, 'Chicken Ala King Rice Bowl': 169, 'Soy Garlic Chicken Rice Bowl': 149, 'Garlic Butter Chicken Rice Bowl': 149, 'Overloaded Fries': 119, 'Fries with Dip': 79, 'Mango Shake': 129, 'Watermelon Juice': 129, 'Bottled Water': 24, 'OG Chocolate Chip Cookie': 89, 'Biscoff Cookie': 89, 'Cookie Monster Velvet': 99 });
+    expect(s.combos.map((c) => [c.name, c.price])).toEqual([['Boom Combo A', 339], ['Boom Combo B', 359]]);
+    expect(s.payments.maya).toBe(false);
+  });
+});
+
+describe('fixes from the cashier-seat bug hunt', () => {
+  it('never hands out a voucher code that already exists', () => {
+    const o = order([bowl(1, { id: 'b1' })]);
+    const codes = ['V-AAAA', 'V-AAAA', 'V-BBBB'];
+    let i = 0;
+    // rand is called 4 times per code; feed fixed letters per attempt.
+    const seq = [0, 0, 0, 0, 0, 0, 0, 0, 0.05, 0.05, 0.05, 0.05];
+    const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'voucher', { ...ctx, rand: () => seq[i++ % seq.length], codeTaken: (c) => c === 'V-AAAA' });
+    if (!r.ok) throw new Error(r.message);
+    expect(r.spin.voucherCode).not.toBe('V-AAAA');
+    expect(codes).toContain('V-AAAA');
+  });
+
+  it('gives a combo its 30% off only once', () => {
+    const forCombo = [bowl(), fries(), slush()];
+    const o = order(applyCombo(forCombo, suggestCombo(forCombo, s)!, s));
+    const id = o.lines[0].id;
+    const a = applyPrize(o, { lineId: id, unit: 0 }, 'freeMeal', ctx);
+    if (!a.ok) throw new Error(a.message);
+    const b = applyPrize(a.order, { lineId: id, unit: 1 }, 'freeMeal', ctx);
+    if (!b.ok) throw new Error(b.message);
+    expect(a.spin.refund).toBe(102);
+    expect(b.spin.refund).toBe(0);
+  });
+
+  it('a combo voucher won on the last selling day is for that day only', () => {
+    expect(voucherTerms({ prize: 'comboVoucher', at: at('2026-11-27T12:00:00') }, s)).toMatchObject({ validFrom: '2026-11-27', validTo: '2026-11-27' });
+  });
+
+  it('counts a ₱15 combo voucher as ₱15 owed', () => {
+    const o = { ...order([bowl(1, { id: 'b1' })], { now: at('2026-11-23T12:00:00') }) };
+    const r = applyPrize(o, { lineId: 'b1', unit: 0 }, 'comboVoucher', { ...ctx, now: at('2026-11-23T12:00:00') });
+    if (!r.ok) throw new Error(r.message);
+    expect(liabilities([r.order], [], s, '2026-11-23').vouchers).toEqual({ count: 1, amount: 15 });
+  });
+
+  it('writes fries on top in the export', () => {
+    const o = order([{ ...slush(), choices: { topping: 'fries' } }]);
+    expect(ordersCsv(day, [o], s)).toContain('fries on top');
   });
 });

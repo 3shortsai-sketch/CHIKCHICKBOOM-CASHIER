@@ -87,7 +87,7 @@ const METHOD_NAME = { cash: 'Cash', gcash: 'GCash', maya: 'Maya' } as const;
 const clock = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const refKey = (r: string | undefined) => (r ?? '').replace(/\s+/g, '').toLowerCase();
 
-/** GCash and Maya payments of the day, to tick off against the wallet's own list. */
+/** GCash payments of the day, to tick off against the wallet's own list. */
 function WalletCheck({ dayList, all }: { dayList: Order[]; all: Order[] }) {
   const rows = dayList.filter((o) => o.payment.method !== 'cash').sort((a, b) => a.seq - b.seq);
   const byRef = new Map<string, Order[]>();
@@ -103,7 +103,7 @@ function WalletCheck({ dayList, all }: { dayList: Order[]; all: Order[] }) {
     <section className="panel wallet-check">
       <h2>GCash check list</h2>
       {rows.length === 0 ? (
-        <p className="muted">No GCash or Maya payments yet.</p>
+        <p className="muted">No GCash payments yet.</p>
       ) : (
         <div className="table-scroll">
           <table>
@@ -220,8 +220,8 @@ function OwePanel({ owe, voucherAmount }: { owe: Liabilities; voucherAmount: num
       </div>
       <ul className="owe-notes muted small">
         <li>Vouchers: codes won on the wheel that nobody has used and that have not expired. Each one takes {peso(voucherAmount)} off a later order.</li>
-        <li>Rewards ready: free items customers can claim right now with their stamp cards{rewardText ? ` (${rewardText})` : ''}, at ingredient cost.</li>
-        <li>Stamps: a card part-way to a reward already stands for part of it (3 of 5 stamps counts as 3/5 of the fries). Rewards already ready are not counted twice.</li>
+        <li>Rewards ready: free items customers can claim right now with their Boom Cards{rewardText ? ` (${rewardText})` : ''}, at ingredient cost.</li>
+        <li>Stamps: a Boom Card part-way to a reward already stands for part of it (3 of 5 stamps counts as 3/5 of the fries). Rewards already ready are not counted twice.</li>
       </ul>
     </section>
   );
@@ -447,7 +447,7 @@ function DashboardInner() {
               </tbody>
             </table>
             <p className="muted small">
-              Prizes are counted at cost: a FREE MEAL costs the ingredients of the bowl, not its menu price. ₱10 off counts the cash. Free items count their ingredients. Vouchers count when they are used (under promo cost).
+              Prizes are counted at cost: a FREE MEAL costs the ingredients of the item, not its menu price. ₱10 off counts the cash. Free items count their ingredients. Vouchers count when they are used (under promo cost).
             </p>
           </section>
 
@@ -472,7 +472,7 @@ function DashboardInner() {
                     : 'Within normal range.'}
             </p>
             <p className="muted small">
-              With today's menu a spin costs about {peso(Math.round(expected.perSpin))} on average ({expected.pctOfBowl.toFixed(1)}% of a bowl). On a normal day that is roughly 4–5% of sales.
+              With today's menu a spin costs about {peso(Math.round(expected.perSpin))} on average ({expected.pctOfBowl.toFixed(1)}% of an average item). Every item spins now, so a normal day is roughly 8–10% of sales.
             </p>
           </section>
 
@@ -542,7 +542,7 @@ function DashboardInner() {
                   <td>{peso(sum.cash.paidOut)}</td>
                 </tr>
                 <tr>
-                  <td>− Cash handed back for voided GCash or Maya orders</td>
+                  <td>− Cash handed back for voided GCash orders</td>
                   <td>{peso(sum.cash.voidReturns)}</td>
                 </tr>
                 <tr>
@@ -636,7 +636,7 @@ function DashboardInner() {
 
           <section className="panel wide">
             <h2>Orders, voids and refunds</h2>
-            <input className="input no-print" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find by order number or card (e.g. A-012, CCB-037)" />
+            <input className="input no-print" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find by order number or Boom Card (e.g. A-012, CCB-037)" />
             <table>
               <thead>
                 <tr>

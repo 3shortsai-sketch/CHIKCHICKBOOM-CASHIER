@@ -59,7 +59,36 @@ function upgradeSettings(saved: Partial<Settings> | null | undefined): Settings 
   // A device saved before the real menu was added still has the placeholder
   // menu: give it the real menu, sides, dips and rewards. Everything else
   // (PINs, goal, wheel, cashiers...) is kept.
-  if ((saved.menuVersion ?? 1) < MENU_VERSION) {
+  const version = saved.menuVersion ?? 1;
+  if (version === 2) {
+    // Menu page names, prices, descriptions and photos; combos, sides, dips,
+    // the 20-slot wheel and the new prize limits. Costs, starting stock and
+    // which items are on (edited in Setup) are kept.
+    const fresh = defaultSettings();
+    const old = new Map((saved.menu ?? []).map((m) => [m.id, m]));
+    const menu = fresh.menu.map((m) => {
+      const was = old.get(m.id);
+      return was ? { ...m, unitCost: was.unitCost, startStock: was.startStock, active: was.active } : m;
+    });
+    for (const m of saved.menu ?? []) if (!fresh.menu.some((f) => f.id === m.id)) menu.push(m);
+    const oldLimits = !saved.promoLimits || (saved.promoLimits.warnPct === 6.5 && saved.promoLimits.pausePct === 8);
+    return {
+      ...merged,
+      menu,
+      combos: fresh.combos,
+      sides: fresh.sides,
+      dips: fresh.dips,
+      sideAllergens: fresh.sideAllergens,
+      dipAllergens: fresh.dipAllergens,
+      wheel: { ...merged.wheel, slots: fresh.wheel.slots },
+      loyalty: { ...merged.loyalty, rewards: fresh.loyalty.rewards },
+      // The booth chose to switch the prize warning off with the new wheel.
+      promoLimits: { ...(oldLimits ? fresh.promoLimits : merged.promoLimits), off: true },
+      ingredients: merged.ingredients.map((i) => (i.id === 'ing-fries' && i.uses?.['topping-fries'] === undefined ? { ...i, uses: { ...i.uses, 'topping-fries': 0.08 } } : i)),
+      menuVersion: MENU_VERSION,
+    };
+  }
+  if (version < MENU_VERSION) {
     const fresh = defaultSettings();
     return {
       ...merged,

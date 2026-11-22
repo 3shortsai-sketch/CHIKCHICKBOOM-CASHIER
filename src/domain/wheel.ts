@@ -1,5 +1,5 @@
 import { isLastSellingDay, localDate } from './loyalty';
-import { itemById, lineUnitTotal, newId, snapshotLine } from './pricing';
+import { COMBO_SPINS, lineUnitTotal, newId, snapshotLine, spinnableUnits } from './pricing';
 import type { MenuItem, Order, OrderLine, PrizeId, Settings, SpinResult, WheelSlot } from './types';
 
 export const PRIZE_LABEL: Record<PrizeId, string> = {
@@ -10,6 +10,7 @@ export const PRIZE_LABEL: Record<PrizeId, string> = {
   doubleStamp: 'Double stamp',
   tenOff: '₱10 off',
   voucher: '₱20 off next day',
+  comboVoucher: '₱15 off a combo',
   tryAgain: 'Try again',
 };
 
@@ -40,6 +41,8 @@ export type PrizeContext = {
   via: 'physical' | 'digital';
   now: number;
   rand?: () => number;
+  /** Is this voucher code already on another order? Then another one is drawn. */
+  codeTaken?: (code: string) => boolean;
 };
 
 export type PrizeOutcome =
@@ -60,43 +63,47 @@ function freeLine(item: MenuItem, prize: PrizeId, s: Settings): OrderLine {
   return snapshotLine(line, s);
 }
 
-/** What the customer has really paid for this order so far: due, minus prize cash and refunds already handed back. */
 /** What the customer has paid net so far: the amount due minus prize cash and refunds already handed back. */
+/** A voucher code no other voucher has (checked on this order and, through ctx, on all others). */
+function freshCode(order: Order, ctx: PrizeContext): string {
+  let code = makeVoucherCode(ctx.rand);
+  for (let i = 0; i < 50 && (order.spins.some((x) => x.voucherCode === code) || ctx.codeTaken?.(code)); i++) code = makeVoucherCode(ctx.rand);
+  return code;
+}
+
+/** Free meal on a combo (or a second Free meal on one order) gives this % off instead. */
+export const FREE_MEAL_FALLBACK_PCT = 30;
+
 export function paidSoFar(order: Order): number {
   const refunds = (order.refunds ?? []).reduce((n, r) => n + r.amount, 0);
   return Math.max(0, order.payment.due - prizeRefundTotal(order) - refunds);
 }
 
 /**
- * Record what the wheel landed on for one bowl, after payment.
+ * Record what the wheel landed on for one item (or one of a combo's 3 spins), after payment.
  * Money prizes are paid back in cash (never more than the customer paid);
  * item prizes are added to the order at ₱0.
  * On the last selling day a voucher is swapped for settings.voucher.lastDayPrize.
  */
-export function applyPrize(order: Order, bowl: { lineId: string; unit: number }, landed: PrizeId, ctx: PrizeContext): PrizeOutcome {
+export function applyPrize(order: Order, unit: { lineId: string; unit: number }, landed: PrizeId, ctx: PrizeContext): PrizeOutcome {
   const s = ctx.settings;
   if (order.voided) return { ok: false, message: 'This order was voided.' };
-  if (order.spins.some((x) => x.lineId === bowl.lineId && x.unit === bowl.unit)) {
-    return { ok: false, message: 'This bowl already spun. One prize per meal.' };
+  if (order.spins.some((x) => x.lineId === unit.lineId && x.unit === unit.unit)) {
+    return { ok: false, message: 'This item already spun. One spin per item.' };
   }
   if (order.spins.length >= order.spinsEarned) {
     return { ok: false, message: 'No spins left on this order.' };
   }
-  const line = order.lines.find((l) => l.id === bowl.lineId);
-  if (!line || line.combo || line.free || itemById(s, line.itemId)?.kind !== 'bowl') {
-    return { ok: false, message: 'Only bowls outside a combo can spin.' };
-  }
-  if (!Number.isInteger(bowl.unit) || bowl.unit < 0 || bowl.unit >= line.qty) {
-    return { ok: false, message: 'That bowl is not on this order.' };
-  }
-
+  const target = spinnableUnits(order.lines, s).find((x) => x.lineId === unit.lineId && x.unit === unit.unit);
+  const line = order.lines.find((l) => l.id === unit.lineId);
+  if (!target || !line) return { ok: false, message: 'That item has no spin on this order.' };
   // A voucher won on the last selling day could never be used: give the stand-in prize.
   const standIn = s.voucher.lastDayPrize ?? 'tenOff';
   const swapped = landed === 'voucher' && standIn !== 'voucher' && isLastSellingDay(localDate(ctx.now), s);
   const prize: PrizeId = swapped ? standIn : landed;
   const lead = swapped ? 'Last day, so no voucher: ' : '';
 
-  const spin: SpinResult = { lineId: bowl.lineId, unit: bowl.unit, prize, refund: 0, via: ctx.via, at: ctx.now };
+  const spin: SpinResult = { lineId: unit.lineId, unit: unit.unit, prize, refund: 0, via: ctx.via, at: ctx.now };
   let lines = order.lines;
   let stampsEarned = order.stampsEarned;
   let message = '';
@@ -104,8 +111,24 @@ export function applyPrize(order: Order, bowl: { lineId: string; unit: number },
 
   switch (prize) {
     case 'freeMeal': {
-      spin.refund = Math.min(lineUnitTotal(line, s), paid);
-      message = `FREE MEAL! Give back ₱${spin.refund} cash.`;
+      // The item this spin belongs to is free, and only one item per order.
+      // A combo can't be won free, and a second Free meal is not another free
+      // item: both give 30% off that item instead.
+      const price = lineUnitTotal(line, s);
+      const alreadyFree = order.spins.some((x) => x.prize === 'freeMeal' && !x.pct && x.refund > 0);
+      const sameCombo = !!line.combo && order.spins.some((x) => x.prize === 'freeMeal' && x.lineId === line.id && Math.floor(x.unit / COMBO_SPINS) === Math.floor(unit.unit / COMBO_SPINS));
+      if (sameCombo) {
+        // The 30% for this combo was already given: a combo can't be won bit by bit.
+        spin.pct = FREE_MEAL_FALLBACK_PCT;
+        message = 'This combo already got its 30% off. Give a sticker.';
+      } else if (line.combo || alreadyFree) {
+        spin.pct = FREE_MEAL_FALLBACK_PCT;
+        spin.refund = Math.min(Math.round((price * FREE_MEAL_FALLBACK_PCT) / 100), paid);
+        message = `${line.combo ? 'Free meal on a combo' : 'Only one free item per order'}: 30% off ${line.combo ? 'the combo' : 'this item'}. Give back ₱${spin.refund} cash.`;
+      } else {
+        spin.refund = Math.min(price, paid);
+        message = `FREE MEAL! ${line.name.replace(/ \(FREE.*\)$/, '')} is free. Give back ₱${spin.refund} cash.`;
+      }
       break;
     }
     case 'tenOff': {
@@ -132,14 +155,19 @@ export function applyPrize(order: Order, bowl: { lineId: string; unit: number },
       break;
     }
     case 'doubleStamp': {
-      if (!order.cardId) return { ok: false, message: `${lead}Double stamp needs a loyalty card. Add the card number first.` };
+      if (!order.cardId) return { ok: false, message: `${lead}Double stamp needs a Boom Card. Add the card number first.` };
       stampsEarned += 1;
-      message = '+1 extra stamp on the card.';
+      message = '+1 extra stamp on the Boom Card.';
       break;
     }
     case 'voucher': {
-      spin.voucherCode = makeVoucherCode(ctx.rand);
+      spin.voucherCode = freshCode(order, ctx);
       message = `Write this code on a voucher slip: ${spin.voucherCode}`;
+      break;
+    }
+    case 'comboVoucher': {
+      spin.voucherCode = freshCode(order, ctx);
+      message = `₱${s.voucher.comboAmount ?? 15} off a combo on the next order, today or the next selling day. Write this code on a voucher slip: ${spin.voucherCode}`;
       break;
     }
     case 'tryAgain': {

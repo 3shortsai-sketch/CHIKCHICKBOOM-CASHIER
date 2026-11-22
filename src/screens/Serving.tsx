@@ -391,13 +391,14 @@ export function Serving() {
               {s.combos
                 .filter((c) => c.active)
                 .map((c) => (
-                  <li key={c.id} className="menu-row">
+                  <li key={c.id} className="menu-row combo-row">
+                    {c.photo && <img className="menu-photo menu-photo-combo" src={`./${c.photo}`} alt="" loading="lazy" />}
                     <div className="menu-text">
                       <div className="menu-line">
                         <span className="menu-name">{c.name}</span>
                         <b>{peso(c.price)}</b>
                       </div>
-                      <small className="menu-desc">{c.parts.map((p) => (p === 'fries' ? 'regular fries' : p)).join(' + ')}</small>
+                      <small className="menu-desc">{c.parts.map((p) => ({ bowl: 'bowl', fries: 'Fries with Dip', slushie: 'shake or juice', cookie: 'cookie' })[p]).join(' + ')}</small>
                     </div>
                   </li>
                 ))}
@@ -411,7 +412,7 @@ export function Serving() {
             <p>The wheel is taking a break today.</p>
           ) : (
             <>
-              <p>Every rice bowl (not in a combo) gets 1 spin. Spin at the pickup counter!</p>
+              <p>Every item gets 1 spin, and a combo gets 3. Spin at the pickup counter!</p>
               {wins.length > 0 ? (
                 <div className="winners">
                   <span className="winners-label">Recent winners</span>
@@ -431,7 +432,7 @@ export function Serving() {
                   ))}
                 </ul>
               )}
-              <p className="small">One prize per meal. Combos and voucher orders don't spin.</p>
+              <p className="small">One prize per spin. Bottled water and add-ons don't spin.</p>
             </>
           )}
         </section>

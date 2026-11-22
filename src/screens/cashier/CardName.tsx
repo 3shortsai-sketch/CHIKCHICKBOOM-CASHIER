@@ -29,7 +29,7 @@ export function CardNameField({ number, by, onSaved }: { number: string; by: str
     return (
       <span className="card-name">
         {name}{' '}
-        <button className="link-btn" onClick={() => { setValue(name); setEditing(true); }} aria-label={`Change the name on card ${number}`}>
+        <button className="link-btn" onClick={() => { setValue(name); setEditing(true); }} aria-label={`Change the name on Boom Card ${number}`}>
           edit
         </button>
       </span>
@@ -42,7 +42,7 @@ export function CardNameField({ number, by, onSaved }: { number: string; by: str
         value={value}
         maxLength={30}
         autoFocus={editing}
-        placeholder="Name on this card"
+        placeholder="Name on this Boom Card"
         aria-label={`Name for card ${number}`}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), save())}

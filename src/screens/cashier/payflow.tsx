@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { cashSuggestions } from '../../domain/checkout';
 import { cardStateFor } from '../../domain/cards';
-import { availableRewards, localDate, parseCard, voucherWindow } from '../../domain/loyalty';
-import { peso, spinnableBowls } from '../../domain/pricing';
+import { availableRewards, parseCard, voucherTerms } from '../../domain/loyalty';
+import { COMBO_SPINS, peso, spinnableUnits } from '../../domain/pricing';
 import type { MenuItem, Order, PaymentMethod, PrizeId, Settings } from '../../domain/types';
 import { applyPrize, digitalSpin, PRIZE_LABEL, prizeRefundTotal, undoLastSpin } from '../../domain/wheel';
 import { modeCards, useStore } from '../../data/store';
 import { Modal } from '../../ui/ui';
 import { CardNameField } from './CardName';
 
-/** Shortest GCash/Maya reference the cashier may type (the last 4 digits). */
+/** Shortest GCash reference the cashier may type (the last 4 digits). */
 const MIN_REFERENCE = 4;
 /** Longest cash amount that can be typed: 7 digits. */
 const MAX_CASH_DIGITS = 7;
@@ -33,7 +33,7 @@ export function PayModal({
   due: number;
   /** Payment methods the booth accepts (cash is always on). */
   methods: PaymentMethod[];
-  /** The number of another order today paid with this GCash/Maya reference, if any. */
+  /** The number of another order today paid with this GCash reference, if any. */
   duplicateOf: (reference: string) => string | undefined;
   /** Tells the customer monitor which method is chosen, so it can show the QR. */
   onMethod: (m: PaymentMethod) => void;
@@ -49,7 +49,8 @@ export function PayModal({
   const [tendered, setTendered] = useState<number | null>(null);
   const [typed, setTyped] = useState('');
   const [reference, setReference] = useState('');
-  const cash = typed ? Number(typed) : (tendered ?? 0);
+  // Nothing typed and no button tapped: Enter means the customer paid the exact amount.
+  const cash = typed ? Number(typed) : (tendered ?? due);
   const change = cash - due;
   const ref = reference.trim();
   const canPay = method === 'cash' ? cash >= due : ref.length >= MIN_REFERENCE;
@@ -86,14 +87,14 @@ export function PayModal({
       <div className="segmented">
         {methods.map((m) => (
           <button key={m} className={method === m ? 'selected' : ''} onClick={() => setMethod(m)}>
-            {m === 'cash' ? 'Cash' : m === 'gcash' ? 'GCash' : 'Maya'}
+            {m === 'cash' ? 'Cash' : 'GCash'}
           </button>
         ))}
       </div>
       {method === 'cash' ? (
         <>
           <div className="quick-cash">
-            <button className={`btn ${tendered === due && !typed ? 'primary' : ''}`} onClick={() => { setTendered(due); setTyped(''); }}>Exact</button>
+            <button className={`btn ${(tendered === due || tendered === null) && !typed ? 'primary' : ''}`} onClick={() => { setTendered(due); setTyped(''); }}>Exact ↵</button>
             {cashSuggestions(due).map((n) => (
               <button key={n} className={`btn ${tendered === n && !typed ? 'primary' : ''}`} onClick={() => { setTendered(n); setTyped(''); }}>
                 {peso(n)}
@@ -136,7 +137,7 @@ export function PayModal({
   );
 }
 
-const PRIZE_ORDER: PrizeId[] = ['freeMeal', 'freeCookie', 'freeWater', 'freeSauce', 'doubleStamp', 'tenOff', 'voucher', 'tryAgain'];
+const PRIZE_ORDER: PrizeId[] = ['freeMeal', 'freeCookie', 'freeWater', 'freeSauce', 'doubleStamp', 'tenOff', 'voucher', 'comboVoucher', 'tryAgain'];
 
 /**
  * fresh: just paid (show change). spin: reopened to log a spin called out
@@ -144,7 +145,7 @@ const PRIZE_ORDER: PrizeId[] = ['freeMeal', 'freeCookie', 'freeWater', 'freeSauc
  */
 export type AfterPayMode = 'fresh' | 'spin' | 'past';
 
-/** Shown after payment: log each bowl's spin, then show the order number. */
+/** Shown after payment: log each item's spin (3 for a combo), then show the order number. */
 export function AfterPay({
   mode,
   order,
@@ -163,22 +164,32 @@ export function AfterPay({
   onPatch: (patch: Partial<Order>) => void;
   onDone: () => void;
 }) {
-  const bowls = useMemo(() => spinnableBowls(order.lines, s), [order.lines, s]);
+  const units = useMemo(() => spinnableUnits(order.lines, s), [order.lines, s]);
   const past = mode === 'past';
   const [message, setMessage] = useState<{ text: string; bad?: boolean } | null>(null);
   const [cardInput, setCardInput] = useState('');
   const spinsLeft = order.spinsEarned - order.spins.length;
-  const nextBowl = bowls.find((b) => !order.spins.some((x) => x.lineId === b.lineId && x.unit === b.unit));
+  const nextUnit = units.find((b) => !order.spins.some((x) => x.lineId === b.lineId && x.unit === b.unit));
+  /** "Spin 2 of 4 for OG Chicken Rice Bowl", or for a combo "Boom Combo A, spin 1 of 3". */
+  const spinHeading = (u: NonNullable<typeof nextUnit>) => {
+    if (!u.combo) return { lead: `Spin ${order.spins.length + 1} of ${order.spinsEarned}`, rest: `for ${u.name}` };
+    // Each combo has 3 spins: a line of 2 combos has units 0 to 5.
+    const comboId = order.lines.find((l) => l.id === u.lineId)?.combo?.comboId;
+    const name = s.combos.find((c) => c.id === comboId)?.name ?? u.name;
+    return { lead: name, rest: `spin ${(u.unit % COMBO_SPINS) + 1} of ${COMBO_SPINS}` };
+  };
   // Only prizes logged since this screen opened are still to be paid out.
   const [spinsAtOpen] = useState(() => (mode === 'fresh' ? 0 : order.spins.length));
   const refund = past ? prizeRefundTotal(order) : order.spins.slice(spinsAtOpen).reduce((n, x) => n + x.refund, 0);
   const cardList = useStore((st) => modeCards(st));
   const card = order.cardId ? cardStateFor(order.cardId, orders.filter((o) => o.id !== order.id).concat(order), s, cardList) : null;
   const vouchers = order.spins.filter((x) => x.voucherCode);
-  /** The real days a voucher won at `at` can be used, e.g. "on Tue, Nov 24". */
-  const voucherDays = (at: number) => {
-    const w = voucherWindow(localDate(at), s);
-    return w.validTo > w.validFrom ? `${niceDate(w.validFrom)} to ${niceDate(w.validTo)}` : `on ${niceDate(w.validFrom)}`;
+  /** What to write on the slip for one voucher: its amount, the real days it can be used and its rule. */
+  const voucherSlip = (v: (typeof vouchers)[number]) => {
+    const t = voucherTerms(v, s);
+    const days = t.validTo > t.validFrom ? `${niceDate(t.validFrom)} to ${niceDate(t.validTo)}` : `on ${niceDate(t.validFrom)}`;
+    if (t.needsCombo) return `${t.label}, valid ${days}, on an order with a combo`;
+    return `${t.label}, valid ${days}${t.minOrder > 0 ? `, min ₱${t.minOrder}` : ''}`;
   };
 
   const spinPatch = (o: Order): Partial<Order> => ({ spins: o.spins, lines: o.lines, stampsEarned: o.stampsEarned });
@@ -186,8 +197,8 @@ export function AfterPay({
   /** `landed` is what the wheel showed; the prize really given (r.spin.prize) can differ on the last day. */
   const log = (landed: PrizeId, via: 'physical' | 'digital') => {
     // A past order is only for looking: nothing is logged from here.
-    if (past || !nextBowl) return;
-    const r = applyPrize(order, nextBowl, landed, { settings: s, pickFree, via, now: Date.now() });
+    if (past || !nextUnit) return;
+    const r = applyPrize(order, nextUnit, landed, { settings: s, pickFree, via, now: Date.now(), codeTaken: (code) => orders.some((o) => o.spins.some((x) => x.voucherCode === code)) });
     if (!r.ok) return setMessage({ text: r.message, bad: true });
     onPatch(spinPatch(r.order));
     setMessage({ text: via === 'digital' ? `Digital wheel landed on ${PRIZE_LABEL[landed]}. ${r.message}` : r.message });
@@ -201,10 +212,10 @@ export function AfterPay({
 
   const attachCard = () => {
     const id = parseCard(cardInput, s);
-    if (!id) return setMessage({ text: `Unknown card number. Cards run ${s.loyalty.prefix}${String(s.loyalty.first).padStart(3, '0')} to ${s.loyalty.prefix}${s.loyalty.last}.`, bad: true });
+    if (!id) return setMessage({ text: `Unknown Boom Card number. Boom Cards run ${s.loyalty.prefix}${String(s.loyalty.first).padStart(3, '0')} to ${s.loyalty.prefix}${s.loyalty.last}.`, bad: true });
     onPatch({ cardId: id, stampsEarned: order.stampsEarned + 1 });
     setCardInput('');
-    setMessage({ text: `Card ${id} added. +1 stamp.` });
+    setMessage({ text: `Boom Card ${id} added. +1 stamp.` });
   };
 
   const [openedAt] = useState(() => Date.now());
@@ -223,7 +234,9 @@ export function AfterPay({
         return;
       }
       const n = Number(e.key);
-      if (!past && spinsLeft > 0 && n >= 1 && n <= PRIZE_ORDER.length) log(PRIZE_ORDER[n - 1], 'physical');
+      // Number keys log a prize only on a screen opened from "Spins waiting": on the
+      // change screen a 1 is far more likely the next customer's first item.
+      if (mode === 'spin' && spinsLeft > 0 && n >= 1 && n <= PRIZE_ORDER.length) log(PRIZE_ORDER[n - 1], 'physical');
     };
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
@@ -255,18 +268,19 @@ export function AfterPay({
           <p className="muted">
             {spinsLeft} spin{spinsLeft > 1 ? 's were' : ' was'} not logged on this order.
           </p>
-        ) : spinsLeft > 0 && nextBowl ? (
+        ) : spinsLeft > 0 && nextUnit ? (
           <section className="spin-panel">
             <h2>
-              🎡 Spin {order.spins.length + 1} of {order.spinsEarned} <span className="muted">for {nextBowl.name}</span>
+              🎡 {spinHeading(nextUnit).lead}
+              {nextUnit.combo ? ',' : ''} <span className="muted">{spinHeading(nextUnit).rest}</span>
             </h2>
             <p className="muted">
-              The customer spins at the pickup wheel. Tap the prize when it's called out, here or later from <b>Spins waiting</b> (keys 1–8).
+              The customer spins at the pickup wheel. Tap the prize when it's called out, here or later from <b>Spins waiting</b>{mode === 'spin' ? ' (keys 1–9)' : ''}.
             </p>
-            <div className="prize-grid">
+            <div className="prize-grid nine">
               {PRIZE_ORDER.map((p, i) => (
                 <button key={p} className={`prize prize-${p}`} onClick={() => log(p, 'physical')}>
-                  <kbd>{i + 1}</kbd>
+                  {mode === 'spin' && <kbd>{i + 1}</kbd>}
                   {PRIZE_LABEL[p]}
                 </button>
               ))}
@@ -278,7 +292,7 @@ export function AfterPay({
         ) : order.spinsEarned > 0 ? (
           <p className="ok-note">All spins logged.</p>
         ) : (
-          <p className="muted">No spins on this order{order.voucher ? ' (voucher used)' : s.wheel.paused ? ' (wheel paused)' : ''}.</p>
+          <p className="muted">No spins on this order{s.wheel.paused ? ' (wheel paused)' : ''}.</p>
         )}
 
         {message && <p className={message.bad ? 'error' : 'ok-note'}>{message.text}</p>}
@@ -300,12 +314,10 @@ export function AfterPay({
           <div className="voucher-box">
             <span>Write on a voucher slip</span>
             {vouchers.map((v) => (
-              <b key={v.voucherCode}>{v.voucherCode}</b>
-            ))}
-            {[...new Set(vouchers.map((v) => voucherDays(v.at)))].map((days) => (
-              <small key={days}>
-                ₱{s.voucher.amount} off, valid {days}, min ₱{s.voucher.minOrder}
-              </small>
+              <div key={v.voucherCode} className="voucher-slip">
+                <b>{v.voucherCode}</b>
+                <small>{voucherSlip(v)}</small>
+              </div>
             ))}
           </div>
         )}
@@ -314,6 +326,7 @@ export function AfterPay({
             {order.spins.map((x, i) => (
               <li key={i}>
                 {PRIZE_LABEL[x.prize]}
+                {x.pct ? `: ${x.pct}% off` : ''}
                 {x.refund > 0 && ` (−${peso(x.refund)})`}
               </li>
             ))}
@@ -333,10 +346,10 @@ export function AfterPay({
         ) : (
           <div className="stack">
             <label className="field">
-              <span>Forgot the loyalty card?</span>
-              <input className="input" value={cardInput} onChange={(e) => setCardInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && attachCard()} placeholder="Card number, e.g. 37" />
+              <span>Forgot the Boom Card?</span>
+              <input className="input" value={cardInput} onChange={(e) => setCardInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && attachCard()} placeholder="Boom Card number, e.g. 37" />
             </label>
-            <button className="btn small" onClick={attachCard}>Add card</button>
+            <button className="btn small" onClick={attachCard}>Add Boom Card</button>
           </div>
         )}
         <button className="btn primary big full" onClick={onDone}>

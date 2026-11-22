@@ -18,6 +18,7 @@ import {
   type QuerySnapshot,
   type SnapshotMetadata,
 } from 'firebase/firestore';
+import { MENU_VERSION } from '../domain/defaults';
 import { waitMinutes } from '../domain/inventory';
 import { localDate } from '../domain/loyalty';
 import type { Order } from '../domain/types';
@@ -313,6 +314,13 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
       // A device that missed "Start fresh" uploaded it again: remove it for good.
       removed.add(ch.doc.id);
       push({ type: 'remove', col, id: ch.doc.id });
+    } else if (isLeftover(col, ch.doc.data())) {
+      // Only a scrap of a document (a late "Ready" or waste entry for something
+      // that was already cleared): never show it; remove it once the server has it.
+      if (!snap.metadata.fromCache && !ch.doc.metadata.hasPendingWrites) {
+        removed.add(ch.doc.id);
+        push({ type: 'remove', col, id: ch.doc.id });
+      }
     } else ops.push({ type: 'put', col, id: ch.doc.id, doc: ch.doc.data() });
   }
   if (!snap.metadata.fromCache && !uploadedOnce[col]) {
@@ -333,7 +341,16 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
   updateStatus();
 }
 
+/** A real order, day or cash entry always carries its own id; a scrap left by a late change does not. */
+function isLeftover(col: Collection, data: Record<string, unknown>): boolean {
+  if (col === 'orders') return typeof data.id !== 'string' || typeof data.dayId !== 'string';
+  if (col === 'days' || col === 'cashMoves') return typeof data.id !== 'string';
+  return false;
+}
+
 const replayed: Partial<Record<Collection, boolean>> = {};
+/** The old menu version this window already upgraded on the server (so it does it once). */
+let upgradedFrom: number | undefined;
 
 function attach() {
   if (!db) return;
@@ -355,6 +372,13 @@ function attach() {
           // and passcodes must never replace the booth's real ones.
           if (first) uploadedOnce.settings = true;
           applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: s.data() }]);
+          // The shared copy is still on an older menu: save the upgraded one,
+          // or every later Setup change would be upgraded over again and snap back.
+          const shared = (s.data().menuVersion as number | undefined) ?? 1;
+          if (!s.metadata.fromCache && !s.metadata.hasPendingWrites && shared < MENU_VERSION && upgradedFrom !== shared) {
+            upgradedFrom = shared;
+            push({ type: 'put', col: 'settings', id: 'main', doc: getState().settings });
+          }
         } else if (first) {
           // First device to connect: its settings (menu, prices, PINs) become the shared ones.
           uploadedOnce.settings = true;

@@ -71,11 +71,11 @@ export type CartCheck = {
 export function checkCart(i: CartCheck): string | null {
   const s = i.settings;
   if (i.voucher) {
-    const v = checkVoucher(i.voucher.code, i.orders, s, i.today, subtotal(i.lines, s));
+    const v = checkVoucher(i.voucher.code, i.orders, s, i.today, subtotal(i.lines, s), i.lines);
     if (!v.ok) return `Voucher ${i.voucher.code}: ${v.message} Remove it from the order.`;
   }
   for (const at of i.rewardsRedeemed) {
-    if (!i.cardState) return `The ${at}-stamp reward needs a loyalty card. Add the card or remove the free item.`;
+    if (!i.cardState) return `The ${at}-stamp reward needs a Boom Card. Add the card or remove the free item.`;
     const r = canRedeem(i.cardState, at, s);
     if (!r.ok) return `${r.message} Remove the free item.`;
   }
