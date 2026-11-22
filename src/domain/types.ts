@@ -262,7 +262,7 @@ export type Settings = {
   /** Which e-wallets the booth accepts. The GCash number is typed in Setup, not stored in code. */
   payments: { gcash: boolean; maya: boolean; gcashNumber: string };
   /** Prize cost as % of the day's sales: warn, then tell the cashier to pause the wheel. */
-  promoLimits: { warnPct: number; pausePct: number; minSales: number };
+  promoLimits: { warnPct: number; pausePct: number; minSales: number; /** No warnings at the cashier (the dashboard still shows the %). */ off?: boolean };
   /** Passcode for team members to see profits on the cashier. */
   teamPin: string;
   /** Monitor shows "Only N left!" at or below this many. */

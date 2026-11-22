@@ -87,10 +87,10 @@ function spins(l: OrderLine, s: Settings): number {
 
 /**
  * Spins an order earns: one for every item bought (not bottled water, add-ons
- * or free items), three for a combo. An order paid with a voucher earns none.
+ * or free items), three for a combo. An order paid with a voucher spins too.
  */
-export function spinsEarned(lines: OrderLine[], s: Settings, hasVoucher: boolean): number {
-  if (hasVoucher || s.wheel.paused) return 0;
+export function spinsEarned(lines: OrderLine[], s: Settings, _hasVoucher?: boolean): number {
+  if (s.wheel.paused) return 0;
   return lines.reduce((n, l) => n + spins(l, s) * l.qty, 0);
 }
 

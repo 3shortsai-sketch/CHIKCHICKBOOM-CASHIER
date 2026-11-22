@@ -82,7 +82,8 @@ function upgradeSettings(saved: Partial<Settings> | null | undefined): Settings 
       dipAllergens: fresh.dipAllergens,
       wheel: { ...merged.wheel, slots: fresh.wheel.slots },
       loyalty: { ...merged.loyalty, rewards: fresh.loyalty.rewards },
-      promoLimits: oldLimits ? fresh.promoLimits : merged.promoLimits,
+      // The booth chose to switch the prize warning off with the new wheel.
+      promoLimits: { ...(oldLimits ? fresh.promoLimits : merged.promoLimits), off: true },
       ingredients: merged.ingredients.map((i) => (i.id === 'ing-fries' && !i.uses ? { ...i, uses: { 'topping-fries': 0.08 } } : i)),
       menuVersion: MENU_VERSION,
     };

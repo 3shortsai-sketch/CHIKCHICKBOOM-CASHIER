@@ -78,7 +78,8 @@ export function defaultSettings(): Settings {
     dailyGoal: 66800,
     payments: { gcash: true, maya: false, gcashNumber: '' },
     // Every item spins now (combos 3 times), so a normal day is about 8–10%.
-    promoLimits: { warnPct: 10, pausePct: 12, minSales: 5000 },
+    // The booth chose not to be warned (off); the dashboard still shows the %.
+    promoLimits: { warnPct: 10, pausePct: 12, minSales: 5000, off: true },
     teamPin: '2468',
     lowStockAlert: 5,
     defaultWaitMinutes: 8,

@@ -51,7 +51,8 @@ export function promoStatus(sum: DaySummary, s: Settings): { pct: number; cost: 
   const shown = Math.round(pct * 100) / 100;
   const { warnPct, pausePct, minSales } = s.promoLimits;
   let level: PromoLevel = 'ok';
-  if (sum.gross < minSales) level = 'early';
+  if (s.promoLimits.off) level = 'ok';
+  else if (sum.gross < minSales) level = 'early';
   else if (shown >= pausePct) level = 'pause';
   else if (shown >= warnPct) level = 'warn';
   return { pct, cost, level };

@@ -91,8 +91,8 @@ describe('spins', () => {
     expect(spinsEarned([cookie(), fries(), water, sauce], s, false)).toBe(2);
     expect(spinnableUnits(lines, s).filter((u) => u.combo)).toHaveLength(3);
   });
-  it('gives no spins with a voucher, for reward bowls, or when paused', () => {
-    expect(spinsEarned([bowl()], s, true)).toBe(0);
+  it('still spins with a voucher; no spins for reward items or when paused', () => {
+    expect(spinsEarned([bowl()], s, true)).toBe(1);
     expect(spinsEarned([bowl(1, { unitPrice: 0, free: { reason: 'reward', stampsAt: 10 } })], s, false)).toBe(0);
     expect(spinsEarned([bowl()], { ...s, wheel: { ...s.wheel, paused: true } }, false)).toBe(0);
   });
@@ -275,9 +275,15 @@ describe('prize limit', () => {
     expect(e.perSpin).toBeLessThan(11);
   });
 
-  it('waits for minimum sales, then warns and asks to pause', () => {
+  it('is off by default (the booth chose no warnings)', () => {
     const base = summarize(day, [], s);
-    const at = (gross: number, wheel: number) => promoStatus({ ...base, gross, promo: { ...base.promo, wheel, vouchers: 0 } }, s);
+    expect(promoStatus({ ...base, gross: 10000, promo: { ...base.promo, wheel: 5000, vouchers: 0 } }, s).level).toBe('ok');
+  });
+
+  it('when switched on: waits for minimum sales, then warns and asks to pause', () => {
+    const base = summarize(day, [], s);
+    const on = { ...s, promoLimits: { ...s.promoLimits, off: false } };
+    const at = (gross: number, wheel: number) => promoStatus({ ...base, gross, promo: { ...base.promo, wheel, vouchers: 0 } }, on);
     expect(at(1000, 189).level).toBe('early');
     expect(at(10000, 900).level).toBe('ok');
     expect(at(10000, 1000).level).toBe('warn');
@@ -892,7 +898,7 @@ describe('reports: promo at cost, voids, recounts', () => {
 
   it('promo limit: 9.999999999999998% counts as 10%', () => {
     const base = summarize(day, [], s);
-    const st = promoStatus({ ...base, gross: 10000, promo: { ...base.promo, wheel: 999.9999999, vouchers: 0 } }, s);
+    const st = promoStatus({ ...base, gross: 10000, promo: { ...base.promo, wheel: 999.9999999, vouchers: 0 } }, { ...s, promoLimits: { ...s.promoLimits, off: false } });
     expect(st.pct).toBeLessThan(10);
     expect(st.level).toBe('warn');
   });

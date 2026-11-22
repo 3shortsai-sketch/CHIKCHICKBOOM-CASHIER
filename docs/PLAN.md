@@ -104,9 +104,9 @@ but the kitchen tablet is not.
 | Try again | Sticker |
 
 - Money given back is always **cash from the drawer**, even if the customer paid by GCash. The cash drawer count accounts for it.
-- One prize per spin. An item from a Boom Card reward doesn't spin. An order paid with a voucher doesn't spin at all.
+- One prize per spin. An item from a Boom Card reward doesn't spin. An order paid with a voucher still spins.
 - Wheel (20 slots, same as the menu page): Free meal 1, Free cookie 1, Free water 2, Free sauce 2, Double stamp 2, ₱10 off 2, ₱20 off next day 1, ₱15 off a combo 1, Try again 8.
-- With every item spinning, prizes cost about ₱10 per spin at cost, roughly 8–10% of sales. The prize alarm warns at 10% and suggests pausing at 12%.
+- With every item spinning, prizes cost about ₱10 per spin at cost, roughly 8–10% of sales. The prize warning is switched off (the booth's choice); the dashboard still shows the %. It can be switched back on in Setup (warn 10%, pause 12%).
 - "Undo last spin" fixes a wrong tap. "Customer skipped the spin" moves on.
 - The pause switch in Setup turns the wheel off.
 
