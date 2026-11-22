@@ -314,6 +314,13 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
       // A device that missed "Start fresh" uploaded it again: remove it for good.
       removed.add(ch.doc.id);
       push({ type: 'remove', col, id: ch.doc.id });
+    } else if (isLeftover(col, ch.doc.data())) {
+      // Only a scrap of a document (a late "Ready" or waste entry for something
+      // that was already cleared): never show it; remove it once the server has it.
+      if (!snap.metadata.fromCache && !ch.doc.metadata.hasPendingWrites) {
+        removed.add(ch.doc.id);
+        push({ type: 'remove', col, id: ch.doc.id });
+      }
     } else ops.push({ type: 'put', col, id: ch.doc.id, doc: ch.doc.data() });
   }
   if (!snap.metadata.fromCache && !uploadedOnce[col]) {
@@ -332,6 +339,13 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
     replayOutbox(col);
   }
   updateStatus();
+}
+
+/** A real order, day or cash entry always carries its own id; a scrap left by a late change does not. */
+function isLeftover(col: Collection, data: Record<string, unknown>): boolean {
+  if (col === 'orders') return typeof data.id !== 'string' || typeof data.dayId !== 'string';
+  if (col === 'days' || col === 'cashMoves') return typeof data.id !== 'string';
+  return false;
 }
 
 const replayed: Partial<Record<Collection, boolean>> = {};
