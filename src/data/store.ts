@@ -19,6 +19,8 @@ export type Op =
   | { type: 'patch'; col: Collection; id: string; patch: Record<string, unknown> }
   /** Add one entry to a list field (waste, refunds). Two devices adding at once both keep their entry. */
   | { type: 'append'; col: Collection; id: string; field: string; item: unknown }
+  /** Take one entry out of a list field (a kitchen tick). Entries other devices added at the same moment are kept. */
+  | { type: 'pull'; col: Collection; id: string; field: string; item: unknown }
   | { type: 'remove'; col: Collection; id: string };
 
 export type State = {
@@ -124,7 +126,8 @@ let state: State = {
 const listeners = new Set<() => void>();
 queueMicrotask(() => dropWiped() && emit());
 let remote: Remote | null = null;
-const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ccb-pos') : null;
+// The name carries a number: a window still on an older version must not get changes it cannot read.
+const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ccb-pos-2') : null;
 
 // ---------- Saving on this device ----------
 // Writing a whole list to storage is slow once there are hundreds of orders,
@@ -238,6 +241,14 @@ function applyOp(op: Op): boolean {
       const list = Array.isArray(doc[op.field]) ? (doc[op.field] as unknown[]) : [];
       if (hasEntry(list, op.item)) return false;
       col[op.id] = { ...doc, [op.field]: [...list, op.item] };
+    } else if (op.type === 'pull') {
+      const doc = col[op.id] as Record<string, unknown> | undefined;
+      if (!doc) return false;
+      const list = Array.isArray(doc[op.field]) ? (doc[op.field] as unknown[]) : [];
+      const json = JSON.stringify(op.item);
+      const next = list.filter((x) => JSON.stringify(x) !== json);
+      if (next.length === list.length) return false;
+      col[op.id] = { ...doc, [op.field]: next };
     } else delete col[op.id];
     state = { ...state, [op.col]: col };
   }
@@ -288,7 +299,9 @@ function readOutbox(): Op[] {
 
 function writeOutbox(ops: Op[]) {
   try {
-    if (ops.length) localStorage.setItem(OUTBOX_KEY, JSON.stringify(ops.slice(-OUTBOX_MAX), (_k, v) => (v === undefined ? FIELD_REMOVED : v)));
+    // Only a patch's own fields are marked. An `undefined` deeper down (a line with no note) just means "not there".
+    const marked = ops.slice(-OUTBOX_MAX).map((op) => (op.type === 'patch' ? { ...op, patch: Object.fromEntries(Object.entries(op.patch).map(([k, v]) => [k, v === undefined ? FIELD_REMOVED : v])) } : op));
+    if (ops.length) localStorage.setItem(OUTBOX_KEY, JSON.stringify(marked));
     else localStorage.removeItem(OUTBOX_KEY);
   } catch {
     /* nothing more can be done; the change is still saved on this device */
@@ -337,7 +350,7 @@ export function replayOutbox(col: Collection) {
   // An entry already in this device's list (a tick, a refund) does not apply
   // again here, but the server may never have got it: send it anyway. The
   // server adds an entry only once.
-  for (const op of ops) if (op.type === 'append' && !applied.includes(op) && op.id in state[op.col]) remote.push(op);
+  for (const op of ops) if ((op.type === 'append' || op.type === 'pull') && !applied.includes(op) && op.id in state[op.col]) remote.push(op);
 }
 
 /**
@@ -438,6 +451,11 @@ export function tickItem(id: string, key: string, also?: Partial<Order>) {
   const ops: Op[] = [{ type: 'append', col: 'orders', id, field: 'done', item: key }];
   if (also && Object.keys(also).length) ops.push({ type: 'patch', col: 'orders', id, patch: also as Record<string, unknown> });
   commit(...ops);
+}
+
+/** The kitchen unticks one item. Only that tick is taken out: a tick another tablet made at the same moment stays. */
+export function untickItem(id: string, key: string) {
+  commit({ type: 'pull', col: 'orders', id, field: 'done', item: key });
 }
 
 export function saveSettings(patch: Partial<Settings>) {

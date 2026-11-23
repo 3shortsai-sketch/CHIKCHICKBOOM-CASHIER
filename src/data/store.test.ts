@@ -312,4 +312,22 @@ describe('store', () => {
     expect(st.settings.wiped?.days).toContain('live-1');
     store.saveSettings({ mode: 'demo' });
   });
+  it('unticks one item without touching the other ticks, and keeps line details clean in the outbox', () => {
+    store.putOrder(order('p1', { done: ['a', 'b', 'c'] }) as never);
+    store.untickItem('p1', 'b');
+    store.untickItem('p1', 'zzz');
+    expect(store.getState().orders.p1.done).toEqual(['a', 'c']);
+    // A line with no note saved while signed out must not come back with a junk note.
+    store.enableOutbox(true);
+    store.patchOrder('p1', { lines: [{ id: 'l1', itemId: 'water', name: 'Water', qty: 1, unitPrice: 24, notes: undefined, free: undefined }] });
+    const sent: Op[] = [];
+    store.setRemote({ push: (op) => sent.push(op) });
+    store.replayOutbox('orders');
+    const line = store.getState().orders.p1.lines[0];
+    expect(line.notes).toBeUndefined();
+    expect(line.free).toBeUndefined();
+    expect(JSON.stringify(sent)).not.toContain('field-removed');
+    store.setRemote(null);
+    store.enableOutbox(false);
+  });
 });

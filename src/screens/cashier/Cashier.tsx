@@ -570,7 +570,9 @@ export function Cashier() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (picking || paying || afterPay || tool || pickup || staleDay) return;
+      // The pickup details close by themselves when the order stops being ready (undone, voided, picked up elsewhere).
+      const pickupOpen = !!pickup && state.orders[pickup]?.status === 'ready' && !state.orders[pickup]?.voided;
+      if (picking || paying || afterPay || tool || pickupOpen || staleDay) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         if (e.key === 'Escape') (e.target as HTMLElement).blur();
         return;

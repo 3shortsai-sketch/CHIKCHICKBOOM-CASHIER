@@ -87,6 +87,13 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
         .getRegistrations()
         .then((all) => all.forEach((r) => void r.unregister()))
         .catch(() => {});
+      // ...and the files it saved.
+      if ('caches' in window) {
+        caches
+          .keys()
+          .then((keys) => keys.filter((k) => k.startsWith('ccb-pos-')).forEach((k) => void caches.delete(k)))
+          .catch(() => {});
+      }
       return;
     }
     navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('Offline mode not available', e));

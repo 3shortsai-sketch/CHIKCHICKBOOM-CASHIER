@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, type Auth, type User } from 'firebase/auth';
 import {
+  arrayRemove,
   arrayUnion,
   collection,
   connectFirestoreEmulator,
@@ -158,7 +159,9 @@ function push(op: Op) {
         : op.type === 'append'
           ? // The server adds the entry to whatever list it has, so two devices never overwrite each other.
             setDoc(r, { [op.field]: arrayUnion(plain(op.item)) }, { merge: true })
-          : deleteDoc(r);
+          : op.type === 'pull'
+            ? setDoc(r, { [op.field]: arrayRemove(plain(op.item)) }, { merge: true })
+            : deleteDoc(r);
   if (op.col === 'orders') publishOrder(op.id);
   if (op.col === 'cards') publishCardDoc(op.id);
   // A day opening or closing is told to customers at once; the rest at most every 20 seconds.
@@ -198,6 +201,11 @@ let publicBlocked = false;
 /** What was last written to each public document, so the same thing is not written twice. */
 const lastPublic = new Map<string, string>();
 
+/** Forget what was written to the order, card and voucher copies (the booth summary keeps its own check). */
+function forgetPublicWrites() {
+  for (const key of [...lastPublic.keys()]) if (key.startsWith('tracker/')) lastPublic.delete(key);
+}
+
 function publicWrite(path: [string, string], data: Record<string, unknown>) {
   if (!db) return;
   const key = path.join('/');
@@ -225,9 +233,9 @@ export function publicCardId(mode: string, number: string): string {
   return `card_${mode}_${number.toUpperCase()}`;
 }
 
-/** Public copy of a voucher: tracker/voucher_V-ABCD. */
-export function publicVoucherId(code: string): string {
-  return `voucher_${code.toUpperCase()}`;
+/** Public copy of a voucher: tracker/voucher_live_V-ABCD. Practice vouchers have their own copy. */
+export function publicVoucherId(mode: string, code: string): string {
+  return `voucher_${mode}_${code.toUpperCase()}`;
 }
 
 export type TrackerDoc = {
@@ -339,7 +347,7 @@ function publishVoucher(mode: DataMode, code: string) {
     used: !!v?.usedBy,
     practice: mode === 'demo',
   };
-  publicWrite(['tracker', publicVoucherId(code)], data);
+  publicWrite(['tracker', publicVoucherId(mode, code)], data);
 }
 
 /** Voucher codes each order had when it was last published, so an undone prize is taken back too. */
@@ -359,6 +367,16 @@ function publishOrder(orderId: string) {
 /** Write the public copies of these cards again (after "Start fresh" removed their orders). */
 export function republishCards(mode: DataMode, numbers: string[]) {
   for (const n of new Set(numbers)) publishCard(mode, n);
+}
+
+/** Write the public copies of these vouchers again (after "Start fresh" they read as no longer valid). */
+export function republishVouchers(mode: DataMode, codes: string[]) {
+  for (const c of new Set(codes)) publishVoucher(mode, c);
+}
+
+/** Every voucher code won on an order of one data mode. */
+export function voucherCodes(mode: DataMode): string[] {
+  return ordersOf(mode).flatMap((o) => o.spins.flatMap((x) => (x.voucherCode ? [x.voucherCode] : [])));
 }
 
 /** Card numbers with a record or an order, for one data mode. */
@@ -539,6 +557,9 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
   const ops: Op[] = [];
   const removed = new Set<string>();
   for (const ch of snap.docChanges()) {
+    // Another device changed something: it may have rewritten the public copies
+    // too, so this device must not skip its next write as "same as last time".
+    if (!ch.doc.metadata.hasPendingWrites && !snap.metadata.fromCache) forgetPublicWrites();
     if (ch.type === 'removed') {
       removed.add(ch.doc.id);
       ops.push({ type: 'remove', col, id: ch.doc.id });

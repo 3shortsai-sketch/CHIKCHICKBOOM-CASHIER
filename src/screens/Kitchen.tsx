@@ -3,7 +3,7 @@ import { allTicked, itemProgress, liveTicks, NO_SIDE } from '../domain/kitchen';
 import { itemById } from '../domain/pricing';
 import { kitchenMadeCounts } from '../domain/reports';
 import type { ComboPart, Order, OrderLine, Settings } from '../domain/types';
-import { modeOrders, openDay, patchOrder, tickItem, useStore } from '../data/store';
+import { modeOrders, openDay, patchOrder, tickItem, untickItem, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 import { chime, minutesAgo, unlockSound, useNow, useWakeLock } from '../ui/ui';
 
@@ -128,7 +128,7 @@ export function Kitchen() {
   const tick = (o: Order, key: string) => {
     const ticked = liveTicks(o);
     if (ticked.includes(key)) {
-      patchOrder(o.id, { done: ticked.filter((k) => k !== key) });
+      untickItem(o.id, key);
       return;
     }
     const t = Date.now();

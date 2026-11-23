@@ -285,7 +285,7 @@ async function readPublic<T>(db: Firestore, ids: { id: string; practice: boolean
 
 const CARD_KEY = 'ccb:track-card';
 
-function CardCheck({ db, mode, card }: { db: Firestore; mode: DataMode; card: BoothDoc['card'] }) {
+function CardCheck({ db, modes, card }: { db: Firestore; modes: DataMode[]; card: BoothDoc['card'] }) {
   const [text, setText] = useState(() => {
     try {
       return localStorage.getItem(CARD_KEY) ?? '';
@@ -310,7 +310,6 @@ function CardCheck({ db, mode, card }: { db: Firestore; mode: DataMode; card: Bo
       /* private mode: the number is just not remembered */
     }
     try {
-      const modes: DataMode[] = mode === 'demo' ? ['demo'] : ['live', 'demo'];
       const hit = await readPublic<PublicCard>(db, modes.map((m) => ({ id: publicCardId(m, number), practice: m === 'demo' })));
       setFound(hit ? { state: 'ok', ...hit } : { state: 'missing', asked: number });
     } catch {
@@ -368,7 +367,7 @@ function CardCheck({ db, mode, card }: { db: Firestore; mode: DataMode; card: Bo
   );
 }
 
-function VoucherCheck({ db, today }: { db: Firestore; today: string }) {
+function VoucherCheck({ db, modes, today }: { db: Firestore; modes: DataMode[]; today: string }) {
   const [text, setText] = useState('');
   const [found, setFound] = useState<Found<PublicVoucher>>({ state: 'idle' });
   const [error, setError] = useState('');
@@ -381,8 +380,8 @@ function VoucherCheck({ db, today }: { db: Firestore; today: string }) {
     setText(code);
     setFound({ state: 'loading' });
     try {
-      const hit = await readPublic<PublicVoucher>(db, [{ id: publicVoucherId(code), practice: false }]);
-      setFound(hit ? { state: 'ok', doc: hit.doc, practice: !!hit.doc.practice } : { state: 'missing', asked: code });
+      const hit = await readPublic<PublicVoucher>(db, modes.map((m) => ({ id: publicVoucherId(m, code), practice: m === 'demo' })));
+      setFound(hit ? { state: 'ok', ...hit } : { state: 'missing', asked: code });
     } catch {
       setFound({ state: 'error' });
     }
@@ -464,9 +463,11 @@ export function Track({ mode }: { mode: DataMode }) {
   const now = useNow(15000);
   const soundRef = useRef(false);
 
-  // The QR code opens the real-orders page. A practice order is looked for
-  // as well, so a practice run finds its numbers without a special link.
-  const modes = useMemo((): DataMode[] => (mode === 'demo' ? ['demo'] : ['live', 'demo']), [mode]);
+  // The QR code opens the real-orders page. While no real day is open (a
+  // practice run), practice orders are looked for as well, so they are found
+  // without a special link. Once real selling is on, only real orders show.
+  const [practiceToo, setPracticeToo] = useState(false);
+  const modes = useMemo((): DataMode[] => (mode === 'demo' ? ['demo'] : practiceToo ? ['live', 'demo'] : ['live']), [mode, practiceToo]);
 
   // Firebase is started by main.tsx; this only reuses it (or starts the public part).
   useEffect(() => setDb(publicDb() ?? startPublic()), []);
@@ -576,7 +577,12 @@ export function Track({ mode }: { mode: DataMode }) {
     const read = () => {
       last = Date.now();
       getDoc(doc(db, 'public', `booth-${boothMode}`))
-        .then((s) => !stopped && setBooth(s.exists() ? (s.data() as BoothDoc) : null))
+        .then((s) => {
+          if (stopped) return;
+          const b = s.exists() ? (s.data() as BoothDoc) : null;
+          setBooth(b);
+          if (boothMode === 'live') setPracticeToo(!b?.open);
+        })
         .catch(() => {
           /* offline or not switched on: keep what we have */
         });
@@ -721,8 +727,8 @@ export function Track({ mode }: { mode: DataMode }) {
           <BoothInfo booth={booth} alsoReady={numbers.filter((n) => statusOf(n) === 'ready')} active={making || numbers.some((n) => statusOf(n) === 'ready')} />
 
           <Fold title="Menu and prices">{() => <MenuList items={menu} live={!!booth?.menu} />}</Fold>
-          {db && <Fold title="Check your Boom Card stamps">{() => <CardCheck db={db} mode={mode} card={booth?.card} />}</Fold>}
-          {db && <Fold title="Check a voucher">{() => <VoucherCheck db={db} today={today} />}</Fold>}
+          {db && <Fold title="Check your Boom Card stamps">{() => <CardCheck db={db} modes={modes} card={booth?.card} />}</Fold>}
+          {db && <Fold title="Check a voucher">{() => <VoucherCheck db={db} modes={modes} today={today} />}</Fold>}
         </>
       )}
     </div>

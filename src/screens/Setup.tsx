@@ -4,7 +4,7 @@ import { extraRicePrice, newId } from '../domain/pricing';
 import { ALLERGENS, type AllergenTags, type DataMode, type MenuItem, type PrizeId, type Settings } from '../domain/types';
 import { PRIZE_LABEL } from '../domain/wheel';
 import { exportBackup, openDay, resetSettings, saveSettings, setDevice, startFresh, useDevice, useStore, type State } from '../data/store';
-import { cardNumbers, republishCards, signOutBooth, useAuthState, useSyncStatus } from '../data/sync';
+import { cardNumbers, republishCards, republishVouchers, signOutBooth, voucherCodes, useAuthState, useSyncStatus } from '../data/sync';
 import { askToSignIn } from '../ui/BoothLogin';
 import { TopBar } from '../ui/TopBar';
 import { download, keepUnlocked, Modal, PinGate } from '../ui/ui';
@@ -876,9 +876,12 @@ function StartFreshConfirm({ mode, counts, pin, onDone, onClose }: { mode: DataM
     if (real && word.trim().toUpperCase() !== 'CLEAR') return setError('Type CLEAR in the box to confirm.');
     download(`chick-chick-boom-backup-before-clearing-${real ? 'real' : 'demo'}-${new Date().toISOString().slice(0, 10)}.json`, exportBackup(), 'application/json');
     // The customer page keeps its own copy of each Boom Card's stamps: bring those back to zero too.
+    // Vouchers won on the cleared orders must stop showing as valid there.
     const cards = cardNumbers(mode);
+    const vouchers = voucherCodes(mode);
     const r = startFresh(mode);
     republishCards(mode, cards);
+    republishVouchers(mode, vouchers);
     onDone(`${real ? 'Real' : 'Practice'} data cleared on every device: ${r.orders} order${r.orders === 1 ? '' : 's'} and ${r.days} day${r.days === 1 ? '' : 's'} removed. The backup file is in your downloads.`);
   };
   return (

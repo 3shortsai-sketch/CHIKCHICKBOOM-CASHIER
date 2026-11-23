@@ -16,7 +16,8 @@ export function PickupModal({ order, s, onPickedUp, onClose }: { order: Order; s
   const done = useLatest(onPickedUp);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || e.repeat) return;
+      // Enter on a button presses that button ("Not yet", "Picked up + log spins"); anywhere else it means Picked up.
+      if (e.key !== 'Enter' || e.repeat || e.target instanceof HTMLButtonElement) return;
       e.preventDefault();
       e.stopPropagation();
       done.current(false);
