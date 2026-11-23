@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { startSync } from './data/sync';
 import { exportBackup } from './data/store';
+import { UpdateBanner, watchForNewVersion } from './ui/update';
 import './styles.css';
 
 /**
@@ -57,14 +58,44 @@ createRoot(document.getElementById('root')!).render(
     <CrashScreen>
       <App />
     </CrashScreen>
+    <UpdateBanner />
   </StrictMode>,
 );
 
 startSync();
 
+watchForNewVersion();
+
+/** Has this device ever been used as a booth device (signed in, or opened a day)? */
+function isBoothDevice(): boolean {
+  try {
+    return ['ccb:settings', 'ccb:days', 'ccb:device', 'ccb:orders'].some((k) => localStorage.getItem(k) !== null);
+  } catch {
+    return false;
+  }
+}
+
 // Offline support: after the first visit the app opens without internet.
+// A customer's phone on the order page does not need it: saving the whole
+// booth app and every photo there would cost each visitor over a megabyte.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   addEventListener('load', () => {
+    const customer = /^#\/?track(\/|$)/.test(location.hash) && !isBoothDevice();
+    if (customer) {
+      // A phone that saved the app on an earlier visit lets it go.
+      navigator.serviceWorker
+        .getRegistrations()
+        .then((all) => all.forEach((r) => void r.unregister()))
+        .catch(() => {});
+      // ...and the files it saved.
+      if ('caches' in window) {
+        caches
+          .keys()
+          .then((keys) => keys.filter((k) => k.startsWith('ccb-pos-')).forEach((k) => void caches.delete(k)))
+          .catch(() => {});
+      }
+      return;
+    }
     navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('Offline mode not available', e));
   });
 }

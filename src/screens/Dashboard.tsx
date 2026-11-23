@@ -46,7 +46,7 @@ function RestorePanel({ msg, setMsg }: { msg: RestoreMsg; setMsg: (m: RestoreMsg
   return (
     <section className="panel no-print restore-panel">
       <h2>Restore a backup</h2>
-      <p className="muted small">Only adds orders this device does not have. Nothing here is changed.</p>
+      <p className="muted small">Only adds orders this device does not have. Nothing here is changed. A backup taken before "Start fresh" brings the cleared days back on every device.</p>
       <label className="row small">
         <input type="checkbox" checked={withSettings} onChange={(e) => setWithSettings(e.target.checked)} />
         Also restore menu, prices and passcodes (new laptop only)

@@ -1,4 +1,4 @@
-import type { Settings } from './types';
+import type { MenuItem, Settings } from './types';
 
 /**
  * Starting settings: the booth's real menu (names, prices, unit costs,
@@ -7,7 +7,10 @@ import type { Settings } from './types';
  */
 
 /** Bump when the built-in menu below changes (see store.loadSettings). */
-export const MENU_VERSION = 3;
+export const MENU_VERSION = 4;
+
+/** Extra rice on a bowl. The unit cost is an estimate: set the real one in Setup. */
+export const EXTRA_RICE: MenuItem = { id: 'extra-rice', name: 'Extra Rice', category: 'addons', kind: 'extraRice', price: 20, unitCost: 6, startStock: 300, active: true };
 
 export function defaultSettings(): Settings {
   return {
@@ -28,6 +31,7 @@ export function defaultSettings(): Settings {
       { id: 'cookie-monster', name: 'Cookie Monster Velvet', category: 'cookies', kind: 'cookie', price: 99, unitCost: 26.16, startStock: 40, active: true, photo: 'menu/monster.webp', description: 'A chewy cookie base topped with Oreos and Biscoff crumbs, filled with a cream cheese filling.', allergens: ['Milk', 'Egg', 'Wheat', 'Soy'] },
       { id: 'extra-side', name: 'Extra Side', category: 'addons', kind: 'extraSide', price: 20, unitCost: 7, startStock: 300, active: true },
       { id: 'extra-sauce', name: 'Extra Sauce', category: 'addons', kind: 'extraSauce', price: 10, unitCost: 3, startStock: 300, active: true },
+      { ...EXTRA_RICE },
     ],
     combos: [
       { id: 'comboA', name: 'Boom Combo A', price: 339, parts: ['bowl', 'fries', 'slushie'], active: true, photo: 'menu/comboA.webp' },
@@ -46,6 +50,7 @@ export function defaultSettings(): Settings {
     menuVersion: MENU_VERSION,
     extraSidePrice: 20,
     extraSaucePrice: 10,
+    extraRicePrice: 20,
     wheel: {
       paused: false,
       // Same 20 slots as the wheel on the menu page.

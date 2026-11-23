@@ -9,11 +9,16 @@ export function itemById(settings: Settings, id: string): MenuItem | undefined {
   return settings.menu.find((m) => m.id === id);
 }
 
-type ExtraPrices = { side: number; sauce: number };
+type ExtraPrices = { side: number; sauce: number; rice: number };
 
-function extrasFor(c: { extraSides?: string[]; extraSauce?: number } | undefined, p: ExtraPrices): number {
+function extrasFor(c: { extraSides?: string[]; extraSauce?: number; extraRice?: number } | undefined, p: ExtraPrices): number {
   if (!c) return 0;
-  return (c.extraSides?.length ?? 0) * p.side + (c.extraSauce ?? 0) * p.sauce;
+  return (c.extraSides?.length ?? 0) * p.side + (c.extraSauce ?? 0) * p.sauce + (c.extraRice ?? 0) * p.rice;
+}
+
+/** Price of one extra rice (settings saved before it existed have none: ₱20). */
+export function extraRicePrice(s: Settings): number {
+  return s.extraRicePrice ?? 20;
 }
 
 /**
@@ -21,7 +26,7 @@ function extrasFor(c: { extraSides?: string[]; extraSauce?: number } | undefined
  * keeps the extras prices it was sold at; a cart line uses today's prices.
  */
 export function lineUnitTotal(line: OrderLine, s: Settings): number {
-  const p: ExtraPrices = { side: line.extraSidePrice ?? s.extraSidePrice, sauce: line.extraSaucePrice ?? s.extraSaucePrice };
+  const p: ExtraPrices = { side: line.extraSidePrice ?? s.extraSidePrice, sauce: line.extraSaucePrice ?? s.extraSaucePrice, rice: line.extraRicePrice ?? extraRicePrice(s) };
   let extras = extrasFor(line.choices, p);
   if (line.combo) extras += line.combo.parts.reduce((sum, part) => sum + extrasFor(part, p), 0);
   return line.unitPrice + extras;
@@ -41,9 +46,10 @@ export function stockUsage(lines: OrderLine[]): Record<string, number> {
   const add = (id: string, n: number) => {
     if (n > 0) used[id] = (used[id] ?? 0) + n;
   };
-  const addChoices = (c: { extraSides?: string[]; extraSauce?: number; topping?: string } | undefined, qty: number) => {
+  const addChoices = (c: { extraSides?: string[]; extraSauce?: number; extraRice?: number; topping?: string } | undefined, qty: number) => {
     add('extra-side', (c?.extraSides?.length ?? 0) * qty);
     add('extra-sauce', (c?.extraSauce ?? 0) * qty);
+    add('extra-rice', (c?.extraRice ?? 0) * qty);
     // Fries on top of a drink (80 g) comes out of the fries ingredient, not a Fries with Dip portion.
     if (c?.topping === 'fries') add('topping-fries', qty);
   };
@@ -70,7 +76,7 @@ export function lineCostEach(line: OrderLine, s: Settings): number {
 
 /** A copy of the line that remembers today's extras prices and unit cost (see OrderLine). */
 export function snapshotLine(line: OrderLine, s: Settings): OrderLine {
-  return { ...line, extraSidePrice: s.extraSidePrice, extraSaucePrice: s.extraSaucePrice, costEach: lineCostEach(line, s) };
+  return { ...line, extraSidePrice: s.extraSidePrice, extraSaucePrice: s.extraSaucePrice, extraRicePrice: extraRicePrice(s), costEach: lineCostEach(line, s) };
 }
 
 /** Spins one combo earns. */

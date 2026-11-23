@@ -13,7 +13,7 @@ export type MenuItem = {
   /** Stock loaded at the start of each business day. */
   startStock: number;
   /** Bowls pick a free side; fries pick a free dip; slushies are combo drinks. */
-  kind?: 'bowl' | 'fries' | 'slushie' | 'water' | 'cookie' | 'extraSide' | 'extraSauce';
+  kind?: 'bowl' | 'fries' | 'slushie' | 'water' | 'cookie' | 'extraSide' | 'extraSauce' | 'extraRice';
   /** Regular fries come with a free dip; the combos use them. */
   regular?: boolean;
   active: boolean;
@@ -48,6 +48,8 @@ export type Choices = {
   side?: string;
   extraSides?: string[];
   extraSauce?: number;
+  /** Extra cups of rice on a bowl (paid). */
+  extraRice?: number;
   dip?: string;
   /** Mango Shake / Watermelon Juice: more fresh fruit on top (default), or fries (80 g). */
   topping?: 'fruit' | 'fries';
@@ -79,6 +81,8 @@ export type OrderLine = {
   extraSidePrice?: number;
   /** Price of one extra sauce when this was sold. */
   extraSaucePrice?: number;
+  /** Price of one extra rice when this was sold. */
+  extraRicePrice?: number;
   /** Ingredient cost of one unit of the line (item or all combo parts, plus extras) when sold. */
   costEach?: number;
 };
@@ -141,8 +145,15 @@ export type Order = {
   subtotal: number;
   voucher?: { code: string; amount: number };
   cardId?: string;
-  /** Optional first name, shown to the kitchen and called out when ready. */
+  /** First name, shown to the kitchen and called out when ready. Old orders may not have one. */
   customerName?: string;
+  /** A note for the kitchen about the whole order, e.g. "teacher, please hurry". */
+  note?: string;
+  /**
+   * Items the kitchen has ticked as done (see domain/kitchen.ts for the keys).
+   * Added one at a time, so two tablets ticking at once both keep their tick.
+   */
+  done?: string[];
   /** Stamps this order adds to the card (1 + double-stamp prizes). */
   stampsEarned: number;
   /** Reward thresholds redeemed in this order, e.g. [5]. */
@@ -215,6 +226,9 @@ export type CashMove = {
   cancelled?: { at: number; by: string; reason: string };
 };
 
+/** A spin winner added by hand (manager PIN), shown under "Recent winners" on the monitor. No money or stock changes. */
+export type ManualWin = { id: string; name: string; prize: PrizeId; at: number; by: string };
+
 export type WasteEntry = { id: string; itemId: string; qty: number; reason: string; at: number; by: string };
 
 export type BusinessDay = {
@@ -233,6 +247,8 @@ export type BusinessDay = {
   stockCounts?: Record<string, StockCount>;
   /** Dropped, spoiled or mistake items: out of stock and counted as cost. */
   waste?: WasteEntry[];
+  /** Winners added by hand for the monitor. */
+  manualWins?: ManualWin[];
   closedAt?: number;
   countedCash?: number;
   closedBy?: string;
@@ -252,6 +268,8 @@ export type Settings = {
   menuVersion: number;
   extraSidePrice: number;
   extraSaucePrice: number;
+  /** Price of one extra rice on a bowl. */
+  extraRicePrice: number;
   wheel: { paused: boolean; slots: WheelSlot[] };
   loyalty: { prefix: string; first: number; last: number; cardSize: number; rewards: Reward[]; rewardOrderEarnsStamp: boolean };
   /** lastDayPrize: what a "voucher" spin gives on the last selling day (no tomorrow to use it). */

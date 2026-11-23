@@ -269,3 +269,16 @@ Copy `firestore.rules` from this repo, put the booth login email(s) in place of 
 - Cash box with float (coins and small bills), stickers, voucher slips, a pen
 - Paper order pad, in case everything fails
 - The day before: open every screen once on each device while online, then test with airplane mode on
+
+## Names first, item ticks and the bigger customer page
+
+- **Cashier:** the customer's first name is needed before paying. One-tap notes per item, "No side", extra rice (+₱20, add-on item `extra-rice`; its unit cost of ₱6 is an estimate, set the real one in Setup), a note for the whole order, "+ Water" while the order has no drink, pickup details before "Picked up", and "Winner" (manager PIN) for a spin winner missed on an order.
+- **Kitchen:** each item (and each part of a combo) is ticked when done. The first tick starts Cooking, the last one makes the order READY. "All ready" still finishes an order in one tap.
+- **Monitor:** name big and number small, "Up next", and the call "Ana! Order A-012 is ready."
+- **Customer page:** steps and "4 of 6 items ready", menu with prices and sold-out items, Boom Card stamps, voucher check. Practice orders are found from the normal link. The queue is read every 20 seconds while an order is being made.
+- **Public copies** (all inside the existing `tracker` and `public` rules, so **no rules change**): `tracker/{mode_date_number}` now also holds the first name and item counts; `tracker/card_{mode}_{number}` holds a card's stamps (never the owner's name); `tracker/voucher_{mode}_{code}` holds a voucher's value, days and used/not used; `public/booth-{mode}` also holds the menu.
+- **New version banner:** each build writes `version.json`. An open device compares it with its own build every 5 minutes and shows "New version · tap to reload". Devices still on the version before this one have no banner: reload each of them once.
+- **Customers' phones do not save the app offline** any more (it cost over a megabyte per visitor). Booth devices still do.
+- **Sync fixes:** a change the server refuses is kept and sent again after signing in; a listener the server refused starts again by itself; reopening a day or undoing Ready while signed out is no longer lost; restoring the backup taken by "Start fresh" brings the cleared days back; Setup and Inventory warn while signed out.
+- `firebase.json` no longer points at `firestore.rules`, so `firebase deploy` cannot publish the placeholder rules. Rules are still published by hand in the console.
+- **Free plan watch:** every device still listens to all orders. After day one, check Firestore usage (reads under 50,000 a day, writes under 20,000). Clearing practice data before selling keeps the morning load small.

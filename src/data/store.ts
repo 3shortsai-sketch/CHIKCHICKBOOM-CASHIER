@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { defaultSettings, MENU_VERSION } from '../domain/defaults';
+import { defaultSettings, EXTRA_RICE, MENU_VERSION } from '../domain/defaults';
 import { cardDocId, cleanCardName } from '../domain/cards';
 import type { BusinessDay, Card, CashMove, DataMode, Order, Settings } from '../domain/types';
 
@@ -19,6 +19,8 @@ export type Op =
   | { type: 'patch'; col: Collection; id: string; patch: Record<string, unknown> }
   /** Add one entry to a list field (waste, refunds). Two devices adding at once both keep their entry. */
   | { type: 'append'; col: Collection; id: string; field: string; item: unknown }
+  /** Take one entry out of a list field (a kitchen tick). Entries other devices added at the same moment are kept. */
+  | { type: 'pull'; col: Collection; id: string; field: string; item: unknown }
   | { type: 'remove'; col: Collection; id: string };
 
 export type State = {
@@ -88,7 +90,12 @@ function upgradeSettings(saved: Partial<Settings> | null | undefined): Settings 
       menuVersion: MENU_VERSION,
     };
   }
-  if (version < MENU_VERSION) {
+  if (version === 3) {
+    // Extra rice on bowls was added: one new add-on item. Everything edited in Setup is kept.
+    const menu = merged.menu.some((m) => m.id === EXTRA_RICE.id) ? merged.menu : [...merged.menu, { ...EXTRA_RICE }];
+    return { ...merged, menu, menuVersion: MENU_VERSION };
+  }
+  if (version < 2) {
     const fresh = defaultSettings();
     return {
       ...merged,
@@ -119,7 +126,8 @@ let state: State = {
 const listeners = new Set<() => void>();
 queueMicrotask(() => dropWiped() && emit());
 let remote: Remote | null = null;
-const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ccb-pos') : null;
+// The name carries a number: a window still on an older version must not get changes it cannot read.
+const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ccb-pos-2') : null;
 
 // ---------- Saving on this device ----------
 // Writing a whole list to storage is slow once there are hundreds of orders,
@@ -233,6 +241,14 @@ function applyOp(op: Op): boolean {
       const list = Array.isArray(doc[op.field]) ? (doc[op.field] as unknown[]) : [];
       if (hasEntry(list, op.item)) return false;
       col[op.id] = { ...doc, [op.field]: [...list, op.item] };
+    } else if (op.type === 'pull') {
+      const doc = col[op.id] as Record<string, unknown> | undefined;
+      if (!doc) return false;
+      const list = Array.isArray(doc[op.field]) ? (doc[op.field] as unknown[]) : [];
+      const json = JSON.stringify(op.item);
+      const next = list.filter((x) => JSON.stringify(x) !== json);
+      if (next.length === list.length) return false;
+      col[op.id] = { ...doc, [op.field]: next };
     } else delete col[op.id];
     state = { ...state, [op.col]: col };
   }
@@ -260,11 +276,22 @@ function queueable(op: Op): boolean {
   return op.col !== 'settings' && op.type !== 'put';
 }
 
+/**
+ * A patch that removes a field carries `undefined` (reopening a day clears
+ * closedAt). Saved text has no `undefined`, so the outbox stores this mark instead.
+ */
+const FIELD_REMOVED = '\u0000ccb:field-removed';
+
 /** Read from storage every time: two windows on one device share the outbox. */
 function readOutbox(): Op[] {
   try {
     const v = JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? '[]');
-    return Array.isArray(v) ? (v as Op[]) : [];
+    if (!Array.isArray(v)) return [];
+    for (const op of v as Op[]) {
+      if (op?.type !== 'patch' || !op.patch || typeof op.patch !== 'object') continue;
+      for (const k of Object.keys(op.patch)) if (op.patch[k] === FIELD_REMOVED) op.patch[k] = undefined;
+    }
+    return v as Op[];
   } catch {
     return [];
   }
@@ -272,7 +299,9 @@ function readOutbox(): Op[] {
 
 function writeOutbox(ops: Op[]) {
   try {
-    if (ops.length) localStorage.setItem(OUTBOX_KEY, JSON.stringify(ops.slice(-OUTBOX_MAX)));
+    // Only a patch's own fields are marked. An `undefined` deeper down (a line with no note) just means "not there".
+    const marked = ops.slice(-OUTBOX_MAX).map((op) => (op.type === 'patch' ? { ...op, patch: Object.fromEntries(Object.entries(op.patch).map(([k, v]) => [k, v === undefined ? FIELD_REMOVED : v])) } : op));
+    if (ops.length) localStorage.setItem(OUTBOX_KEY, JSON.stringify(marked));
     else localStorage.removeItem(OUTBOX_KEY);
   } catch {
     /* nothing more can be done; the change is still saved on this device */
@@ -307,7 +336,9 @@ export function replayOutbox(col: Collection) {
     if (op.type === 'patch' && col === 'orders') {
       const now = state.orders[op.id];
       const to = op.patch.status as string | undefined;
-      if (now && to !== undefined && STATUS_RANK[now.status] > STATUS_RANK[to]) {
+      // The kitchen's own undo ("Ready" tapped by mistake) clears readyAt: that one may go back, while the order is only ready.
+      const undoReady = to === 'cooking' && now?.status === 'ready' && 'readyAt' in op.patch && op.patch.readyAt === undefined;
+      if (now && to !== undefined && !undoReady && STATUS_RANK[now.status] > STATUS_RANK[to]) {
         const { status: _s, cookingAt: _c, readyAt: _r, claimedAt: _p, ...rest } = op.patch;
         if (Object.keys(rest).length) ops.push({ ...op, patch: rest });
         continue;
@@ -315,13 +346,26 @@ export function replayOutbox(col: Collection) {
     }
     ops.push(op);
   }
-  commit(...ops);
+  const applied = commit(...ops);
+  // An entry already in this device's list (a tick, a refund) does not apply
+  // again here, but the server may never have got it: send it anyway. The
+  // server adds an entry only once.
+  for (const op of ops) if ((op.type === 'append' || op.type === 'pull') && !applied.includes(op) && op.id in state[op.col]) remote.push(op);
 }
 
-/** A change made on this device. */
-export function commit(...ops: Op[]) {
+/**
+ * The server refused this change for good (wrong login, rules not published).
+ * Keep it, so it is sent again the next time this device connects instead of
+ * being undone by the shared copy.
+ */
+export function requeue(op: Op) {
+  if (outboxOn && queueable(op)) writeOutbox([...readOutbox(), op]);
+}
+
+/** A change made on this device. Returns the changes that applied. */
+export function commit(...ops: Op[]): Op[] {
   const applied = ops.filter(applyOp);
-  if (!applied.length) return;
+  if (!applied.length) return applied;
   // One message for the whole batch: the other windows save and redraw once.
   channel?.postMessage(applied);
   if (remote) for (const op of applied) remote.push(op);
@@ -330,6 +374,7 @@ export function commit(...ops: Op[]) {
     if (waiting.length) writeOutbox([...readOutbox(), ...waiting]);
   }
   emit();
+  return applied;
 }
 
 /**
@@ -388,7 +433,7 @@ export function patchDay(id: string, patch: Partial<BusinessDay>) {
 }
 
 /** Add one entry to a list on the day (e.g. a waste entry) without overwriting entries from other devices. */
-export function appendToDay(id: string, field: 'waste', item: { id: string }) {
+export function appendToDay(id: string, field: 'waste' | 'manualWins', item: { id: string }) {
   commit({ type: 'append', col: 'days', id, field, item });
 }
 
@@ -397,13 +442,31 @@ export function appendToOrder(id: string, field: 'refunds', item: object) {
   commit({ type: 'append', col: 'orders', id, field, item });
 }
 
+/**
+ * The kitchen ticks one item as done. `also` is saved in the same step
+ * (Cooking on the first tick, Ready on the last). The tick is added to the
+ * list, so two tablets ticking different items at once both keep theirs.
+ */
+export function tickItem(id: string, key: string, also?: Partial<Order>) {
+  const ops: Op[] = [{ type: 'append', col: 'orders', id, field: 'done', item: key }];
+  if (also && Object.keys(also).length) ops.push({ type: 'patch', col: 'orders', id, patch: also as Record<string, unknown> });
+  commit(...ops);
+}
+
+/** The kitchen unticks one item. Only that tick is taken out: a tick another tablet made at the same moment stays. */
+export function untickItem(id: string, key: string) {
+  commit({ type: 'pull', col: 'orders', id, field: 'done', item: key });
+}
+
 export function saveSettings(patch: Partial<Settings>) {
   commit({ type: 'patch', col: 'settings', id: SETTINGS_ID, patch: { ...patch, updatedAt: Date.now() } });
 }
 
 /** Back to the built-in menu, prices and passcodes. Demo/real data mode stays as it is. */
 export function resetSettings() {
-  commit({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: { ...defaultSettings(), mode: getState().settings.mode, updatedAt: Date.now() } });
+  const now = getState().settings;
+  // What "Start fresh" cleared stays remembered, or a device that missed the clear could bring it back.
+  commit({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: { ...defaultSettings(), mode: now.mode, ...(now.wiped ? { wiped: now.wiped } : {}), updatedAt: Date.now() } });
 }
 
 /** The day currently open for the current data mode (demo or live). */
@@ -452,13 +515,17 @@ export function saveCard(number: string, name: string, by: string) {
   const clean = cleanCardName(name);
   const now = Date.now();
   const old = s.cards[id];
+  // An existing card is changed field by field: stamp changes made on another
+  // device at the same time are kept, and a rename made while signed out is
+  // sent on sign-in (whole new documents are not queued, changes are).
   if (!clean) {
     // Keep the record if it holds stamp adjustments; only the name goes.
-    if (old?.adjustments?.length) commit({ type: 'put', col: 'cards', id, doc: { ...old, name: '', updatedAt: now } satisfies Card });
+    if (old?.adjustments?.length) commit({ type: 'patch', col: 'cards', id, patch: { name: '', updatedAt: now } });
     else if (old) commit({ type: 'remove', col: 'cards', id });
     return;
   }
-  commit({ type: 'put', col: 'cards', id, doc: { ...old, number, mode, name: clean, createdAt: old?.createdAt ?? now, updatedAt: now, by } satisfies Card });
+  if (old) commit({ type: 'patch', col: 'cards', id, patch: { name: clean, updatedAt: now, by } });
+  else commit({ type: 'put', col: 'cards', id, doc: { number, mode, name: clean, createdAt: now, updatedAt: now, by } satisfies Card });
 }
 
 export function modeOrders(s: State): Order[] {
@@ -574,10 +641,13 @@ export function importBackup(json: string, opts: { withSettings?: boolean } = {}
   }
   if (!isObj(data) || data.app !== 'ccb-pos') return { ok: false, message: 'Not a Chick Chick Boom backup file.' };
   const have = getState();
+  const now = Date.now();
   const ops: Op[] = [];
-  let added = 0;
   let kept = 0;
   let bad = 0;
+  // Business days this file brings back. If "Start fresh" cleared them, they
+  // are allowed back: picking the backup file is a deliberate undo of the clear.
+  const backDays = new Set<string>();
   const take = (col: 'days' | 'orders' | 'cards' | 'cashMoves', valid: (id: string, v: unknown) => boolean) => {
     const group = data[col];
     if (group === undefined) return;
@@ -589,8 +659,11 @@ export function importBackup(json: string, opts: { withSettings?: boolean } = {}
       if (!valid(id, doc)) bad += 1;
       else if (id in have[col]) kept += 1;
       else {
-        ops.push({ type: 'put', col, id, doc });
-        if (col === 'orders') added += 1;
+        const d = doc as Record<string, unknown>;
+        if (col === 'days') backDays.add(id);
+        else if (col !== 'cards') backDays.add(d.dayId as string);
+        // A card record cleared by "Start fresh" comes back as a record of now.
+        ops.push({ type: 'put', col, id, doc: col === 'cards' && isWiped('cards', d) ? { ...d, updatedAt: now } : d });
       }
     }
   };
@@ -598,17 +671,29 @@ export function importBackup(json: string, opts: { withSettings?: boolean } = {}
   take('orders', validOrder);
   take('cards', (_id, v) => validCard(v));
   take('cashMoves', validCashMove);
-  if (opts.withSettings && isObj(data.settings) && Array.isArray(data.settings.menu)) ops.push({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: { ...data.settings, updatedAt: Date.now() } });
+  const cleared = have.settings.wiped;
+  const uncleared = cleared ? cleared.days.filter((d) => backDays.has(d)) : [];
+  const wiped = cleared && uncleared.length ? { ...cleared, days: cleared.days.filter((d) => !backDays.has(d)) } : cleared;
+  // First, so the records below are let back in.
+  if (uncleared.length) ops.unshift({ type: 'patch', col: 'settings', id: SETTINGS_ID, patch: { wiped, updatedAt: now } });
+  // The file's settings never bring back an older "cleared" list: the current one stays.
+  if (opts.withSettings && isObj(data.settings) && Array.isArray(data.settings.menu)) ops.push({ type: 'put', col: 'settings', id: SETTINGS_ID, doc: { ...data.settings, wiped, updatedAt: now } });
   if (!ops.length && bad) return { ok: false, message: 'Nothing in that file could be read as booth data.' };
+  let applied: Op[];
   try {
-    commit(...ops);
+    applied = commit(...ops);
   } catch (e) {
     console.error(e);
     return { ok: false, message: 'Restore stopped part-way. Check the orders, then try the file again.' };
   }
   flushSaves();
+  // Count what really came back, not what the file held.
+  const added = applied.filter((op) => op.type === 'put' && op.col === 'orders').length;
+  const refused = ops.filter((op) => op.type === 'put' && op.col !== 'settings').length - applied.filter((op) => op.type === 'put' && op.col !== 'settings').length;
   const parts = [`Restored ${added} order${added === 1 ? '' : 's'}.`];
+  if (uncleared.length) parts.push(`${uncleared.length} day${uncleared.length === 1 ? '' : 's'} cleared by Start fresh ${uncleared.length === 1 ? 'was' : 'were'} brought back.`);
   if (kept) parts.push(`${kept} record${kept === 1 ? '' : 's'} already here were kept.`);
+  if (refused) parts.push(`${refused} record${refused === 1 ? '' : 's'} could not be restored.`);
   if (bad) parts.push(`${bad} damaged record${bad === 1 ? '' : 's'} skipped.`);
   return { ok: true, message: parts.join(' ') };
 }

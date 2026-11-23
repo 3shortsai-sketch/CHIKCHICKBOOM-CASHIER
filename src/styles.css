@@ -3889,3 +3889,615 @@ th:first-child {
     white-space: normal;
   }
 }
+
+/* ==========================================================================
+   Names first, item ticks, notes, pickup details, customer page extras
+   ========================================================================== */
+
+/* ---------- Cashier: notes, name, water, pickup ---------- */
+.note-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.note-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.note-chip {
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  min-height: 40px;
+  cursor: pointer;
+}
+.note-chip.on {
+  background: var(--yellow);
+  border-color: var(--ink);
+}
+.note-chip:focus-visible,
+.ktick:focus-visible,
+.update-banner:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+.btn.has-note {
+  color: var(--red-deep);
+  font-weight: 800;
+}
+.order-extras > .name-form,
+.order-extras > .order-note-form {
+  flex: 1 1 45%;
+}
+.note-editor .mini-form {
+  flex: none;
+}
+/* On a laptop the cashier fills the screen exactly: a long order scrolls inside
+   its own list, so the name, the total and Pay never move out of view. */
+@media (min-width: 901px) and (min-height: 600px) {
+  .screen.cashier {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .screen.cashier > .cashier-body {
+    overflow: hidden;
+  }
+  .screen.cashier .order-scroll {
+    min-height: 96px;
+  }
+}
+.input.missing {
+  border-color: var(--red);
+  background: var(--danger-soft);
+}
+.btn.water-btn {
+  flex: 1 1 100%;
+  justify-content: center;
+  border-style: dashed;
+  background: #e8f3fd;
+  font-weight: 800;
+}
+.btn.ready-chip b {
+  font-weight: 800;
+}
+.pickup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.pickup-who {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.pickup-name {
+  font-family: var(--display);
+  font-size: 2.4rem;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
+.pickup-note,
+.k-order-note {
+  margin: 0;
+  background: var(--yellow);
+  border: 2.5px solid var(--ink);
+  border-radius: 10px;
+  padding: 0.4rem 0.6rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.pickup-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 46vh;
+  overflow: auto;
+  border-top: 2px dashed var(--line);
+}
+.pickup-lines li {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  border-bottom: 2px dashed var(--line);
+  font-size: 1.1rem;
+}
+.pickup-lines li.free {
+  background: var(--chick);
+}
+.pickup-lines li > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pickup-qty {
+  font-family: var(--display);
+  font-size: 1.4rem;
+  min-width: 2.2rem;
+}
+.pickup-spins {
+  margin: 0;
+  font-weight: 800;
+}
+
+/* ---------- Kitchen: big name, tick each item, loud details ---------- */
+.kcard header {
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.knum-wrap {
+  min-width: 0;
+}
+.kcard .kname {
+  font-family: var(--display);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  font-size: 2.3rem;
+  line-height: 1;
+  color: var(--ink);
+  overflow-wrap: break-word;
+}
+.kcard .knum {
+  font-family: var(--body);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--red-deep);
+  margin-top: 0.15rem;
+}
+.kcard .kage {
+  flex: none;
+  white-space: nowrap;
+}
+.k-order-note {
+  margin: 0.2rem 0.9rem 0.3rem;
+  font-size: 1.1rem;
+}
+.klines > li {
+  padding: 0.25rem 0;
+}
+.klines ul {
+  list-style: none;
+  padding-left: 0.6rem;
+  margin-top: 0.1rem;
+}
+.k-combo {
+  display: block;
+  padding-top: 0.2rem;
+}
+.ktick {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 52px;
+  padding: 0.35rem 0.2rem;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ktick:active {
+  background: var(--line-soft);
+}
+.ktick-box {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 1.6rem;
+  font-weight: 900;
+  line-height: 1;
+  color: #fff;
+}
+.ktick.done .ktick-box {
+  background: var(--green);
+}
+.ktick-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  padding-top: 0.3rem;
+}
+.ktick.done .ktick-text > b,
+.ktick.done .k-plain {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.k-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+}
+.k-plain {
+  color: var(--ink-soft);
+}
+.k-loud,
+.ktick .k-note,
+.klines .k-note {
+  display: inline-block;
+  background: var(--yellow);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  padding: 0.05rem 0.45rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+.ktick .k-note,
+.klines .k-note {
+  background: #ffe0dc;
+  color: var(--red-deep);
+  border-color: var(--red-deep);
+  align-self: flex-start;
+}
+.ktick .k-tag {
+  margin-left: 0;
+  align-self: flex-start;
+}
+.kcard footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.5rem 0.6rem;
+}
+.kcard footer .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 60px;
+  font-size: 1.3rem;
+  white-space: nowrap;
+}
+.kprog {
+  flex: 1 1 100%;
+  font-weight: 700;
+  text-align: center;
+  padding: 0.25rem 0.6rem;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+}
+.kprog b {
+  font-size: 1.2rem;
+  white-space: nowrap;
+}
+.kprog.some {
+  border-color: var(--green);
+  background: var(--green-soft);
+}
+
+/* ---------- Monitor: name big, number small; Up next; winners ---------- */
+.snum.named {
+  max-width: 100%;
+}
+.snum-who {
+  /* Tuned for about 7 letters; a longer name shrinks to fit. */
+  font-size: calc(1em * min(1, 7 / var(--chars, 7)));
+  line-height: 1;
+  white-space: nowrap;
+}
+.snum-no {
+  font-family: var(--body);
+  font-weight: 800;
+  font-size: max(0.26em, min(1.7vw, 3vh));
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-shadow: 2px 2px 0 var(--ink);
+  margin-top: 0.12em;
+}
+.up-next {
+  flex: none;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6vh 1vw;
+  font-size: min(2.2vw, 3.8vh);
+  color: #fff;
+  overflow: hidden;
+  max-height: 2.9em;
+}
+.up-next-label {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.7em;
+  opacity: 0.9;
+}
+.up-next b {
+  font-family: var(--display);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  background: var(--ink);
+  color: var(--yellow);
+  border-radius: 999px;
+  padding: 0.05em 0.6em;
+  max-width: 32%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prep-numbers {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  font-size: min(2.3vw, 4.1vh);
+}
+.prep-numbers span {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+  min-width: 0;
+}
+.prep-numbers small {
+  font-family: var(--body);
+  font-weight: 800;
+  font-size: 0.6em;
+  letter-spacing: 0;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.winners li {
+  font-size: 1.2em;
+  line-height: 1.2;
+  padding: 0.2rem 0;
+}
+.winners li b {
+  font-size: 1.15em;
+}
+
+/* ---------- Customer page: steps, progress, menu, card and voucher ---------- */
+.trk-who {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.6rem;
+  min-width: 0;
+}
+.trk-name {
+  font-weight: 800;
+  font-size: 1.4rem;
+  overflow-wrap: anywhere;
+}
+.trk-practice {
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--ink);
+  color: var(--yellow);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+}
+.trk-steps {
+  list-style: none;
+  margin: 0.7rem 0 0.2rem;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.2rem;
+}
+.trk-steps li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-align: center;
+  opacity: 0.6;
+  position: relative;
+}
+.trk-steps li::before {
+  content: '';
+  position: absolute;
+  top: 0.95rem;
+  right: 50%;
+  width: 100%;
+  border-top: 3px solid currentColor;
+  opacity: 0.4;
+}
+.trk-steps li:first-child::before {
+  display: none;
+}
+.trk-step-dot {
+  position: relative;
+  z-index: 1;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 3px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 0.95rem;
+}
+.trk-steps li.done,
+.trk-steps li.now {
+  opacity: 1;
+}
+.trk-steps li.done .trk-step-dot {
+  background: var(--green);
+  color: #fff;
+}
+.trk-steps li.now .trk-step-dot {
+  background: var(--yellow);
+  box-shadow: 0 0 0 4px rgb(59 35 20 / 18%);
+}
+.trk-steps li.now .trk-step-label {
+  font-weight: 900;
+}
+.trk-ready .trk-steps li.now .trk-step-dot {
+  box-shadow: 0 0 0 4px rgb(255 255 255 / 45%);
+}
+.trk-progress {
+  font-weight: 800;
+}
+.trk-fold {
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--comic);
+}
+.trk-fold summary {
+  cursor: pointer;
+  font-weight: 800;
+  font-size: 1.2rem;
+  padding: 0.9rem 1rem;
+  min-height: 48px;
+}
+.trk-fold-body {
+  padding: 0 1rem 1rem;
+}
+.trk-menu-group h3 {
+  margin: 0.6rem 0 0.2rem;
+  font-family: var(--display);
+  letter-spacing: 0.04em;
+  font-size: 1.4rem;
+  color: var(--red);
+}
+.trk-menu {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.trk-menu li {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.5rem 0;
+  border-bottom: 2px dashed var(--line);
+}
+.trk-menu img,
+.trk-menu-nophoto {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: var(--line-soft);
+  border: 2px solid var(--ink);
+}
+.trk-menu-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.trk-menu-text small {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+.trk-menu-price {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.trk-menu li.out .trk-menu-text,
+.trk-menu li.out img {
+  opacity: 0.5;
+}
+.trk-menu li.out .trk-menu-price {
+  color: var(--red-deep);
+  font-size: 0.85rem;
+}
+.trk-check label {
+  display: block;
+  font-weight: 800;
+  margin-bottom: 0.4rem;
+}
+.trk-check p {
+  margin: 0.5rem 0 0;
+}
+.trk-result {
+  margin-top: 0.8rem;
+  padding: 0.8rem;
+  border-radius: 12px;
+  background: var(--chick);
+  border: 2px solid var(--ink);
+}
+.trk-result-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 !important;
+  font-weight: 900;
+  font-size: 1.5rem;
+  letter-spacing: 0.04em;
+}
+.trk-result-head .trk-practice {
+  font-family: var(--body);
+}
+.trk-stamps b {
+  font-size: 1.5rem;
+}
+.trk-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+.trk-dots span {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  border: 2.5px solid var(--ink);
+  background: var(--paper);
+}
+.trk-dots span.on {
+  background: var(--red);
+}
+.trk-good {
+  font-weight: 800;
+  color: #0e5e35;
+}
+.trk-bad {
+  font-weight: 800;
+  color: var(--red-deep);
+}
+
+/* ---------- Every device: a newer version is live ---------- */
+.update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 3000;
+  font: inherit;
+  font-size: 1.05rem;
+  color: var(--ink);
+  background: var(--yellow);
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  box-shadow: var(--comic);
+  padding: 0.6rem 1.2rem;
+  min-height: 48px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pickup .modal-foot {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.pickup .modal-foot .btn {
+  white-space: nowrap;
+}

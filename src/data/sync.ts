@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, type Auth, type User } from 'firebase/auth';
 import {
+  arrayRemove,
   arrayUnion,
   collection,
   connectFirestoreEmulator,
@@ -14,15 +15,19 @@ import {
   persistentMultipleTabManager,
   setDoc,
   type DocumentReference,
+  type DocumentSnapshot,
   type Firestore,
   type QuerySnapshot,
   type SnapshotMetadata,
 } from 'firebase/firestore';
+import { cardStateFor } from '../domain/cards';
 import { MENU_VERSION } from '../domain/defaults';
 import { waitMinutes } from '../domain/inventory';
-import { localDate } from '../domain/loyalty';
-import type { Order } from '../domain/types';
-import { applyRemote, enableOutbox, getState, isWiped, openDay, replayOutbox, setRemote, type Collection, type Op } from './store';
+import { itemProgress } from '../domain/kitchen';
+import { availableRewards, findVoucher, localDate, voucherTerms } from '../domain/loyalty';
+import { isAvailable, stockLeft } from '../domain/reports';
+import type { DataMode, Order } from '../domain/types';
+import { applyRemote, enableOutbox, getState, isWiped, openDay, replayOutbox, requeue, setRemote, type Collection, type Op } from './store';
 import { emulatorConfig, firebaseConfig, localOnly, useEmulator } from './firebase-config';
 
 /**
@@ -38,7 +43,10 @@ import { emulatorConfig, firebaseConfig, localOnly, useEmulator } from './fireba
  *
  * Layout in Firestore: settings/main, days/{dayId}, orders/{orderId}, cards/{cardId},
  * cashMoves/{id}. Public (customer page, no login): tracker/{mode_date_number}
- * and public/booth-{mode}, holding only order numbers, status and wait times.
+ * for one order (number, first name, status, how many items are done),
+ * tracker/card_{mode}_{number} for a Boom Card's stamps, tracker/voucher_{code}
+ * for a voucher, and public/booth-{mode} for the queue and the menu. No money,
+ * no full names, no phone numbers; each one can only be read by its exact id.
  */
 
 // ---------- Status shown in the top bar ----------
@@ -135,9 +143,10 @@ function ref(col: Collection, id: string): DocumentReference {
   return col === 'settings' ? doc(db!, 'settings', 'main') : doc(db!, col, id);
 }
 
+/** The last write the server refused, until a later write goes through. */
 let writeError: string | null = null;
-/** True when writeError came from a failed write (not from a listener). */
-let writeFailed = false;
+/** Listeners the server refused, by collection, until they connect again. */
+const listenProblem: Partial<Record<Collection, string>> = {};
 
 function push(op: Op) {
   if (!db) return;
@@ -150,25 +159,31 @@ function push(op: Op) {
         : op.type === 'append'
           ? // The server adds the entry to whatever list it has, so two devices never overwrite each other.
             setDoc(r, { [op.field]: arrayUnion(plain(op.item)) }, { merge: true })
-          : deleteDoc(r);
-  if (op.col === 'orders') publishTracker(op.id);
-  if (op.col === 'orders' || op.col === 'days' || op.col === 'settings') scheduleBoothSummary();
+          : op.type === 'pull'
+            ? setDoc(r, { [op.field]: arrayRemove(plain(op.item)) }, { merge: true })
+            : deleteDoc(r);
+  if (op.col === 'orders') publishOrder(op.id);
+  if (op.col === 'cards') publishCardDoc(op.id);
+  // A day opening or closing is told to customers at once; the rest at most every 20 seconds.
+  if (op.col === 'days') scheduleBoothSummary(true);
+  else if (op.col === 'orders' || op.col === 'settings') scheduleBoothSummary();
   done.then(() => {
     // A later write that goes through means the earlier problem is over.
-    if (writeError && writeFailed) {
+    if (writeError) {
       writeError = null;
-      writeFailed = false;
       updateStatus();
     }
   }).catch((e: { code?: string; message?: string }) => {
+    // Refused for good (wrong login, rules not published): keep the change so
+    // it is sent again on the next connection instead of being undone.
+    if (e.code === 'permission-denied' || e.code === 'unauthenticated') requeue(op);
     if (e.code === 'permission-denied' && op.col === 'cashMoves') {
       // Rules not published yet: the entry is still saved on this device.
       cashBlocked = true;
       updateStatus();
       return;
     }
-    writeError = e.code === 'permission-denied' ? 'This login is not allowed to save. Sign in with the booth account.' : `Sync error: ${e.message ?? e.code}`;
-    writeFailed = true;
+    writeError = e.code === 'permission-denied' ? 'This login is not allowed to save. Sign in with the booth account. Changes made meanwhile are kept on this device and sent after signing in again.' : `Sync error: ${e.message ?? e.code}`;
     console.error('sync write failed', e);
     updateStatus();
   });
@@ -183,10 +198,22 @@ let cashBlocked = false;
 // order number, its status and its times. No names, items or money.
 
 let publicBlocked = false;
+/** What was last written to each public document, so the same thing is not written twice. */
+const lastPublic = new Map<string, string>();
+
+/** Forget what was written to the order, card and voucher copies (the booth summary keeps its own check). */
+function forgetPublicWrites() {
+  for (const key of [...lastPublic.keys()]) if (key.startsWith('tracker/')) lastPublic.delete(key);
+}
 
 function publicWrite(path: [string, string], data: Record<string, unknown>) {
   if (!db) return;
-  setDoc(doc(db, path[0], path[1]), data).catch((e: { code?: string }) => {
+  const key = path.join('/');
+  const json = JSON.stringify(data);
+  if (lastPublic.get(key) === json) return;
+  lastPublic.set(key, json);
+  setDoc(doc(db, path[0], path[1]), { ...data, updatedAt: Date.now() }).catch((e: { code?: string }) => {
+    lastPublic.delete(key);
     // Until the new rules are published this fails; the booth keeps working.
     if (!publicBlocked) console.warn('customer page copy not saved', e);
     if (e.code === 'permission-denied' && !publicBlocked) {
@@ -201,21 +228,184 @@ export function trackerId(mode: string, date: string, number: string): string {
   return `${mode}_${date}_${number.toUpperCase()}`;
 }
 
-export type TrackerDoc = { number: string; status: Order['status'] | 'voided'; createdAt: number; readyAt: number | null; claimedAt: number | null; spinsLeft: number; updatedAt: number };
+/** Public copy of a Boom Card's stamps: tracker/card_live_CCB-037. */
+export function publicCardId(mode: string, number: string): string {
+  return `card_${mode}_${number.toUpperCase()}`;
+}
 
-function publishTracker(orderId: string) {
-  const o = getState().orders[orderId];
-  if (!o) return;
-  const data: TrackerDoc = {
+/** Public copy of a voucher: tracker/voucher_live_V-ABCD. Practice vouchers have their own copy. */
+export function publicVoucherId(mode: string, code: string): string {
+  return `voucher_${mode}_${code.toUpperCase()}`;
+}
+
+export type TrackerDoc = {
+  number: string;
+  status: Order['status'] | 'voided';
+  createdAt: number;
+  readyAt: number | null;
+  claimedAt: number | null;
+  spinsLeft: number;
+  updatedAt: number;
+  // Added later: a copy written by an older version of the app has none of these.
+  /** The customer's first name. */
+  name?: string | null;
+  /** Items the kitchen has finished, and items in the order. */
+  done?: number;
+  total?: number;
+};
+
+/** A Boom Card as the customer sees it: stamps and rewards only, never the owner's name. */
+export type PublicCard = {
+  kind: 'card';
+  number: string;
+  stamps: number;
+  size: number;
+  /** Rewards that can be used now. */
+  ready: string[];
+  /** The next reward and how many more stamps it needs. */
+  next: { label: string; more: number } | null;
+  updatedAt: number;
+};
+
+export type PublicVoucher = {
+  kind: 'voucher';
+  code: string;
+  /** False when the prize was undone or its order was voided. */
+  valid: boolean;
+  label: string;
+  minOrder: number;
+  needsCombo: boolean;
+  validFrom: string;
+  validTo: string;
+  used: boolean;
+  /** Won on a practice order: not a real voucher. */
+  practice: boolean;
+  updatedAt: number;
+};
+
+function ordersOf(mode: DataMode): Order[] {
+  return Object.values(getState().orders).filter((o) => o.mode === mode);
+}
+
+function publishTracker(o: Order) {
+  const p = itemProgress(o);
+  const data: Omit<TrackerDoc, 'updatedAt'> = {
     number: o.number,
     status: o.voided ? 'voided' : o.status,
     createdAt: o.createdAt,
     readyAt: o.readyAt ?? null,
     claimedAt: o.claimedAt ?? null,
     spinsLeft: Math.max(0, o.spinsEarned - o.spins.length),
-    updatedAt: Date.now(),
+    name: o.customerName ?? null,
+    done: p.done,
+    total: p.total,
   };
   publicWrite(['tracker', trackerId(o.mode, localDate(o.createdAt), o.number)], data);
+}
+
+/** Stamps and rewards of one card, worked out from its orders like everywhere else. */
+export function publishCard(mode: DataMode, number: string) {
+  if (!db) return;
+  const st = getState();
+  const s = st.settings;
+  const cards = Object.values(st.cards).filter((c) => c.mode === mode);
+  const cs = cardStateFor(number, ordersOf(mode), s, cards);
+  const next = s.loyalty.rewards.filter((r) => r.at > cs.stamps && !cs.used.includes(r.at)).sort((a, b) => a.at - b.at)[0];
+  const data: Omit<PublicCard, 'updatedAt'> = {
+    kind: 'card',
+    number,
+    stamps: cs.stamps,
+    size: s.loyalty.cardSize,
+    ready: availableRewards(cs, s).map((r) => r.label),
+    next: next ? { label: next.label, more: next.at - cs.stamps } : null,
+  };
+  publicWrite(['tracker', publicCardId(mode, number)], data);
+}
+
+/** A change to a card record (name, stamp edit). Its id is "<mode>_<number>". */
+function publishCardDoc(cardDocId: string) {
+  const i = cardDocId.indexOf('_');
+  const mode = cardDocId.slice(0, i);
+  if (i > 0 && (mode === 'demo' || mode === 'live')) publishCard(mode, cardDocId.slice(i + 1));
+}
+
+function publishVoucher(mode: DataMode, code: string) {
+  const s = getState().settings;
+  const orders = ordersOf(mode);
+  const v = findVoucher(code, orders, s);
+  const spin = v ? orders.flatMap((o) => (o.voided ? [] : o.spins)).find((x) => x.voucherCode === v.code) : undefined;
+  const t = spin ? voucherTerms(spin, s) : null;
+  const data: Omit<PublicVoucher, 'updatedAt'> = {
+    kind: 'voucher',
+    code,
+    valid: !!(v && t),
+    label: t?.label ?? '',
+    minOrder: t?.minOrder ?? 0,
+    needsCombo: t?.needsCombo ?? false,
+    validFrom: t?.validFrom ?? '',
+    validTo: t?.validTo ?? '',
+    used: !!v?.usedBy,
+    practice: mode === 'demo',
+  };
+  publicWrite(['tracker', publicVoucherId(mode, code)], data);
+}
+
+/** Voucher codes each order had when it was last published, so an undone prize is taken back too. */
+const orderVouchers = new Map<string, string[]>();
+
+/** Everything the customer page shows that this order touches: the order itself, its Boom Card and its vouchers. */
+function publishOrder(orderId: string) {
+  const o = getState().orders[orderId];
+  if (!o) return;
+  publishTracker(o);
+  if (o.cardId) publishCard(o.mode, o.cardId);
+  const codes = [...o.spins.flatMap((x) => (x.voucherCode ? [x.voucherCode] : [])), ...(o.voucher ? [o.voucher.code] : [])];
+  for (const code of new Set([...codes, ...(orderVouchers.get(orderId) ?? [])])) publishVoucher(o.mode, code);
+  orderVouchers.set(orderId, codes);
+}
+
+/** Write the public copies of these cards again (after "Start fresh" removed their orders). */
+export function republishCards(mode: DataMode, numbers: string[]) {
+  for (const n of new Set(numbers)) publishCard(mode, n);
+}
+
+/** Write the public copies of these vouchers again (after "Start fresh" they read as no longer valid). */
+export function republishVouchers(mode: DataMode, codes: string[]) {
+  for (const c of new Set(codes)) publishVoucher(mode, c);
+}
+
+/** Every voucher code won on an order of one data mode. */
+export function voucherCodes(mode: DataMode): string[] {
+  return ordersOf(mode).flatMap((o) => o.spins.flatMap((x) => (x.voucherCode ? [x.voucherCode] : [])));
+}
+
+/** Card numbers with a record or an order, for one data mode. */
+export function cardNumbers(mode: DataMode): string[] {
+  const st = getState();
+  const out = new Set<string>();
+  for (const c of Object.values(st.cards)) if (c.mode === mode) out.add(c.number);
+  for (const o of Object.values(st.orders)) if (o.mode === mode && o.cardId) out.add(o.cardId);
+  return [...out];
+}
+
+/**
+ * Cards and vouchers from before the customer page could show them: each
+ * device writes their public copies once, after it has the shared data.
+ */
+const BACKFILL_KEY = 'ccb:public-copies';
+const BACKFILL_VERSION = '1';
+
+function backfillPublic() {
+  try {
+    if (localStorage.getItem(BACKFILL_KEY) === BACKFILL_VERSION) return;
+    localStorage.setItem(BACKFILL_KEY, BACKFILL_VERSION);
+  } catch {
+    return;
+  }
+  for (const mode of ['live', 'demo'] as const) {
+    for (const n of cardNumbers(mode)) publishCard(mode, n);
+    for (const o of ordersOf(mode)) for (const x of o.spins) if (x.voucherCode) publishVoucher(mode, x.voucherCode);
+  }
 }
 
 export type BoothDoc = {
@@ -228,7 +418,34 @@ export type BoothDoc = {
   waitMinutes: number;
   soldOut: string[];
   updatedAt: number;
+  // Added later: a copy written by an older version of the app has none of these.
+  /** The menu as customers see it: what is sold, its price and whether it has run out. */
+  menu?: BoothMenuItem[];
+  /** How Boom Card numbers look, so the customer page can read "37" as CCB-037. */
+  card?: { prefix: string; first: number; last: number };
 };
+
+export type BoothMenuItem = { name: string; price: number; cat: string; photo?: string; desc?: string; out?: boolean };
+
+/** The menu for the customer page, from settings (and today's stock when a day is open). */
+export function publicMenu(st: ReturnType<typeof getState>): BoothMenuItem[] {
+  const s = st.settings;
+  const day = openDay(st);
+  const left = day ? stockLeft(day, Object.values(st.orders).filter((o) => o.mode === s.mode), s) : null;
+  const plain = <T extends object>(o: T): T => JSON.parse(JSON.stringify(o)) as T;
+  const items = s.menu
+    .filter((m) => m.active && m.category !== 'addons')
+    .map((m): BoothMenuItem => plain({ name: m.name, price: m.price, cat: m.category, photo: m.photo, desc: m.description, out: left && !isAvailable(m, day, left) ? true : undefined }));
+  const partKind = (k: string, kind: string | undefined, regular: boolean | undefined) => (k === 'fries' ? kind === 'fries' && !!regular : kind === k);
+  const combos = s.combos
+    .filter((c) => c.active)
+    .map((c): BoothMenuItem => {
+      const out = !!left && !c.parts.every((k) => s.menu.some((m) => partKind(k, m.kind, m.regular) && isAvailable(m, day, left)));
+      const desc = c.parts.map((k) => ({ bowl: 'Any bowl', fries: 'Fries with Dip', slushie: 'shake or juice', cookie: 'any cookie' })[k]).join(' + ');
+      return plain({ name: c.name, price: c.price, cat: 'combos', photo: c.photo, desc, out: out ? true : undefined });
+    });
+  return [...items, ...combos];
+}
 
 let boothTimer: ReturnType<typeof setTimeout> | null = null;
 let lastBooth = '';
@@ -237,10 +454,11 @@ const BOOTH_EVERY_MS = 20000;
 /** Sold out, queue, ready numbers and wait time for the customer page, at most every 20 seconds. */
 let boothSentAt = 0;
 
-function scheduleBoothSummary() {
-  if (boothTimer) return;
+function scheduleBoothSummary(now = false) {
+  if (boothTimer && !now) return;
+  if (boothTimer) clearTimeout(boothTimer);
   // Right away if nothing was sent in the last 20 seconds, otherwise at the end of them.
-  const wait = Math.max(0, BOOTH_EVERY_MS - (Date.now() - boothSentAt));
+  const wait = now ? 0 : Math.max(0, BOOTH_EVERY_MS - (Date.now() - boothSentAt));
   boothTimer = setTimeout(sendBoothSummary, wait);
 }
 
@@ -263,21 +481,25 @@ function sendBoothSummary() {
     ready: todays.filter((o) => o.status === 'ready').sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0)).slice(0, 10).map((o) => o.number),
     waitMinutes: waitMinutes(todays, Date.now(), st.settings.defaultWaitMinutes),
     soldOut: st.settings.menu.filter((m) => m.active && day?.soldOut[m.id]).map((m) => m.name),
+    menu: publicMenu(st),
+    card: { prefix: st.settings.loyalty.prefix, first: st.settings.loyalty.first, last: st.settings.loyalty.last },
   };
-  const key = JSON.stringify(summary);
+  const key = `${st.settings.mode}:${JSON.stringify(summary)}`;
   if (key === lastBooth) return;
   lastBooth = key;
   boothSentAt = Date.now();
-  publicWrite(['public', `booth-${st.settings.mode}`], { ...summary, updatedAt: Date.now() });
+  publicWrite(['public', `booth-${st.settings.mode}`], summary);
 }
 
 // What each listener last told us, to show one combined status.
 const meta: Partial<Record<Collection, SnapshotMetadata>> = {};
-let unsubscribers: (() => void)[] = [];
+const LISTEN: Collection[] = ['orders', 'days', 'cards', 'cashMoves', 'settings'];
+const unsubscribers = new Map<Collection, () => void>();
 
 function updateStatus() {
   if (!authState.email) return;
-  if (writeError) return setSyncStatus({ label: 'Sync problem', detail: writeError, connected: false });
+  const problem = Object.values(listenProblem)[0] ?? writeError;
+  if (problem) return setSyncStatus({ label: 'Sync problem', detail: problem, connected: false });
   const all = Object.values(meta);
   const pending = all.some((m) => m?.hasPendingWrites);
   const offline = all.length < (cashBlocked ? 4 : 5) || all.some((m) => m?.fromCache);
@@ -302,18 +524,48 @@ function updateStatus() {
  */
 const uploadedOnce: Partial<Record<Collection, boolean>> = {};
 
+/** The server answered for this collection: any earlier refusal is over. */
+function listening(col: Collection, fromCache: boolean) {
+  if (fromCache) return;
+  retryDelay.delete(col);
+  delete listenProblem[col];
+  if (col === 'cashMoves') cashBlocked = false;
+}
+
+/**
+ * "Start fresh" cleared this record, yet the server still has it: a device
+ * that missed the clear sent it up again, so remove it for good. But a
+ * restored backup lifts the clear in the shared settings, and those can arrive
+ * a moment after the records, so look once more before deleting anything.
+ */
+const WIPE_RECHECK_MS = 8000;
+const recheckTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function removeIfStillWiped(col: 'orders' | 'days' | 'cards' | 'cashMoves', id: string, data: Record<string, unknown>) {
+  const t = setTimeout(() => {
+    recheckTimers.delete(t);
+    if (!db || !authState.email) return;
+    if (isWiped(col, data)) push({ type: 'remove', col, id });
+    else if (!(id in getState()[col])) applyRemote([{ type: 'put', col, id, doc: data }]);
+  }, WIPE_RECHECK_MS);
+  recheckTimers.add(t);
+}
+
 function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: QuerySnapshot) {
   meta[col] = snap.metadata;
+  listening(col, snap.metadata.fromCache);
   const ops: Op[] = [];
   const removed = new Set<string>();
   for (const ch of snap.docChanges()) {
+    // Another device changed something: it may have rewritten the public copies
+    // too, so this device must not skip its next write as "same as last time".
+    if (!ch.doc.metadata.hasPendingWrites && !snap.metadata.fromCache) forgetPublicWrites();
     if (ch.type === 'removed') {
       removed.add(ch.doc.id);
       ops.push({ type: 'remove', col, id: ch.doc.id });
     } else if (isWiped(col, ch.doc.data())) {
-      // A device that missed "Start fresh" uploaded it again: remove it for good.
       removed.add(ch.doc.id);
-      push({ type: 'remove', col, id: ch.doc.id });
+      removeIfStillWiped(col, ch.doc.id, ch.doc.data());
     } else if (isLeftover(col, ch.doc.data())) {
       // Only a scrap of a document (a late "Ready" or waste entry for something
       // that was already cleared): never show it; remove it once the server has it.
@@ -338,6 +590,8 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
     replayed[col] = true;
     replayOutbox(col);
   }
+  // Once this device has the shared orders and cards: the public copies from before this version.
+  if (replayed.orders && replayed.cards) backfillPublic();
   updateStatus();
 }
 
@@ -352,73 +606,98 @@ const replayed: Partial<Record<Collection, boolean>> = {};
 /** The old menu version this window already upgraded on the server (so it does it once). */
 let upgradedFrom: number | undefined;
 
+function onSettings(s: DocumentSnapshot) {
+  meta.settings = s.metadata;
+  listening('settings', s.metadata.fromCache);
+  const first = !s.metadata.fromCache && !uploadedOnce.settings;
+  if (s.exists()) {
+    // The shared setup always wins: a spare tablet with default prices
+    // and passcodes must never replace the booth's real ones.
+    if (first) uploadedOnce.settings = true;
+    applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: s.data() }]);
+    // The shared copy is still on an older menu: save the upgraded one,
+    // or every later Setup change would be upgraded over again and snap back.
+    const shared = (s.data().menuVersion as number | undefined) ?? 1;
+    if (!s.metadata.fromCache && !s.metadata.hasPendingWrites && shared < MENU_VERSION && upgradedFrom !== shared) {
+      upgradedFrom = shared;
+      push({ type: 'put', col: 'settings', id: 'main', doc: getState().settings });
+    }
+  } else if (first) {
+    // First device to connect: its settings (menu, prices, PINs) become the shared ones.
+    uploadedOnce.settings = true;
+    push({ type: 'put', col: 'settings', id: 'main', doc: getState().settings });
+  }
+  updateStatus();
+}
+
+/** Start (or start again) the live listener of one collection. */
+function listen(col: Collection) {
+  if (!db) return;
+  unsubscribers.get(col)?.();
+  const opts = { includeMetadataChanges: true };
+  const stop =
+    col === 'settings'
+      ? onSnapshot(doc(db, 'settings', 'main'), opts, onSettings, (e) => onListenError(e, col))
+      : onSnapshot(collection(db, col), opts, (s) => onCollection(col, s), (e) => onListenError(e, col));
+  unsubscribers.set(col, stop);
+}
+
 function attach() {
   if (!db) return;
   setRemote({ push });
-  const opts = { includeMetadataChanges: true };
-  unsubscribers = [
-    onSnapshot(collection(db, 'orders'), opts, (s) => onCollection('orders', s), (e) => onListenError(e)),
-    onSnapshot(collection(db, 'days'), opts, (s) => onCollection('days', s), (e) => onListenError(e)),
-    onSnapshot(collection(db, 'cards'), opts, (s) => onCollection('cards', s), (e) => onListenError(e, 'cards')),
-    onSnapshot(collection(db, 'cashMoves'), opts, (s) => onCollection('cashMoves', s), (e) => onListenError(e, 'cashMoves')),
-    onSnapshot(
-      doc(db, 'settings', 'main'),
-      opts,
-      (s) => {
-        meta.settings = s.metadata;
-        const first = !s.metadata.fromCache && !uploadedOnce.settings;
-        if (s.exists()) {
-          // The shared setup always wins: a spare tablet with default prices
-          // and passcodes must never replace the booth's real ones.
-          if (first) uploadedOnce.settings = true;
-          applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: s.data() }]);
-          // The shared copy is still on an older menu: save the upgraded one,
-          // or every later Setup change would be upgraded over again and snap back.
-          const shared = (s.data().menuVersion as number | undefined) ?? 1;
-          if (!s.metadata.fromCache && !s.metadata.hasPendingWrites && shared < MENU_VERSION && upgradedFrom !== shared) {
-            upgradedFrom = shared;
-            push({ type: 'put', col: 'settings', id: 'main', doc: getState().settings });
-          }
-        } else if (first) {
-          // First device to connect: its settings (menu, prices, PINs) become the shared ones.
-          uploadedOnce.settings = true;
-          push({ type: 'put', col: 'settings', id: 'main', doc: getState().settings });
-        }
-        updateStatus();
-      },
-      (e) => onListenError(e),
-    ),
-  ];
+  for (const col of LISTEN) listen(col);
 }
 
-function onListenError(e: { code?: string; message?: string }, what?: 'cards' | 'cashMoves') {
-  if (what === 'cashMoves' && e.code === 'permission-denied') {
+// A listener the server refused is dead. It is started again by itself (after
+// 30 seconds, then longer, up to 5 minutes), so a device left open picks up
+// the fixed Firebase rules without anyone reloading it.
+const RETRY_FIRST_MS = 30000;
+const RETRY_MAX_MS = 300000;
+const retryDelay = new Map<Collection, number>();
+const retryTimers = new Map<Collection, ReturnType<typeof setTimeout>>();
+
+function onListenError(e: { code?: string; message?: string }, col: Collection) {
+  delete meta[col];
+  const denied = e.code === 'permission-denied';
+  if (col === 'cashMoves' && denied) {
     cashBlocked = true;
     console.warn('cash in/out cannot sync yet', e);
-    updateStatus();
-    return;
-  }
-  writeError =
-    e.code === 'permission-denied'
-      ? what === 'cards'
-        ? 'Loyalty card names cannot sync yet: the Firebase rules need the "cards" update (see docs/PLAN.md).'
-        : 'This login is not allowed to read the booth data. Sign in with the booth account.'
+  } else {
+    listenProblem[col] = denied
+      ? col === 'cards'
+        ? 'Loyalty card names cannot sync yet: the Firebase rules need the "cards" update (see docs/PLAN.md). This device tries again by itself every few minutes.'
+        : 'This login is not allowed to read the booth data. Sign in with the booth account, or check the email in the Firebase rules. This device tries again by itself every few minutes.'
       : `Sync error: ${e.message ?? e.code}`;
-  writeFailed = false;
-  console.error('sync listen failed', e);
+    console.error('sync listen failed', e);
+  }
+  const delay = Math.min(RETRY_MAX_MS, (retryDelay.get(col) ?? RETRY_FIRST_MS / 2) * 2);
+  retryDelay.set(col, delay);
+  clearTimeout(retryTimers.get(col));
+  retryTimers.set(
+    col,
+    setTimeout(() => {
+      retryTimers.delete(col);
+      if (authState.email) listen(col);
+    }, delay),
+  );
   updateStatus();
 }
 
 function detach() {
-  for (const u of unsubscribers) u();
-  unsubscribers = [];
+  for (const u of unsubscribers.values()) u();
+  unsubscribers.clear();
+  for (const t of retryTimers.values()) clearTimeout(t);
+  retryTimers.clear();
+  retryDelay.clear();
+  for (const t of recheckTimers) clearTimeout(t);
+  recheckTimers.clear();
   setRemote(null);
   for (const k of Object.keys(meta) as Collection[]) delete meta[k];
   for (const k of Object.keys(uploadedOnce) as Collection[]) delete uploadedOnce[k];
   for (const k of Object.keys(replayed) as Collection[]) delete replayed[k];
+  for (const k of Object.keys(listenProblem) as Collection[]) delete listenProblem[k];
   cashBlocked = false;
   writeError = null;
-  writeFailed = false;
 }
 
 export function startSync() {

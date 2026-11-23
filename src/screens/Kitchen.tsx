@@ -1,50 +1,92 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { allTicked, itemProgress, liveTicks, NO_SIDE } from '../domain/kitchen';
 import { itemById } from '../domain/pricing';
 import { kitchenMadeCounts } from '../domain/reports';
 import type { ComboPart, Order, OrderLine, Settings } from '../domain/types';
-import { modeOrders, openDay, patchOrder, useStore } from '../data/store';
+import { modeOrders, openDay, patchOrder, tickItem, untickItem, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 import { chime, minutesAgo, unlockSound, useNow, useWakeLock } from '../ui/ui';
 
-function partText(p: ComboPart | OrderLine['choices']): string[] {
+/** One choice on a kitchen card. `loud` ones are the easy-to-miss ones: shown bold on a highlight. */
+type Bit = { text: string; loud?: boolean };
+
+function partBits(p: ComboPart | OrderLine['choices']): Bit[] {
   if (!p) return [];
-  const out: string[] = [];
-  if (p.side) out.push(`side: ${p.side}`);
-  if (p.extraSides?.length) out.push(`EXTRA ${p.extraSides.join(', ')}`);
-  if (p.extraSauce) out.push(`+${p.extraSauce} SAUCE`);
-  if (p.dip) out.push(`dip: ${p.dip}`);
-  if (p.topping === 'fries') out.push('FRIES ON TOP');
+  const out: Bit[] = [];
+  if (p.side === NO_SIDE) out.push({ text: 'NO SIDE', loud: true });
+  else if (p.side) out.push({ text: `side: ${p.side}` });
+  if (p.extraSides?.length) out.push({ text: `EXTRA ${p.extraSides.join(', ')}`, loud: true });
+  if (p.extraSauce) out.push({ text: `+${p.extraSauce} SAUCE`, loud: true });
+  if (p.extraRice) out.push({ text: `EXTRA RICE${p.extraRice > 1 ? ` ×${p.extraRice}` : ''}`, loud: true });
+  if (p.dip) out.push({ text: `dip: ${p.dip}` });
+  if (p.topping === 'fries') out.push({ text: 'FRIES ON TOP', loud: true });
   return out;
 }
 
-function KitchenLine({ line, s }: { line: OrderLine; s: Settings }) {
+function Bits({ bits }: { bits: Bit[] }) {
+  if (!bits.length) return null;
+  return (
+    <span className="k-detail">
+      {bits.map((b, i) => (
+        <span key={i} className={b.loud ? 'k-loud' : 'k-plain'}>
+          {b.text}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** One thing to make, as a big tick box: tap when it is done, tap again to untick. */
+function TickRow({ done, onTick, label, children }: { done: boolean; onTick: () => void; label: string; children: ReactNode }) {
+  return (
+    <button type="button" className={`ktick ${done ? 'done' : ''}`} role="checkbox" aria-checked={done} aria-label={`${label}: ${done ? 'done' : 'not done yet'}`} onClick={onTick}>
+      <span className="ktick-box" aria-hidden="true">
+        {done ? '✓' : ''}
+      </span>
+      <span className="ktick-text">{children}</span>
+    </button>
+  );
+}
+
+function KitchenLine({ line, s, ticked, onTick }: { line: OrderLine; s: Settings; ticked: Set<string>; onTick: (key: string) => void }) {
   const name = (id: string) => itemById(s, id)?.name ?? id;
   if (line.combo) {
     return (
       <li className={line.addedAfterPay ? 'added' : ''}>
-        <b>
+        <b className="k-combo">
           {line.qty}× {s.combos.find((c) => c.id === line.combo!.comboId)?.name}
         </b>
-        <ul>
-          {line.combo.parts.map((p, i) => (
-            <li key={i}>
-              {name(p.itemId)} {partText(p).length > 0 && <span className="k-detail">({partText(p).join(', ')})</span>}
-            </li>
-          ))}
-        </ul>
         {line.notes && <div className="k-note">📝 {line.notes}</div>}
+        <ul>
+          {line.combo.parts.map((p, i) => {
+            const key = `${line.id}#${i}`;
+            return (
+              <li key={i}>
+                <TickRow done={ticked.has(key)} onTick={() => onTick(key)} label={`${line.qty} ${name(p.itemId)}`}>
+                  <b>
+                    {line.qty > 1 ? `${line.qty}× ` : ''}
+                    {name(p.itemId)}
+                  </b>
+                  <Bits bits={partBits(p)} />
+                </TickRow>
+              </li>
+            );
+          })}
+        </ul>
       </li>
     );
   }
   return (
     <li className={line.addedAfterPay ? 'added' : ''}>
-      <b>
-        {line.qty}× {name(line.itemId)}
-      </b>
-      {line.free?.reason === 'prize' && <span className="k-tag">FREE – wheel</span>}
-      {line.free?.reason === 'reward' && <span className="k-tag">REWARD</span>}
-      {partText(line.choices).length > 0 && <div className="k-detail">{partText(line.choices).join(', ')}</div>}
-      {line.notes && <div className="k-note">📝 {line.notes}</div>}
+      <TickRow done={ticked.has(line.id)} onTick={() => onTick(line.id)} label={`${line.qty} ${name(line.itemId)}`}>
+        <b>
+          {line.qty}× {name(line.itemId)}
+        </b>
+        {line.free?.reason === 'prize' && <span className="k-tag">FREE – wheel</span>}
+        {line.free?.reason === 'reward' && <span className="k-tag">REWARD</span>}
+        <Bits bits={partBits(line.choices)} />
+        {line.notes && <span className="k-note">📝 {line.notes}</span>}
+      </TickRow>
     </li>
   );
 }
@@ -79,6 +121,33 @@ export function Kitchen() {
     else if (status === 'ready') patchOrder(o.id, { status, readyAt: t });
   };
 
+  /**
+   * Tick one item done (or untick it). The first tick starts Cooking; the
+   * last one makes the whole order READY, so nobody has to tap twice.
+   */
+  const tick = (o: Order, key: string) => {
+    const ticked = liveTicks(o);
+    if (ticked.includes(key)) {
+      untickItem(o.id, key);
+      return;
+    }
+    const t = Date.now();
+    if (allTicked({ lines: o.lines, done: [...ticked, key] })) tickItem(o.id, key, { status: 'ready', readyAt: t, ...(o.cookingAt ? {} : { cookingAt: t }) });
+    else tickItem(o.id, key, o.status === 'new' ? { status: 'cooking', cookingAt: t } : undefined);
+  };
+
+  // Two tablets ticking the last two items at the same moment each see one
+  // item still open. Whichever screen then sees every item ticked finishes it.
+  const stuck = queue.filter((o) => allTicked(o)).map((o) => o.id).join(' ');
+  useEffect(() => {
+    if (!stuck || !started) return;
+    const t = Date.now();
+    for (const id of stuck.split(' ')) patchOrder(id, { status: 'ready', readyAt: t });
+  }, [stuck, started]);
+
+  /** "Ready" tapped by mistake. An order that became ready by its last tick gets its ticks back to tick again. */
+  const undoReady = (o: Order) => patchOrder(o.id, { status: 'cooking', readyAt: undefined, ...(allTicked(o) ? { done: [] } : {}) });
+
   if (!started) {
     return (
       <div className="screen kitchen">
@@ -112,26 +181,43 @@ export function Kitchen() {
         {queue.length === 0 && <p className="empty">No orders waiting. 🎉</p>}
         {queue.map((o) => {
           const late = now - o.createdAt > s.kitchenLateMinutes * 60000;
+          const ticked = new Set(liveTicks(o));
+          const prog = itemProgress(o);
           return (
             <article key={o.id} className={`kcard ${o.status} ${late ? 'late' : ''}`}>
               <header>
                 <span className="knum-wrap">
-                  <b className="knum">{o.number}</b>
-                  {o.customerName && <span className="kname">{o.customerName}</span>}
+                  {o.customerName ? (
+                    <>
+                      <b className="kname">{o.customerName}</b>
+                      <span className="knum">{o.number}</span>
+                    </>
+                  ) : (
+                    <b className="kname">{o.number}</b>
+                  )}
                 </span>
                 <span className="kage">{minutesAgo(o.createdAt, now)}</span>
               </header>
+              {o.note && <p className="k-order-note">📝 {o.note}</p>}
               <ul className="klines">
                 {o.lines.map((l) => (
-                  <KitchenLine key={l.id} line={l} s={s} />
+                  <KitchenLine key={l.id} line={l} s={s} ticked={ticked} onTick={(key) => tick(o, key)} />
                 ))}
               </ul>
               <footer>
-                <button className={`btn big ${o.status === 'cooking' ? 'selected-cooking' : ''}`} disabled={o.status === 'cooking'} onClick={() => setStatus(o, 'cooking')}>
-                  {o.status === 'cooking' ? 'Cooking…' : 'Cooking'}
-                </button>
+                <span className={`kprog ${prog.done > 0 ? 'some' : ''}`} aria-label={`${prog.done} of ${prog.total} items ready`}>
+                  <b>
+                    {prog.done} of {prog.total}
+                  </b>{' '}
+                  ready
+                </span>
+                {o.status === 'new' && (
+                  <button className="btn big" onClick={() => setStatus(o, 'cooking')}>
+                    Cooking
+                  </button>
+                )}
                 <button className="btn big success" onClick={() => setStatus(o, 'ready')}>
-                  Ready
+                  All ready
                 </button>
               </footer>
             </article>
@@ -142,8 +228,9 @@ export function Kitchen() {
         <div className="kitchen-recent">
           <span>Just sent to the monitor:</span>
           {recent.map((o) => (
-            <button key={o.id} className="btn small ghost" onClick={() => patchOrder(o.id, { status: 'cooking', readyAt: undefined })} title="Tapped Ready by mistake? Send it back.">
-              {o.number} ↩ undo
+            <button key={o.id} className="btn small ghost" onClick={() => undoReady(o)} title="Tapped Ready by mistake? Send it back.">
+              {o.number}
+              {o.customerName ? ` · ${o.customerName}` : ''} ↩ undo
             </button>
           ))}
         </div>

@@ -346,6 +346,7 @@ export function orderRows(day: BusinessDay | undefined, all: Order[], s: Setting
         l.choices?.side && `side: ${l.choices.side}`,
         l.choices?.extraSides?.length && `extra sides: ${l.choices.extraSides.join('/')}`,
         l.choices?.extraSauce && `extra sauce x${l.choices.extraSauce}`,
+        l.choices?.extraRice && `extra rice x${l.choices.extraRice}`,
         l.choices?.dip && `dip: ${l.choices.dip}`,
         (l.choices?.topping === 'fries' || l.combo?.parts.some((p) => p.topping === 'fries')) && 'fries on top',
         l.combo && l.combo.parts.map((p) => itemById(s, p.itemId)?.name ?? p.itemId).join(' + '),
@@ -399,15 +400,27 @@ export function bestSellers(day: BusinessDay | undefined, all: Order[], s: Setti
     .map(([id]) => id);
 }
 
-export type Win = { orderId: string; number: string; prize: PrizeId; at: number };
+/** `orderId` is "manual:<id>" and `number` is empty for a winner added by hand. */
+export type Win = { orderId: string; number: string; name?: string; prize: PrizeId; at: number };
 
-/** Latest wheel wins today, newest first ("Try again" is not a win). */
+/** Who to show for a win: the customer's name, else the order number. */
+export function winnerName(w: Pick<Win, 'name' | 'number'>): string {
+  return w.name || w.number || 'A customer';
+}
+
+/**
+ * Latest wheel wins today, newest first ("Try again" is not a win): prizes
+ * logged on orders, plus winners the manager added by hand.
+ */
 export function recentWins(day: BusinessDay | undefined, all: Order[], n = 5): Win[] {
   const wins: Win[] = [];
   for (const o of liveOrders(dayOrders(day, all))) {
     for (const sp of o.spins) {
-      if (sp.prize !== 'tryAgain') wins.push({ orderId: o.id, number: o.number, prize: sp.prize, at: sp.at });
+      if (sp.prize !== 'tryAgain') wins.push({ orderId: o.id, number: o.number, name: o.customerName, prize: sp.prize, at: sp.at });
     }
+  }
+  for (const m of day?.manualWins ?? []) {
+    if (m && m.prize !== 'tryAgain') wins.push({ orderId: `manual:${m.id}`, number: '', name: m.name, prize: m.prize, at: m.at });
   }
   return wins.sort((a, b) => b.at - a.at).slice(0, n);
 }
