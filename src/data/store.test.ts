@@ -192,9 +192,124 @@ describe('store', () => {
     const now = store.getState().settings;
     const og = now.menu.find((m) => m.id === 'bowl-original')!;
     expect([og.name, og.price, og.unitCost, og.startStock, og.photo]).toEqual(['OG Chicken Rice Bowl', 139, 90, 33, 'menu/og.webp']);
-    expect(now.menuVersion).toBe(3);
+    expect(now.menuVersion).toBe(4);
+    expect(now.menu.some((m) => m.id === 'extra-rice')).toBe(true);
     expect(now.combos.map((c) => c.price)).toEqual([339, 359]);
     expect(now.promoLimits.pausePct).toBe(12);
     expect(now.wheel.slots.find((w) => w.prize === 'comboVoucher')?.slots).toBe(1);
+  });
+  it('adds extra rice to a menu saved before it existed, keeping everything edited in Setup', () => {
+    const before = store.getState().settings;
+    const old = { ...before, menuVersion: 3, extraRicePrice: undefined, menu: before.menu.filter((m) => m.id !== 'extra-rice').map((m) => (m.id === 'water' ? { ...m, price: 30, unitCost: 11, startStock: 7 } : m)) };
+    store.applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: JSON.parse(JSON.stringify(old)) }]);
+    const now = store.getState().settings;
+    expect(now.menuVersion).toBe(4);
+    expect(now.extraRicePrice).toBe(20);
+    expect(now.menu.filter((m) => m.id === 'extra-rice')).toHaveLength(1);
+    expect(now.menu.find((m) => m.id === 'water')).toMatchObject({ price: 30, unitCost: 11, startStock: 7 });
+    // A second pass changes nothing more.
+    store.applyRemote([{ type: 'put', col: 'settings', id: 'main', doc: JSON.parse(JSON.stringify(now)) }]);
+    expect(store.getState().settings.menu.filter((m) => m.id === 'extra-rice')).toHaveLength(1);
+  });
+
+  it('ticks items one by one, with Cooking or Ready saved in the same step', () => {
+    store.putOrder(order('t1') as never);
+    store.tickItem('t1', 'l1', { status: 'cooking', cookingAt: 5 });
+    store.tickItem('t1', 'l1');
+    store.tickItem('t1', 'l2', { status: 'ready', readyAt: 9 });
+    expect(store.getState().orders.t1).toMatchObject({ done: ['l1', 'l2'], status: 'ready', cookingAt: 5, readyAt: 9 });
+  });
+
+  it('sends a reopened day and a kitchen undo made while signed out', () => {
+    const dayDoc = { id: 'demo-r', mode: 'demo', date: '2026-11-23', openedAt: 1, openedBy: 'Ana', openingFloat: 0, stockStart: {}, soldOut: {}, closedAt: 50, countedCash: 10, closedBy: 'Ana' };
+    store.putDay(dayDoc as never);
+    store.putOrder(order('u1', { status: 'ready', readyAt: 7 }) as never);
+    store.putOrder(order('u2', { status: 'ready', readyAt: 7 }) as never);
+    store.enableOutbox(true);
+    store.patchDay('demo-r', { closedAt: undefined, countedCash: undefined, closedBy: undefined });
+    store.patchOrder('u1', { status: 'cooking', readyAt: undefined });
+    store.patchOrder('u2', { status: 'cooking', readyAt: undefined });
+    const sent: Op[] = [];
+    store.setRemote({ push: (op) => sent.push(op) });
+    // Sign-in: the shared copies arrive first (day still closed, u1 still ready, u2 picked up meanwhile).
+    store.applyRemote([
+      { type: 'put', col: 'days', id: 'demo-r', doc: dayDoc },
+      { type: 'put', col: 'orders', id: 'u1', doc: order('u1', { status: 'ready', readyAt: 7 }) },
+      { type: 'put', col: 'orders', id: 'u2', doc: order('u2', { status: 'claimed', readyAt: 7, claimedAt: 8 }) },
+    ]);
+    store.replayOutbox('days');
+    store.replayOutbox('orders');
+    const st = store.getState();
+    expect(st.days['demo-r'].closedAt).toBeUndefined();
+    expect('closedAt' in (sent.find((op) => op.col === 'days') as { patch: object }).patch).toBe(true);
+    expect(st.orders.u1).toMatchObject({ status: 'cooking' });
+    expect(st.orders.u1.readyAt).toBeUndefined();
+    expect(st.orders.u2.status).toBe('claimed'); // picked up elsewhere: never goes back
+    expect(store.outboxSize()).toBe(0);
+    store.setRemote(null);
+    store.enableOutbox(false);
+  });
+
+  it('keeps a change the server refused, and sends a card rename made while signed out', () => {
+    store.saveCard('CCB-020', 'Ana', 'Ben');
+    store.enableOutbox(true);
+    store.saveCard('CCB-020', 'Ana Cruz', 'Ben');
+    expect(store.outboxSize()).toBe(1);
+    store.requeue({ type: 'patch', col: 'orders', id: 'r1', patch: { status: 'ready' } });
+    store.requeue({ type: 'put', col: 'orders', id: 'new', doc: order('new') }); // new documents are uploaded on connect, not queued
+    expect(store.outboxSize()).toBe(2);
+    const sent: Op[] = [];
+    store.setRemote({ push: (op) => sent.push(op) });
+    store.replayOutbox('cards');
+    store.replayOutbox('orders');
+    expect(sent.map((op) => op.col)).toEqual(['cards', 'orders']);
+    expect(Object.values(store.getState().cards).find((c) => c.number === 'CCB-020')?.name).toBe('Ana Cruz');
+    store.setRemote(null);
+    store.enableOutbox(false);
+  });
+
+  it('renames a card without losing its stamp edits', () => {
+    store.adjustStamps('CCB-021', 3, 'paper card', 'Ana');
+    store.saveCard('CCB-021', 'Carla', 'Ana');
+    store.saveCard('CCB-021', '', 'Ana');
+    const card = Object.values(store.getState().cards).find((c) => c.number === 'CCB-021');
+    expect(card).toMatchObject({ name: '' });
+    expect(card?.adjustments).toHaveLength(1);
+  });
+
+  it('remembers what Start fresh cleared when settings are reset', () => {
+    const cleared = store.getState().settings.wiped;
+    expect(cleared?.days.length).toBeGreaterThan(0);
+    store.resetSettings();
+    expect(store.getState().settings.wiped).toEqual(cleared);
+    store.applyRemote([{ type: 'put', col: 'orders', id: 'L1', doc: order('L1', { mode: 'live', dayId: 'live-1' }) }]);
+    expect(store.getState().orders.L1).toBeUndefined();
+  });
+
+  it('restoring the backup brings back what Start fresh cleared, and says how much really came back', () => {
+    const dayDoc = { id: 'live-9', mode: 'live', date: '2026-11-21', openedAt: 1, openedBy: 'Ana', openingFloat: 0, stockStart: {}, soldOut: {} };
+    store.putDay(dayDoc as never);
+    store.putOrder(order('B1', { mode: 'live', dayId: 'live-9' }) as never);
+    store.putOrder(order('B2', { mode: 'live', dayId: 'live-9' }) as never);
+    store.saveSettings({ mode: 'live' });
+    store.saveCard('CCB-030', 'Dan', 'Ana');
+    const backup = store.exportBackup();
+    store.startFresh('live');
+    expect(store.getState().orders.B1).toBeUndefined();
+    expect(store.getState().settings.wiped?.days).toContain('live-9');
+
+    const r = store.importBackup(backup, { withSettings: true });
+    expect(r.ok).toBe(true);
+    // B1 and B2, plus L2 from the earlier test: it was a live order in the file too.
+    expect(r.message).toMatch(/Restored 3 orders\./);
+    expect(r.message).toMatch(/brought back/);
+    const st = store.getState();
+    expect(st.orders.B1).toBeTruthy();
+    expect(st.days['live-9']).toBeTruthy();
+    expect(Object.values(st.cards).some((c) => c.number === 'CCB-030' && c.mode === 'live')).toBe(true);
+    expect(st.settings.wiped?.days).not.toContain('live-9');
+    // Days cleared earlier and not in this file stay cleared.
+    expect(st.settings.wiped?.days).toContain('live-1');
+    store.saveSettings({ mode: 'demo' });
   });
 });

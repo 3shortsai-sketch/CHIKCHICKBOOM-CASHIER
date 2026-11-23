@@ -8,7 +8,10 @@ import react from '@vitejs/plugin-react';
  * first visit every screen opens with no internet.
  */
 /** Food photos in public/menu, saved for offline use with everything else. */
-const MENU_PHOTOS = readdirSync(new URL('./public/menu', import.meta.url)).filter((f) => /\.(webp|jpe?g|png)$/i.test(f)).map((f) => './menu/' + f);
+const MENU_PHOTOS = readdirSync(new URL('./public/menu', import.meta.url), { withFileTypes: true }).filter((f) => f.isFile()).map((f) => f.name).filter((f) => /\.(webp|jpe?g|png)$/i.test(f)).map((f) => './menu/' + f);
+
+/** This build's id: baked into the app and written to version.json, so open devices can tell a newer version is live. */
+const BUILD_ID = Date.now().toString(36);
 
 function offlineServiceWorker(): Plugin {
   return {
@@ -17,7 +20,7 @@ function offlineServiceWorker(): Plugin {
     generateBundle(_options, bundle) {
       const files = Object.keys(bundle).filter((f) => !f.endsWith('.map'));
       const precache = ['./', ...files.map((f) => './' + f), './manifest.webmanifest', './icon-192.png', './logo.png', './logo-small.png', './gcash-qr.jpg', './track-qr.png', ...MENU_PHOTOS];
-      const version = Date.now().toString(36);
+      const version = BUILD_ID;
       const source = `// Generated at build time. Do not edit.
 const CACHE = 'ccb-pos-${version}';
 const PRECACHE = ${JSON.stringify(precache)};
@@ -59,6 +62,7 @@ self.addEventListener('fetch', (event) => {
 });
 `;
       this.emitFile({ type: 'asset', fileName: 'sw.js', source });
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ id: BUILD_ID }) });
     },
   };
 }
@@ -66,6 +70,7 @@ self.addEventListener('fetch', (event) => {
 export default defineConfig({
   base: './',
   plugins: [react(), offlineServiceWorker()],
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   test: {
     environment: 'node',
   },

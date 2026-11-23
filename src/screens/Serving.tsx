@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { allergenHint, allergenText, itemTags } from '../domain/allergens';
 import { waitMinutes } from '../domain/inventory';
 import { peso } from '../domain/pricing';
-import { bestSellers, isAvailable, recentWins, stockLeft, type Win } from '../domain/reports';
+import { bestSellers, isAvailable, recentWins, stockLeft, winnerName, type Win } from '../domain/reports';
 import type { MenuItem, Settings } from '../domain/types';
 import { PRIZE_LABEL } from '../domain/wheel';
 import { useLiveCart, type LiveCart } from '../data/live';
@@ -16,8 +16,15 @@ const CATS = [
   { id: 'cookies', label: 'Cookies' },
 ] as const;
 
-/** Preparing numbers shown (3 across, 5 rows). With more, the last cell says "+N more". */
-const PREP_MAX = 15;
+/** Preparing orders shown (2 across, 6 rows: each has a number and a name). With more, the last cell says "+N more". */
+const PREP_MAX = 12;
+/** Names shown under "Up next". */
+const UP_NEXT = 3;
+
+/** What the speakers say: the name first, so the customer looks up before the number is read. */
+export function readyCall(number: string, name?: string): string {
+  return name ? `${name}! Order ${spokenNumber(number)} is ready.` : `Order ${spokenNumber(number)} is ready!`;
+}
 
 const METHOD_LABEL = { cash: 'Cash', gcash: 'GCash', maya: 'Maya' } as const;
 
@@ -182,6 +189,8 @@ export function Serving() {
     .filter((o) => o.status === 'ready' && now - readyAtHere(o.id) < clearMs)
     .sort((a, b) => readyAtHere(b.id) - readyAtHere(a.id) || (b.readyAt ?? 0) - (a.readyAt ?? 0));
   const preparing = orders.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt);
+  // The orders the kitchen is working on now come first, then the oldest waiting ones.
+  const upNext = [...preparing.filter((o) => o.status === 'cooking'), ...preparing.filter((o) => o.status === 'new')].slice(0, UP_NEXT);
 
   // Every timer this screen starts, so they can all be stopped when it closes.
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
@@ -236,7 +245,7 @@ export function Serving() {
     for (const o of [...serving].reverse()) {
       if (known.has(o.id)) continue;
       known.add(o.id);
-      waiting.current.push({ id: o.id, text: `Order ${spokenNumber(o.number)}${o.customerName ? ` for ${o.customerName}` : ''} is ready!` });
+      waiting.current.push({ id: o.id, text: readyCall(o.number, o.customerName) });
     }
     callNext();
     // readyIds changes exactly when the list of ready numbers changes.
@@ -301,7 +310,7 @@ export function Serving() {
           onClick={() => {
             unlockSound();
             const secs = cluck();
-            setTimeout(() => announce('Order A, 1, is ready!'), secs * 1000 + 150);
+            setTimeout(() => announce(readyCall('A-001', 'Ana')), secs * 1000 + 150);
           }}
         >
           🔊 Test the sound
@@ -324,7 +333,7 @@ export function Serving() {
         <div className="win-banner" role="status">
           <div className="burst" aria-hidden="true" />
           <div className="win-text">
-            <b>{celebrate.number}</b>
+            <b>{winnerName(celebrate)}</b>
             <span>won a FREE MEAL! 🎉</span>
           </div>
         </div>
@@ -347,13 +356,29 @@ export function Serving() {
               <span className="serving-empty">Your number will show here</span>
             ) : (
               serving.slice(0, 6).map((o, i) => (
-                <span key={o.id} className={`snum ${i === 0 ? 'first' : ''} ${flash === o.id ? 'flash' : ''}`}>
-                  {o.number}
-                  {o.customerName && <small className="snum-name">{o.customerName}</small>}
+                <span key={o.id} className={`snum ${i === 0 ? 'first' : ''} ${flash === o.id ? 'flash' : ''} ${o.customerName ? 'named' : ''}`}>
+                  {o.customerName ? (
+                    <>
+                      <span className="snum-who" style={{ '--chars': Math.max(7, o.customerName.length) } as CSSProperties}>
+                        {o.customerName}
+                      </span>
+                      <small className="snum-no">{o.number}</small>
+                    </>
+                  ) : (
+                    o.number
+                  )}
                 </span>
               ))
             )}
           </div>
+          {upNext.length > 0 && (
+            <p className="up-next">
+              <span className="up-next-label">Up next</span>
+              {upNext.map((o) => (
+                <b key={o.id}>{o.customerName ?? o.number}</b>
+              ))}
+            </p>
+          )}
         </section>
         <section className={`preparing ${cart.stage !== 'idle' ? 'with-order' : ''} ${cart.stage === 'paying' && cart.method === 'gcash' ? 'with-qr' : ''}`}>
           <YourOrder cart={cart} gcashNumber={s.payments.gcashNumber} />
@@ -363,7 +388,10 @@ export function Serving() {
           </div>
           <div className="prep-numbers">
             {(preparing.length > PREP_MAX ? preparing.slice(0, PREP_MAX - 1) : preparing).map((o) => (
-              <span key={o.id}>{o.number}</span>
+              <span key={o.id}>
+                {o.number}
+                {o.customerName && <small>{o.customerName}</small>}
+              </span>
             ))}
             {preparing.length > PREP_MAX && <span>+{preparing.length - (PREP_MAX - 1)} more</span>}
           </div>
@@ -419,7 +447,7 @@ export function Serving() {
                   <ul>
                     {wins.map((w) => (
                       <li key={`${w.orderId}:${w.at}`} className={w.prize === 'freeMeal' ? 'big' : ''}>
-                        <b>{w.number}</b> {PRIZE_LABEL[w.prize]}
+                        <b>{winnerName(w)}</b> <span>{PRIZE_LABEL[w.prize]}</span>
                         {w.prize === 'freeMeal' ? ' 🎉' : ''}
                       </li>
                     ))}

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { defaultSettings } from '../domain/defaults';
-import { newId } from '../domain/pricing';
+import { extraRicePrice, newId } from '../domain/pricing';
 import { ALLERGENS, type AllergenTags, type DataMode, type MenuItem, type PrizeId, type Settings } from '../domain/types';
 import { PRIZE_LABEL } from '../domain/wheel';
 import { exportBackup, openDay, resetSettings, saveSettings, setDevice, startFresh, useDevice, useStore, type State } from '../data/store';
-import { signOutBooth, useAuthState, useSyncStatus } from '../data/sync';
+import { cardNumbers, republishCards, signOutBooth, useAuthState, useSyncStatus } from '../data/sync';
 import { askToSignIn } from '../ui/BoothLogin';
 import { TopBar } from '../ui/TopBar';
 import { download, keepUnlocked, Modal, PinGate } from '../ui/ui';
@@ -337,12 +337,13 @@ function SetupInner() {
     fries: ['fries'],
     drinks: ['slushie', 'water'],
     cookies: ['cookie'],
-    addons: ['extraSide', 'extraSauce'],
+    addons: ['extraSide', 'extraSauce', 'extraRice'],
   };
 
   return (
     <div className="screen setup">
       <TopBar title="Setup" />
+      <SignedOutWarning what="Setup changes" />
       <div className="dash-body" key={formKey}>
         {saved && <div className="toast">{saved}</div>}
         {defaultPins && (
@@ -532,6 +533,10 @@ function SetupInner() {
             <label className="field">
               <span>Extra sauce ₱</span>
               <NumField value={s.extraSaucePrice} onSave={(extraSaucePrice) => save({ extraSaucePrice })} />
+            </label>
+            <label className="field">
+              <span>Extra rice ₱</span>
+              <NumField value={extraRicePrice(s)} onSave={(extraRicePrice) => save({ extraRicePrice })} />
             </label>
           </div>
           <ListEditor label="Bowl sides" values={s.sides} onChange={(sides) => save({ sides })} />
@@ -797,6 +802,23 @@ function SetupInner() {
   );
 }
 
+/**
+ * Setup and inventory counts are shared settings: the shared copy always wins
+ * when a device signs in, so a change made while signed out would vanish.
+ */
+export function SignedOutWarning({ what }: { what: string }) {
+  const sync = useSyncStatus();
+  if (!sync.needsSignIn) return null;
+  return (
+    <p className="banner warn" role="alert">
+      This device is not signed in. {what} made now stay on this device only, and are <b>replaced by the shared ones when it signs in</b>.{' '}
+      <button className="link-btn" onClick={askToSignIn}>
+        Sign in first
+      </button>
+    </p>
+  );
+}
+
 /** How much a "Start fresh" would remove for one data mode. */
 function countsFor(state: State, mode: DataMode) {
   return {
@@ -853,14 +875,17 @@ function StartFreshConfirm({ mode, counts, pin, onDone, onClose }: { mode: DataM
     if (code !== pin) return setError('Wrong passcode. Use the Dashboard and Setup passcode.');
     if (real && word.trim().toUpperCase() !== 'CLEAR') return setError('Type CLEAR in the box to confirm.');
     download(`chick-chick-boom-backup-before-clearing-${real ? 'real' : 'demo'}-${new Date().toISOString().slice(0, 10)}.json`, exportBackup(), 'application/json');
+    // The customer page keeps its own copy of each Boom Card's stamps: bring those back to zero too.
+    const cards = cardNumbers(mode);
     const r = startFresh(mode);
+    republishCards(mode, cards);
     onDone(`${real ? 'Real' : 'Practice'} data cleared on every device: ${r.orders} order${r.orders === 1 ? '' : 's'} and ${r.days} day${r.days === 1 ? '' : 's'} removed. The backup file is in your downloads.`);
   };
   return (
     <Modal title={real ? 'Clear real data?' : 'Clear practice data?'} onClose={onClose}>
       <div className="stack">
         <p>
-          This removes <b>{counts.orders}</b> {real ? 'real' : 'practice'} orders, <b>{counts.days}</b> business days, {counts.cash} cash entries and {counts.cards} Boom Card records from <b>every device</b>. It cannot be undone here (only by restoring the backup file).
+          This removes <b>{counts.orders}</b> {real ? 'real' : 'practice'} orders, <b>{counts.days}</b> business days, {counts.cash} cash entries and {counts.cards} Boom Card records from <b>every device</b>. It cannot be undone here: to bring it back, restore the backup file on the Dashboard.
         </p>
         {real && <p className="error">Only do this before the bazaar starts, to remove test sales made in Real mode. Never during the bazaar.</p>}
         <label className="field">

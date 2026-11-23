@@ -25,9 +25,10 @@ service cloud.firestore {
     match /cashMoves/{moveId} {
       allow read, write: if isBooth();
     }
-    // Customer order page: anyone may look up ONE document by its id
-    // (order number + date), but nobody may list them. Only order number,
-    // status and times are stored here: no names, items or money.
+    // Customer page: anyone may look up ONE document by its exact id, but
+    // nobody may list them. Stored here: an order's number, first name,
+    // status and how many items are done; a Boom Card's stamps (no name);
+    // a voucher's value and whether it was used. No money, no full names.
     match /tracker/{trackId} {
       allow get: if true;
       allow list: if false;

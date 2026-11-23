@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { amountDue, checkCart, createOrder, duplicateReference, nextSeq, orderNumber } from '../../domain/checkout';
+import { amountDue, checkCart, cleanName, createOrder, duplicateReference, nextSeq, orderNumber } from '../../domain/checkout';
+import { cleanNote, NOTE_MAX } from '../../domain/kitchen';
+import { lineBits } from '../../domain/lineText';
 import { cardStateFor } from '../../domain/cards';
 import { availableRewards, canRedeem, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
 import { applyCombo, itemById, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
@@ -12,9 +14,10 @@ import { modeCards, modeOrders, openDay, patchDay, patchOrder, putOrder, saveSet
 import { TopBar } from '../../ui/TopBar';
 import { OpenDayForm } from './OpenDay';
 import { AfterPay, PayModal, StampDots, type AfterPayMode } from './payflow';
-import { ComboPicker, ItemPicker, opensPicker } from './pickers';
+import { ComboPicker, ItemPicker, NoteEditor, opensPicker } from './pickers';
+import { PickupModal } from './Pickup';
 import { CardNameField, useCardName } from './CardName';
-import { CardLookup, WasteLog } from './tools';
+import { CardLookup, WasteLog, WinnerAdd } from './tools';
 import { CashMoves } from './CashMoves';
 import { minutesAgo } from '../../ui/ui';
 
@@ -40,6 +43,8 @@ type Parked = {
   cardId?: string;
   voucher?: { code: string; amount: number };
   name?: string;
+  /** The note for the kitchen about the whole order. */
+  note?: string;
   /** The name was filled in from the Boom Card, not typed. */
   nameFromCard?: boolean;
   at: number;
@@ -154,7 +159,13 @@ export function Cashier() {
   const [comboDismissed, setComboDismissed] = useState<string>('');
   const [escArmed, setEscArmed] = useState(false);
   const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
-  const [tool, setTool] = useState<'card' | 'waste' | 'cash' | null>(null);
+  const [tool, setTool] = useState<'card' | 'waste' | 'cash' | 'winner' | null>(null);
+  /** The ready order whose details are open, before "Picked up". */
+  const [pickup, setPickup] = useState<string | null>(null);
+  const [orderNote, setOrderNote] = useState('');
+  /** Pay was tried with no name: the name box is marked until one is typed. */
+  const [nameMissing, setNameMissing] = useState(false);
+  const nameInput = useRef<HTMLInputElement>(null);
   const [promoDismissed, setPromoDismissed] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
   /** The name the Boom Card filled in (empty when the cashier typed it). */
@@ -329,6 +340,8 @@ export function Cashier() {
 
   const clearOrder = () => {
     setLines([]);
+    setOrderNote('');
+    setNameMissing(false);
     setCustomerName('');
     setCardFilledName('');
     setCardId(undefined);
@@ -345,6 +358,7 @@ export function Cashier() {
     cardId,
     voucher,
     name: customerName.trim() || undefined,
+    note: cleanNote(orderNote),
     nameFromCard: (!!cardFilledName && customerName === cardFilledName) || undefined,
     at: Date.now(),
     mode: s.mode,
@@ -391,6 +405,7 @@ export function Cashier() {
     setCardId(p.cardId);
     setVoucher(v);
     setCustomerName(p.name ?? '');
+    setOrderNote(p.note ?? '');
     setCardFilledName(p.nameFromCard ? (p.name ?? '') : '');
     setCardInput('');
     setVoucherInput('');
@@ -428,13 +443,30 @@ export function Cashier() {
     if (!draftChecked.current || !day) return;
     saveDraft(lines.length ? parkCurrent(day) : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, cardId, voucher, customerName, cardFilledName, s.mode, dayId]);
+  }, [lines, cardId, voucher, customerName, orderNote, cardFilledName, s.mode, dayId]);
   useEffect(() => saveAfterPay(afterPay), [afterPay]);
 
   // ----- Pay -----
   /** Returns the problem (also shown as a notice) when the order could not be saved. */
+  /** Open the payment screen. The customer's name comes first: the monitor and the kitchen call it. */
+  const startPay = () => {
+    if (!lines.length) return;
+    if (!cleanName(customerName)) {
+      setNameMissing(true);
+      flash("Type the customer's first name first. It is called out when the order is ready.", true);
+      nameInput.current?.focus();
+      return;
+    }
+    setPaying(true);
+  };
+
   const pay = (method: Order['payment']['method'], tendered: number, reference: string): string | undefined => {
     if (!day) return;
+    if (!cleanName(customerName)) {
+      const problem = "The customer's first name is missing. Close this and type it first.";
+      flash(problem, true);
+      return problem;
+    }
     // Look at everything once more: another device or a parked order may have
     // used the voucher, the reward or the last pieces since this cart was built.
     const problem = checkCart({ lines, orders, settings: s, today: localDate(), voucher, cardState: card, rewardsRedeemed: rewardsInCart, left, soldOut: day.soldOut });
@@ -451,6 +483,7 @@ export function Cashier() {
         cashier: device.cashier || day.openedBy,
         cardId,
         customerName,
+        note: orderNote,
         rewardsRedeemed: rewardsInCart,
         voucher,
         method,
@@ -498,19 +531,7 @@ export function Cashier() {
     }
     publishCart({
       stage: paying ? 'paying' : 'ordering',
-      lines: lines.map((l) => {
-        const bits: string[] = [];
-        const add = (c?: OrderLine['choices']) => {
-          if (c?.side) bits.push(c.side);
-          if (c?.extraSides?.length) bits.push(`+${c.extraSides.join(', ')}`);
-          if (c?.extraSauce) bits.push(`+${c.extraSauce} sauce`);
-          if (c?.dip) bits.push(c.dip);
-          if (c?.topping === 'fries') bits.push('fries on top');
-        };
-        add(l.choices);
-        l.combo?.parts.forEach((p) => add(p));
-        return { qty: l.qty, name: l.name, details: bits.join(' · '), total: lineTotal(l, s), free: !!l.free };
-      }),
+      lines: lines.map((l) => ({ qty: l.qty, name: l.name, details: [...lineBits(l), ...(l.notes ? [l.notes] : [])].join(' · '), total: lineTotal(l, s), free: !!l.free })),
       subtotal: sub,
       voucher: voucher?.amount,
       due,
@@ -549,7 +570,7 @@ export function Cashier() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (picking || paying || afterPay || tool || staleDay) return;
+      if (picking || paying || afterPay || tool || pickup || staleDay) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         if (e.key === 'Escape') (e.target as HTMLElement).blur();
         return;
@@ -563,7 +584,7 @@ export function Cashier() {
         setTab(TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length].id);
       } else if (e.key === 'Enter' && lines.length) {
         e.preventDefault();
-        setPaying(true);
+        startPay();
       } else if (e.key === 'Escape' && lines.length) {
         if (escArmed) clearOrder();
         else {
@@ -598,6 +619,12 @@ export function Cashier() {
   const promo = promoStatus(summarize(day, orders, s), s);
   const promoKey = `${day.id}:${promo.level}`;
   const methods: PaymentMethod[] = ['cash', ...(s.payments.gcash ? (['gcash'] as const) : [])];
+  // "+ Water" is offered while the order has no drink in it (a combo's shake or juice counts).
+  const isDrink = (id: string) => itemById(s, id)?.category === 'drinks';
+  const hasDrink = lines.some((l) => (l.combo ? l.combo.parts.some((p) => isDrink(p.itemId)) : isDrink(l.itemId)));
+  const water = s.menu.find((m) => m.kind === 'water' && m.active);
+  const offerWater = lines.length > 0 && !hasDrink && !!water && canUse(water.id);
+  const pickupOrder = pickup ? readyToClaim.find((o) => o.id === pickup) : undefined;
   const tabCount = (id: TabId) =>
     id === 'popular' ? 0 : lines.reduce((n, l) => n + (id === 'combos' ? (l.combo ? l.qty : 0) : !l.combo && itemById(s, l.itemId)?.category === id ? l.qty : 0), 0);
 
@@ -757,10 +784,11 @@ export function Cashier() {
               )}
               {readyToClaim.length > 0 && (
                 <div className="orders-group">
-                  <span className="orders-label">Ready · tap when picked up</span>
+                  <span className="orders-label">Ready · tap to see the order, then Picked up</span>
                   {readyToClaim.map((o) => (
-                    <button key={o.id} className="btn small success" onClick={() => patchOrder(o.id, { status: 'claimed', claimedAt: Date.now() })}>
-                      {o.number} ✓
+                    <button key={o.id} className="btn small success ready-chip" onClick={() => setPickup(o.id)}>
+                      {o.number}
+                      {o.customerName && <b> · {o.customerName}</b>}
                     </button>
                   ))}
                 </div>
@@ -773,6 +801,7 @@ export function Cashier() {
                     return (
                       <button key={o.id} className="btn small recent spin-waiting" onClick={() => setAfterPay({ id: o.id, mode: 'spin' })}>
                         {o.number}
+                        {o.customerName && ` · ${o.customerName}`}
                         {left > 1 && <span className="recent-spin">×{left}</span>}
                       </button>
                     );
@@ -799,6 +828,9 @@ export function Cashier() {
                   </button>
                   <button className="btn small ghost tool-btn" title="Cash taken out, added or paid out (manager PIN)" onClick={() => setTool('cash')}>
                     Cash
+                  </button>
+                  <button className="btn small ghost tool-btn" title="Add a spin winner to the monitor by hand (manager PIN)" onClick={() => setTool('winner')}>
+                    Winner
                   </button>
                   <a className="btn small ghost tool-btn" title="Team page (passcode)" href="#team">
                     Team
@@ -854,7 +886,7 @@ export function Cashier() {
                           </div>
                           {l.qty > 1 && <span className="muted small">{peso(lineUnitTotal(l, s))} each</span>}
                           <span className="spacer" />
-                          <button className="btn ghost small" onClick={() => setEditingNote(editingNote === l.id ? null : l.id)}>
+                          <button className={`btn ghost small ${l.notes ? 'has-note' : ''}`} aria-expanded={editingNote === l.id} onClick={() => setEditingNote(editingNote === l.id ? null : l.id)}>
                             Note
                           </button>
                           <button className="btn ghost small danger-text" onClick={() => setLines(lines.filter((x) => x.id !== l.id))}>
@@ -862,16 +894,16 @@ export function Cashier() {
                           </button>
                         </div>
                         {editingNote === l.id && (
-                          <input
-                            className="input"
+                          <NoteEditor
+                            line={l}
+                            s={s}
+                            value={l.notes ?? ''}
                             autoFocus
-                            defaultValue={l.notes}
-                            placeholder="e.g. no cucumber"
-                            onBlur={(e) => {
-                              setLines(lines.map((x) => (x.id === l.id ? { ...x, notes: e.target.value.trim() || undefined } : x)));
+                            onChange={(v) => setLines(lines.map((x) => (x.id === l.id ? { ...x, notes: v || undefined } : x)))}
+                            onDone={() => {
+                              setLines(lines.map((x) => (x.id === l.id ? { ...x, notes: cleanNote(x.notes) } : x)));
                               setEditingNote(null);
                             }}
-                            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                           />
                         )}
                       </li>
@@ -898,15 +930,34 @@ export function Cashier() {
             </div>
 
             <div className="order-extras">
+              {offerWater && water && (
+                <button className="btn small water-btn" onClick={() => addLine({ id: newId('l'), itemId: water.id, name: water.name, qty: 1, unitPrice: water.price })}>
+                  + Water {peso(water.price)}
+                </button>
+              )}
               <div className="mini-form name-form">
                 <input
-                  className="input"
+                  ref={nameInput}
+                  className={`input ${nameMissing && !customerName.trim() ? 'missing' : ''}`}
                   value={customerName}
                   maxLength={20}
                   onChange={(e) => setCustomerName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), (e.target as HTMLInputElement).blur())}
-                  placeholder="Customer first name (optional, called out when ready)"
-                  aria-label="Customer first name"
+                  placeholder="First name (required)"
+                  aria-label="Customer first name (needed to pay)"
+                  aria-required="true"
+                  aria-invalid={nameMissing && !customerName.trim()}
+                />
+              </div>
+              <div className="mini-form order-note-form">
+                <input
+                  className="input"
+                  value={orderNote}
+                  maxLength={NOTE_MAX}
+                  onChange={(e) => setOrderNote(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), (e.target as HTMLInputElement).blur())}
+                  placeholder="Kitchen note (whole order)"
+                  aria-label="Note for the kitchen about the whole order"
                 />
               </div>
               {card ? (
@@ -978,7 +1029,7 @@ export function Cashier() {
                 <button className="btn" disabled={!lines.length} onClick={parkOrder} title="Set this order aside and serve the next customer">
                   ⏸ Park
                 </button>
-                <button className="btn primary pay-btn" disabled={!lines.length} onClick={() => setPaying(true)}>
+                <button className="btn primary pay-btn" disabled={!lines.length} onClick={startPay}>
                   {lines.length ? `Pay ${peso(due)}` : 'Pay'} <kbd>↵</kbd>
                 </button>
               </div>
@@ -1018,6 +1069,19 @@ export function Cashier() {
       {tool === 'card' && <CardLookup s={s} orders={orders} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
       {tool === 'cash' && <CashMoves s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
       {tool === 'waste' && <WasteLog s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
+      {tool === 'winner' && <WinnerAdd s={s} day={day} cashier={device.cashier || day.openedBy} onClose={() => setTool(null)} />}
+      {pickupOrder && (
+        <PickupModal
+          order={pickupOrder}
+          s={s}
+          onPickedUp={(thenSpins) => {
+            patchOrder(pickupOrder.id, { status: 'claimed', claimedAt: Date.now() });
+            setPickup(null);
+            if (thenSpins) setAfterPay({ id: pickupOrder.id, mode: 'spin' });
+          }}
+          onClose={() => setPickup(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1029,17 +1093,7 @@ function TilePhoto({ src }: { src?: string }) {
 }
 
 export function LineDetails({ line }: { line: OrderLine }) {
-  const bits: string[] = [];
-  const add = (c?: OrderLine['choices']) => {
-    if (!c) return;
-    if (c.side) bits.push(c.side);
-    if (c.extraSides?.length) bits.push(`+ extra ${c.extraSides.join(', ')}`);
-    if (c.extraSauce) bits.push(`+ ${c.extraSauce} extra sauce`);
-    if (c.dip) bits.push(`dip: ${c.dip}`);
-    if (c.topping === 'fries') bits.push('fries on top');
-  };
-  add(line.choices);
-  line.combo?.parts.forEach((p) => add(p));
+  const bits = lineBits(line);
   return bits.length ? <span className="details">{bits.join(' · ')}</span> : null;
 }
 

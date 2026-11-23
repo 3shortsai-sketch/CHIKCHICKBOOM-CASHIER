@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { cardRows, cardStateFor, searchCards } from '../../domain/cards';
+import { cleanName } from '../../domain/checkout';
 import { availableRewards, parseCard } from '../../domain/loyalty';
 import { newId, peso } from '../../domain/pricing';
-import type { BusinessDay, Order, Settings } from '../../domain/types';
+import type { BusinessDay, ManualWin, Order, PrizeId, Settings } from '../../domain/types';
+import { PRIZE_LABEL } from '../../domain/wheel';
 import { appendToDay, modeCards, useStore } from '../../data/store';
 import { Modal } from '../../ui/ui';
 import { CardNameField } from './CardName';
@@ -164,6 +166,58 @@ export function WasteLog({ s, day, cashier, onClose }: { s: Settings; day: Busin
               .join(', ')}
           </p>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Add a spin winner by hand, for the "Recent winners" list on the monitor
+ * (a prize called out at the wheel that was not tapped on an order). Needs the
+ * manager PIN. It only shows the name: no cash, stock or stamps change.
+ */
+export function WinnerAdd({ s, day, cashier, onClose }: { s: Settings; day: BusinessDay; cashier: string; onClose: () => void }) {
+  const prizes = s.wheel.slots.map((w) => w.prize).filter((p, i, all) => p !== 'tryAgain' && all.indexOf(p) === i);
+  const [name, setName] = useState('');
+  const [prize, setPrize] = useState<PrizeId | null>(null);
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const added = (day.manualWins ?? []).slice(-4).reverse();
+
+  const save = () => {
+    const who = cleanName(name);
+    if (!who) return setError("Type the winner's first name.");
+    if (!prize) return setError('Tap the prize they won.');
+    if (pin !== s.managerPin) return setError('Wrong manager PIN.');
+    const entry: ManualWin = { id: newId('win'), name: who, prize, at: Date.now(), by: cashier };
+    appendToDay(day.id, 'manualWins', entry);
+    onClose();
+  };
+
+  return (
+    <Modal title="Add a winner" onClose={onClose}>
+      <div className="stack">
+        <p className="muted small">Shows the name under Recent winners on the monitor. Prizes tapped on an order appear there by themselves; use this only for one that was missed.</p>
+        <label className="field">
+          <span>Winner's first name</span>
+          <input className="input" autoFocus value={name} maxLength={20} onChange={(e) => { setName(e.target.value); setError(''); }} placeholder="e.g. Ana" />
+        </label>
+        <div className="extras-row" role="radiogroup" aria-label="Prize">
+          {prizes.map((p) => (
+            <button key={p} role="radio" aria-checked={prize === p} className={`extra-chip extra-chip-main ${prize === p ? 'on' : ''}`} onClick={() => { setPrize(p); setError(''); }}>
+              {PRIZE_LABEL[p]}
+            </button>
+          ))}
+        </div>
+        <label className="field">
+          <span>Manager PIN</span>
+          <input className="input" type="password" inputMode="numeric" value={pin} onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setError(''); }} onKeyDown={(e) => e.key === 'Enter' && save()} />
+        </label>
+        {error && <p className="error" role="alert">{error}</p>}
+        <button className="btn primary big" onClick={save}>
+          Show on the monitor
+        </button>
+        {added.length > 0 && <p className="muted small">Added today: {added.map((w) => `${w.name} (${PRIZE_LABEL[w.prize]})`).join(', ')}</p>}
       </div>
     </Modal>
   );

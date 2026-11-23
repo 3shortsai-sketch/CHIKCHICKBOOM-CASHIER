@@ -6,6 +6,7 @@ import { stockLeft } from '../domain/reports';
 import type { BusinessDay, Ingredient, MenuItem, Settings, WasteEntry } from '../domain/types';
 import { appendToDay, modeOrders, openDay, patchDay, saveSettings, useDevice, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
+import { SignedOutWarning } from './Setup';
 import { download } from '../ui/ui';
 
 const CATEGORY_LABEL: Record<MenuItem['category'], string> = { bowls: 'Rice bowls', fries: 'Fries', drinks: 'Drinks', cookies: 'Cookies', addons: 'Add-ons' };
@@ -443,6 +444,7 @@ export function Inventory() {
           ← Kitchen
         </a>
       </TopBar>
+      <SignedOutWarning what="Ingredient counts and changes to the ingredient list" />
       <div className="dash-body">
         <div className="row">
           <label className="field inline">

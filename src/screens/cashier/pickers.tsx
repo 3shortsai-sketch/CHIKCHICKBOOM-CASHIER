@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { allergenHint, allergenText, itemTags } from '../../domain/allergens';
-import { makeComboLine, needsPicker, newId, peso } from '../../domain/pricing';
+import { cleanNote, hasNote, NO_SIDE, NOTE_MAX, quickNotes, toggleNote } from '../../domain/kitchen';
+import { extraRicePrice, makeComboLine, needsPicker, newId, peso } from '../../domain/pricing';
 import type { Choices, Combo, ComboPart, MenuItem, OrderLine, Settings } from '../../domain/types';
 import { Modal } from '../../ui/ui';
 
@@ -53,10 +54,51 @@ function Options({
   );
 }
 
-/** Paid extras as compact counters: extra sides (+₱20) and extra sauce (+₱10). */
+/** One-tap notes for a line ("No sauce", "Less ice"...) plus a box to type anything else. */
+export function NoteEditor({ line, s, value, onChange, autoFocus, onDone }: { line: OrderLine; s: Settings; value: string; onChange: (v: string) => void; autoFocus?: boolean; onDone?: () => void }) {
+  const quick = quickNotes(line, s);
+  return (
+    <div className="note-editor">
+      {quick.length > 0 && (
+        <div className="note-chips" role="group" aria-label="One-tap notes">
+          {quick.map((q) => (
+            <button key={q} type="button" className={`note-chip ${hasNote(value, q) ? 'on' : ''}`} aria-pressed={hasNote(value, q)} onClick={() => onChange(toggleNote(value, q) ?? '')}>
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="mini-form">
+        <input
+          className="input note-input"
+          value={value}
+          maxLength={NOTE_MAX}
+          autoFocus={autoFocus}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || !onDone) return;
+            e.preventDefault();
+            e.stopPropagation();
+            onDone();
+          }}
+          placeholder="Or type a note for the kitchen"
+          aria-label="Note for the kitchen"
+        />
+        {onDone && (
+          <button type="button" className="btn small" onClick={onDone}>
+            Done
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Paid extras as compact counters: extra sides (+₱20), extra sauce (+₱10) and extra rice (+₱20). */
 function ExtrasRow({ s, value, onChange }: { s: Settings; value: Choices; onChange: (c: Choices) => void }) {
   const extras = value.extraSides ?? [];
   const sauce = value.extraSauce ?? 0;
+  const rice = value.extraRice ?? 0;
   const chip = (label: string, price: number, n: number, inc: () => void, dec: () => void) => (
     <div key={label} className={`extra-chip ${n ? 'on' : ''}`}>
       <button className="extra-chip-main" onClick={inc} aria-label={`Add extra ${label}`}>
@@ -95,6 +137,13 @@ function ExtrasRow({ s, value, onChange }: { s: Settings; value: Choices; onChan
         () => onChange({ ...value, extraSauce: sauce + 1 }),
         () => onChange({ ...value, extraSauce: sauce - 1 }),
       )}
+      {chip(
+        'Rice',
+        extraRicePrice(s),
+        rice,
+        () => onChange({ ...value, extraRice: rice + 1 }),
+        () => onChange({ ...value, extraRice: rice - 1 }),
+      )}
     </div>
   );
 }
@@ -105,7 +154,7 @@ function BowlChoices({ s, value, onChange }: { s: Settings; value: Choices; onCh
     <div className="stack">
       <div>
         <h3 className="pick-title">1 free side</h3>
-        <Options options={s.sides} value={value.side} onPick={(side) => onChange({ ...value, side })} hint={(o) => allergenHint(s.sideAllergens[o])} />
+        <Options options={[...s.sides, NO_SIDE]} value={value.side} onPick={(side) => onChange({ ...value, side })} hint={(o) => allergenHint(s.sideAllergens[o])} />
       </div>
       <div>
         <h3 className="pick-sub">Extras (optional)</h3>
@@ -158,6 +207,7 @@ function clean(c: Choices): Choices {
   if (c.side) out.side = c.side;
   if (c.extraSides?.length) out.extraSides = c.extraSides;
   if (c.extraSauce) out.extraSauce = c.extraSauce;
+  if (c.extraRice) out.extraRice = c.extraRice;
   if (c.dip) out.dip = c.dip;
   if (c.topping) out.topping = c.topping;
   return out;
@@ -198,7 +248,7 @@ export function ItemPicker({
     qty: initial?.qty ?? 1,
     unitPrice: lineFree ? 0 : item.price,
     choices: clean(c),
-    notes: notes.trim() || undefined,
+    notes: cleanNote(notes),
     free: lineFree,
   });
 
@@ -227,7 +277,8 @@ export function ItemPicker({
   });
 
   const title = `${editing ? 'Edit · ' : ''}${item.name}${lineFree ? ' · reward' : ` · ${peso(item.price)}`}`;
-  const options = isFries ? s.dips : s.sides;
+  // A bowl can also go out with no side at all. (Extra Side, the add-on, is always a real side.)
+  const options = isFries ? s.dips : isBowl ? [...s.sides, NO_SIDE] : s.sides;
 
   return (
     <Modal title={title} onClose={onClose} wide={isBowl}>
@@ -236,7 +287,7 @@ export function ItemPicker({
         <div className="bowl-mods">
           <h3 className="pick-sub">Extras (optional, set before the side)</h3>
           <ExtrasRow s={s} value={choices} onChange={setChoices} />
-          <input className="input note-input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Note for the kitchen, e.g. no cucumber" aria-label="Note for the kitchen" />
+          <NoteEditor line={build(choices)} s={s} value={notes} onChange={setNotes} />
         </div>
       )}
       {isDrink ? (

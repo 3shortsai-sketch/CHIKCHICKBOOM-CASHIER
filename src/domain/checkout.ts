@@ -1,3 +1,4 @@
+import { cleanNote } from './kitchen';
 import { baseStamps, canRedeem, checkVoucher, type CardState } from './loyalty';
 import { itemById, newId, snapshotLine, spinsEarned, stockUsage, subtotal } from './pricing';
 import type { BusinessDay, Order, OrderLine, PaymentMethod, Settings } from './types';
@@ -36,6 +37,8 @@ export type CheckoutInput = {
   cashier: string;
   cardId?: string;
   customerName?: string;
+  /** A note for the kitchen about the whole order. */
+  note?: string;
   rewardsRedeemed: number[];
   voucher?: { code: string; amount: number };
   method: PaymentMethod;
@@ -122,6 +125,7 @@ export function createOrder(i: CheckoutInput): Order {
     voucher: i.voucher,
     cardId: i.cardId,
     customerName: cleanName(i.customerName),
+    note: cleanNote(i.note),
     stampsEarned: baseStamps(i.cardId, i.rewardsRedeemed, i.settings),
     rewardsRedeemed: i.rewardsRedeemed,
     payment: { method: i.method, due, tendered, change: tendered - due, reference: i.reference || undefined },
