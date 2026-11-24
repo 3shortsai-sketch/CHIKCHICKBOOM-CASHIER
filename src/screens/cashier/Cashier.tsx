@@ -776,6 +776,7 @@ export function Cashier() {
                           <TilePhoto src={m.photo} />
                           <span className="tile-name">{m.name}</span>
                         </span>
+                        {m.kind === 'slushie' && <span className="tile-sub">Add fries or fruit on top</span>}
                         {allergenText(itemTags(m), true) && <span className="tile-allergens">{allergenText(itemTags(m), true)}</span>}
                         <span className="tile-foot">
                           <span className="tile-price">{peso(m.price)}</span>

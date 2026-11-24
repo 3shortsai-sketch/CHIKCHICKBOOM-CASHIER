@@ -4,7 +4,7 @@ import { itemById } from '../domain/pricing';
 import { byPickup, pickupOf, slotRank, slotText } from '../domain/pickup';
 import { kitchenMadeCounts } from '../domain/reports';
 import type { ComboPart, Order, OrderLine, Settings } from '../domain/types';
-import { modeOrders, openDay, patchOrder, tickItem, untickItem, useStore } from '../data/store';
+import { modeOrders, openDay, patchOrder, tickItem, undoReady, untickItem, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 import { chime, minutesAgo, unlockSound, useNow, useWakeLock } from '../ui/ui';
 
@@ -148,7 +148,7 @@ export function Kitchen() {
   }, [stuck, started]);
 
   /** "Ready" tapped by mistake. An order that became ready by its last tick gets its ticks back to tick again. */
-  const undoReady = (o: Order) => patchOrder(o.id, { status: 'cooking', readyAt: undefined, ...(allTicked(o) ? { done: [] } : {}) });
+  const sendBack = (o: Order) => undoReady(o.id, allTicked(o) ? liveTicks(o).at(-1) : undefined);
 
   if (!started) {
     return (
@@ -245,7 +245,7 @@ export function Kitchen() {
         <div className="kitchen-recent">
           <span>Just sent to the monitor:</span>
           {recent.map((o) => (
-            <button key={o.id} className="btn small ghost" onClick={() => undoReady(o)} title="Tapped Ready by mistake? Send it back.">
+            <button key={o.id} className="btn small ghost" onClick={() => sendBack(o)} title="Tapped Ready by mistake? Send it back.">
               {o.number}
               {o.customerName ? ` · ${o.customerName}` : ''} ↩ undo
             </button>

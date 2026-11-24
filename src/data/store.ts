@@ -453,6 +453,16 @@ export function tickItem(id: string, key: string, also?: Partial<Order>) {
   commit(...ops);
 }
 
+/**
+ * "Ready" tapped by mistake: back to cooking. When the order became ready by
+ * its last tick, only that tick is taken back, not the others.
+ */
+export function undoReady(id: string, lastTick?: string) {
+  const ops: Op[] = [{ type: 'patch', col: 'orders', id, patch: { status: 'cooking', readyAt: undefined } }];
+  if (lastTick) ops.push({ type: 'pull', col: 'orders', id, field: 'done', item: lastTick });
+  commit(...ops);
+}
+
 /** The kitchen unticks one item. Only that tick is taken out: a tick another tablet made at the same moment stays. */
 export function untickItem(id: string, key: string) {
   commit({ type: 'pull', col: 'orders', id, field: 'done', item: key });

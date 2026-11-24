@@ -579,12 +579,16 @@ export function Track({ mode }: { mode: DataMode }) {
     let stopped = false;
     const read = () => {
       last = Date.now();
-      getDoc(doc(db, 'public', `booth-${boothMode}`))
-        .then((s) => {
+      const get = (m: DataMode) => getDoc(doc(db, 'public', `booth-${m}`)).then((s) => (s.exists() ? (s.data() as BoothDoc) : null));
+      // On the real-orders link, the real booth decides whether practice orders are looked for,
+      // even while this phone only follows practice orders: once real selling starts, they stop.
+      const live = mode === 'live' ? get('live') : null;
+      const shown = boothMode === 'live' && live ? live : get(boothMode);
+      Promise.all([live, shown])
+        .then(([l, b]) => {
           if (stopped) return;
-          const b = s.exists() ? (s.data() as BoothDoc) : null;
           setBooth(b);
-          if (boothMode === 'live') setPracticeToo(!b?.open);
+          if (mode === 'live') setPracticeToo(!l?.open);
         })
         .catch(() => {
           /* offline or not switched on: keep what we have */
@@ -603,7 +607,7 @@ export function Track({ mode }: { mode: DataMode }) {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [db, boothMode, every]);
+  }, [db, mode, boothMode, every]);
 
   // Flash the tab title until the customer touches the page (or the order is no longer ready).
   const stillReady = flashing.filter((n) => statusOf(n) === 'ready');

@@ -283,3 +283,11 @@ Copy `firestore.rules` from this repo, put the booth login email(s) in place of 
 - `firebase.json` no longer points at `firestore.rules`, so `firebase deploy` cannot publish the placeholder rules. Rules are still published by hand in the console.
 - **Free plan watch:** every device still listens to all orders. After day one, check Firestore usage (reads under 50,000 a day, writes under 20,000). Clearing practice data before selling keeps the morning load small.
 - **Pickup time (required):** every order needs Recess, Lunch or Dismissal, and Pickup or Delivery; a delivery needs the place. The kitchen groups its cards by break (the next break first). Delivery orders are not called on the monitor; the cashier marks them Delivered. The customer page shows "Pickup at Lunch" or "We bring it to you at Lunch" (the place itself is not made public). The time of each break is set in Setup → Pickup times (optional). The export has two new columns at the end: `pickup_time` and `deliver_to`.
+
+## Testing Firebase on this computer
+
+- `npm run emulators` starts the Firebase login and database emulators with the rules from `firestore.rules` (a copy with the test login `booth@test.com` in place of the placeholder; it lives in `.emulator/`, which is not committed). Needs Java.
+- `npm run check:rules` (in a second terminal) checks 31 things against those rules: the booth login can read and write everything it needs, another account can read and write nothing, a customer can open one order copy but cannot list or change them, and a cleared value (a break time, a reopened day's `closedAt`) is really removed on the server.
+- `VITE_FIREBASE_EMULATOR=1 npm run build && npx vite preview` runs the app against the emulators.
+- A change to a document now replaces each changed field whole on the server (`mergeFields`), the same way the device does. Before, nested maps were merged, so a removed entry (a cleared break time, a side's allergens) stayed on the server and came back.
+- Customer page copies that Firebase has not accepted yet (signed out, offline, rules not published) are kept on the device (`ccb:public-pending`) and written once it is signed in again.

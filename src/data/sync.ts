@@ -156,7 +156,10 @@ function push(op: Op) {
     op.type === 'put'
       ? setDoc(r, plain(op.doc) as Record<string, unknown>)
       : op.type === 'patch'
-        ? setDoc(r, patchFields(op.patch), { merge: true })
+        ? // Each field in the patch is replaced whole, as it is on this device. A plain
+          // merge would mix nested maps instead: a break time cleared in Setup, or a
+          // side's allergens taken out, would stay on the server and come back.
+          setDoc(r, patchFields(op.patch), { mergeFields: Object.keys(op.patch) })
         : op.type === 'append'
           ? // The server adds the entry to whatever list it has, so two devices never overwrite each other.
             setDoc(r, { [op.field]: arrayUnion(plain(op.item)) }, { merge: true })
@@ -202,26 +205,93 @@ let publicBlocked = false;
 /** What was last written to each public document, so the same thing is not written twice. */
 const lastPublic = new Map<string, string>();
 
-/** Forget what was written to the order, card and voucher copies (the booth summary keeps its own check). */
-function forgetPublicWrites() {
-  for (const key of [...lastPublic.keys()]) if (key.startsWith('tracker/')) lastPublic.delete(key);
+/**
+ * How to write a public copy again: it is worked out afresh from this
+ * device's data at that moment, so a late retry never sends an old status.
+ */
+type Redo = { k: 'order'; id: string } | { k: 'card'; mode: DataMode; n: string } | { k: 'voucher'; mode: DataMode; code: string } | { k: 'booth' };
+
+/**
+ * Public copies not yet accepted by Firebase (signed out, offline when the
+ * app closed, rules not published). Kept on the device and written again
+ * once it is signed in and has the shared data, so the customer page never
+ * stays wrong (stamps after "Start fresh", a voucher's status...).
+ */
+const PENDING_KEY = 'ccb:public-pending';
+
+function readPending(): Record<string, Redo> {
+  try {
+    const v = JSON.parse(localStorage.getItem(PENDING_KEY) ?? '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, Redo>) : {};
+  } catch {
+    return {};
+  }
 }
 
-function publicWrite(path: [string, string], data: Record<string, unknown>) {
+function setPending(key: string, redo: Redo | null) {
+  try {
+    const all = readPending();
+    if (redo) all[key] = redo;
+    else if (key in all) delete all[key];
+    else return;
+    if (Object.keys(all).length) localStorage.setItem(PENDING_KEY, JSON.stringify(all));
+    else localStorage.removeItem(PENDING_KEY);
+  } catch {
+    /* storage full or blocked: it is written again the next time this record changes */
+  }
+}
+
+/** Write every public copy still waiting. Called once the device is signed in and has the shared data. */
+function drainPending() {
+  const all = Object.values(readPending());
+  if (!all.length) return;
+  try {
+    localStorage.removeItem(PENDING_KEY);
+  } catch {
+    return;
+  }
+  for (const r of all) {
+    if (r.k === 'order') publishOrder(r.id);
+    else if (r.k === 'card') publishCard(r.mode, r.n);
+    else if (r.k === 'voucher') publishVoucher(r.mode, r.code);
+    else scheduleBoothSummary(true);
+  }
+}
+
+/** Another device changed this record and may have rewritten its public copies: the next write here must not be skipped. */
+function forgetPublicFor(col: Collection, data: Record<string, unknown>) {
+  const mode = data.mode as string | undefined;
+  if (col === 'cards' && typeof data.number === 'string' && mode) lastPublic.delete(`tracker/${publicCardId(mode, data.number)}`);
+  if (col !== 'orders' || !mode) return;
+  if (typeof data.number === 'string' && typeof data.createdAt === 'number') lastPublic.delete(`tracker/${trackerId(mode, localDate(data.createdAt), data.number)}`);
+  if (typeof data.cardId === 'string') lastPublic.delete(`tracker/${publicCardId(mode, data.cardId)}`);
+  const codes = [(data.voucher as { code?: unknown } | undefined)?.code, ...(Array.isArray(data.spins) ? data.spins.map((x: { voucherCode?: unknown }) => x?.voucherCode) : [])];
+  for (const c of codes) if (typeof c === 'string') lastPublic.delete(`tracker/${publicVoucherId(mode, c)}`);
+}
+
+function publicWrite(path: [string, string], data: Record<string, unknown>, redo: Redo) {
   if (!db) return;
   const key = path.join('/');
+  // Signed out, Firebase would refuse it: keep it for after signing in.
+  if (!authState.email) return setPending(key, redo);
   const json = JSON.stringify(data);
   if (lastPublic.get(key) === json) return;
   lastPublic.set(key, json);
-  setDoc(doc(db, path[0], path[1]), { ...data, updatedAt: Date.now() }).catch((e: { code?: string }) => {
-    lastPublic.delete(key);
-    // Until the new rules are published this fails; the booth keeps working.
-    if (!publicBlocked) console.warn('customer page copy not saved', e);
-    if (e.code === 'permission-denied' && !publicBlocked) {
-      publicBlocked = true;
-      updateStatus();
-    }
-  });
+  setPending(key, redo);
+  setDoc(doc(db, path[0], path[1]), { ...data, updatedAt: Date.now() })
+    .then(() => {
+      // Only if nothing newer was started for the same copy meanwhile.
+      if (lastPublic.get(key) === json) setPending(key, null);
+    })
+    .catch((e: { code?: string }) => {
+      lastPublic.delete(key);
+      // Until the rules are published this fails; the booth keeps working.
+      if (!publicBlocked) console.warn('customer page copy not saved', e);
+      if (e.code === 'permission-denied' && authState.email && !publicBlocked) {
+        publicBlocked = true;
+        updateStatus();
+      }
+    });
 }
 
 /** The id customers look up: mode, date and order number, e.g. live_2026-11-23_A-012. */
@@ -307,7 +377,7 @@ function publishTracker(o: Order) {
     when: pickupOf(o) ? slotText(pickupOf(o)!.slot, getState().settings) : null,
     delivery: isDelivery(o),
   };
-  publicWrite(['tracker', trackerId(o.mode, localDate(o.createdAt), o.number)], data);
+  publicWrite(['tracker', trackerId(o.mode, localDate(o.createdAt), o.number)], data, { k: 'order', id: o.id });
 }
 
 /** Stamps and rewards of one card, worked out from its orders like everywhere else. */
@@ -326,7 +396,7 @@ export function publishCard(mode: DataMode, number: string) {
     ready: availableRewards(cs, s).map((r) => r.label),
     next: next ? { label: next.label, more: next.at - cs.stamps } : null,
   };
-  publicWrite(['tracker', publicCardId(mode, number)], data);
+  publicWrite(['tracker', publicCardId(mode, number)], data, { k: 'card', mode, n: number });
 }
 
 /** A change to a card record (name, stamp edit). Its id is "<mode>_<number>". */
@@ -354,7 +424,7 @@ function publishVoucher(mode: DataMode, code: string) {
     used: !!v?.usedBy,
     practice: mode === 'demo',
   };
-  publicWrite(['tracker', publicVoucherId(mode, code)], data);
+  publicWrite(['tracker', publicVoucherId(mode, code)], data, { k: 'voucher', mode, code });
 }
 
 /** Voucher codes each order had when it was last published, so an undone prize is taken back too. */
@@ -485,7 +555,8 @@ function sendBoothSummary() {
     open: !!day,
     date: day?.date ?? null,
     queue: todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort(byPickup).map((o) => o.number),
-    ready: todays.filter((o) => o.status === 'ready').sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0)).slice(0, 10).map((o) => o.number),
+    // A delivery is carried to its place: it is not "ready at the counter".
+    ready: todays.filter((o) => o.status === 'ready' && !isDelivery(o)).sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0)).slice(0, 10).map((o) => o.number),
     waitMinutes: waitMinutes(todays, Date.now(), st.settings.defaultWaitMinutes),
     soldOut: st.settings.menu.filter((m) => m.active && day?.soldOut[m.id]).map((m) => m.name),
     menu: publicMenu(st),
@@ -495,7 +566,7 @@ function sendBoothSummary() {
   if (key === lastBooth) return;
   lastBooth = key;
   boothSentAt = Date.now();
-  publicWrite(['public', `booth-${st.settings.mode}`], summary);
+  publicWrite(['public', `booth-${st.settings.mode}`], summary, { k: 'booth' });
 }
 
 // What each listener last told us, to show one combined status.
@@ -566,7 +637,7 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
   for (const ch of snap.docChanges()) {
     // Another device changed something: it may have rewritten the public copies
     // too, so this device must not skip its next write as "same as last time".
-    if (!ch.doc.metadata.hasPendingWrites && !snap.metadata.fromCache) forgetPublicWrites();
+    if (!ch.doc.metadata.hasPendingWrites && !snap.metadata.fromCache) forgetPublicFor(col, ch.doc.data());
     if (ch.type === 'removed') {
       removed.add(ch.doc.id);
       ops.push({ type: 'remove', col, id: ch.doc.id });
@@ -598,7 +669,11 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
     replayOutbox(col);
   }
   // Once this device has the shared orders and cards: the public copies from before this version.
-  if (replayed.orders && replayed.cards) backfillPublic();
+  if (replayed.orders && replayed.cards && !publicCaughtUp) {
+    publicCaughtUp = true;
+    backfillPublic();
+    drainPending();
+  }
   updateStatus();
 }
 
@@ -610,6 +685,8 @@ function isLeftover(col: Collection, data: Record<string, unknown>): boolean {
 }
 
 const replayed: Partial<Record<Collection, boolean>> = {};
+/** This connection has written the public copies that were waiting. */
+let publicCaughtUp = false;
 /** The old menu version this window already upgraded on the server (so it does it once). */
 let upgradedFrom: number | undefined;
 
@@ -704,6 +781,8 @@ function detach() {
   for (const k of Object.keys(replayed) as Collection[]) delete replayed[k];
   for (const k of Object.keys(listenProblem) as Collection[]) delete listenProblem[k];
   cashBlocked = false;
+  publicBlocked = false;
+  publicCaughtUp = false;
   writeError = null;
 }
 

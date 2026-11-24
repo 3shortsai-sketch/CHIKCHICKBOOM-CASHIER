@@ -330,4 +330,13 @@ describe('store', () => {
     store.setRemote(null);
     store.enableOutbox(false);
   });
+  it('undoing a Ready that came from the last tick takes back only that tick', () => {
+    store.putOrder(order('k1', { status: 'ready', readyAt: 9, done: ['a', 'b', 'c'] }) as never);
+    store.undoReady('k1', 'c');
+    expect(store.getState().orders.k1).toMatchObject({ status: 'cooking', done: ['a', 'b'] });
+    expect(store.getState().orders.k1.readyAt).toBeUndefined();
+    store.putOrder(order('k2', { status: 'ready', readyAt: 9, done: ['a'] }) as never);
+    store.undoReady('k2');
+    expect(store.getState().orders.k2.done).toEqual(['a']);
+  });
 });

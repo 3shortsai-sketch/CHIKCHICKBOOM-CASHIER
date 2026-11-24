@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "emulators": "node scripts/emulators.mjs",
+    "check:rules": "node scripts/check-rules.mjs"
   },
   "dependencies": {
     "@fontsource/bangers": "5.3.0",
