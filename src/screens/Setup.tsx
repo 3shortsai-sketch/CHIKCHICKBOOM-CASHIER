@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { defaultSettings } from '../domain/defaults';
 import { extraRicePrice, newId } from '../domain/pricing';
+import { PICKUP_SLOTS, SLOT_LABEL } from '../domain/pickup';
 import { ALLERGENS, type AllergenTags, type DataMode, type MenuItem, type PrizeId, type Settings } from '../domain/types';
 import { PRIZE_LABEL } from '../domain/wheel';
 import { exportBackup, openDay, resetSettings, saveSettings, setDevice, startFresh, useDevice, useStore, type State } from '../data/store';
@@ -591,6 +592,27 @@ function SetupInner() {
               <span>Voucher valid for (selling days, from the next one)</span>
               <NumField min={1} value={s.voucher.validDays} onSave={(validDays) => save({ voucher: { ...s.voucher, validDays } })} />
             </label>
+          </div>
+        </section>
+
+        <section className="panel">
+          <h2>Pickup times</h2>
+          <p className="muted small">Every order needs Recess, Lunch or Dismissal. Type the time of each break (optional): it shows on the cashier buttons, the kitchen cards and the customer page.</p>
+          <div className="grid-2">
+            {PICKUP_SLOTS.map((slot) => (
+              <label key={slot} className="field">
+                <span>{SLOT_LABEL[slot]}</span>
+                <input
+                  className="input"
+                  type="time"
+                  defaultValue={s.pickupTimes?.[slot] ?? ''}
+                  onBlur={(e) => {
+                    const v = e.target.value;
+                    if (v !== (s.pickupTimes?.[slot] ?? '')) save({ pickupTimes: { ...s.pickupTimes, [slot]: v || undefined } });
+                  }}
+                />
+              </label>
+            ))}
           </div>
         </section>
 

@@ -149,6 +149,8 @@ export type Order = {
   customerName?: string;
   /** A note for the kitchen about the whole order, e.g. "teacher, please hurry". */
   note?: string;
+  /** When the customer gets it (Recess, Lunch, Dismissal) and, for a delivery, where. Old orders have none. */
+  pickup?: import('./pickup').Pickup;
   /**
    * Items the kitchen has ticked as done (see domain/kitchen.ts for the keys).
    * Added one at a time, so two tablets ticking at once both keep their tick.
@@ -301,6 +303,8 @@ export type Settings = {
    * card records were removed.
    */
   wiped?: { days: string[]; cardsBefore: Partial<Record<DataMode, number>> };
+  /** Clock time of each school break, "HH:MM" (shown with the pickup time). Optional. */
+  pickupTimes?: Partial<Record<import('./pickup').PickupSlot, string>>;
   /** Minutes after which a kitchen card turns red. */
   kitchenLateMinutes: number;
   updatedAt: number;

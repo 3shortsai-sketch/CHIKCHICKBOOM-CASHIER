@@ -5,6 +5,7 @@ import { peso } from '../domain/pricing';
 import { bestSellers, isAvailable, recentWins, stockLeft, winnerName, type Win } from '../domain/reports';
 import type { MenuItem, Settings } from '../domain/types';
 import { PRIZE_LABEL } from '../domain/wheel';
+import { byPickup, isDelivery, walkUpOrders } from '../domain/pickup';
 import { useLiveCart, type LiveCart } from '../data/live';
 import { modeOrders, openDay, useStore } from '../data/store';
 import { announce, cluck, spokenNumber, unlockSound, useNow, useWakeLock } from '../ui/ui';
@@ -74,6 +75,7 @@ function YourOrder({ cart, gcashNumber }: { cart: LiveCart; gcashNumber: string 
   return (
     <section className="your-order" aria-live="polite">
       <h2>{cart.name ? `${cart.name}'s order` : 'Your order'}</h2>
+      {cart.when && <p className="yo-when">{cart.when}</p>}
       <ul>
         {cart.lines.map((l, i) => (
           <li key={i} className={l.free ? 'free' : ''}>
@@ -163,7 +165,7 @@ export function Serving() {
   const left = useMemo(() => stockLeft(day, all, s), [day, all, s]);
   const best = useMemo(() => new Set(bestSellers(day, all, s)), [day, all, s]);
   const wins = useMemo(() => recentWins(day, all, 4), [day, all]);
-  const wait = waitMinutes(orders, now, s.defaultWaitMinutes);
+  const wait = waitMinutes(walkUpOrders(orders, s), now, s.defaultWaitMinutes);
   const clearMs = s.servingClearMinutes * 60000;
 
   // When THIS screen first saw each order ready. The kitchen tablet's clock can
@@ -186,9 +188,11 @@ export function Serving() {
   }
   const readyAtHere = (id: string) => firstReady.current.get(id) ?? 0;
   const serving = orders
-    .filter((o) => o.status === 'ready' && now - readyAtHere(o.id) < clearMs)
+    // A delivery is carried to its place: it is not called to the counter.
+    .filter((o) => o.status === 'ready' && !isDelivery(o) && now - readyAtHere(o.id) < clearMs)
     .sort((a, b) => readyAtHere(b.id) - readyAtHere(a.id) || (b.readyAt ?? 0) - (a.readyAt ?? 0));
-  const preparing = orders.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt);
+  // Same order as the kitchen works in: the next break first.
+  const preparing = orders.filter((o) => o.status === 'new' || o.status === 'cooking').sort(byPickup);
   // The orders the kitchen is working on now come first, then the oldest waiting ones.
   const upNext = [...preparing.filter((o) => o.status === 'cooking'), ...preparing.filter((o) => o.status === 'new')].slice(0, UP_NEXT);
 

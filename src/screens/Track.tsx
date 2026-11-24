@@ -84,11 +84,13 @@ function minutesLeft(t: TrackerDoc, booth: BoothDoc | null, now: number): number
 
 // ---------- One tracked order ----------
 
-const STEPS = ['Received', 'Cooking', 'READY', 'Picked up'] as const;
+const PICKUP_STEPS = ['Received', 'Cooking', 'READY', 'Picked up'] as const;
+const DELIVERY_STEPS = ['Received', 'Cooking', 'READY', 'Delivered'] as const;
 const STEP_OF: Record<string, number> = { new: 0, cooking: 1, ready: 2, claimed: 3 };
 
 /** Received → Cooking → READY → Picked up, with the step the order is on marked. */
-function Steps({ status }: { status: string }) {
+function Steps({ status, delivery }: { status: string; delivery?: boolean }) {
+  const STEPS = delivery ? DELIVERY_STEPS : PICKUP_STEPS;
   const at = STEP_OF[status] ?? 0;
   return (
     <ol className="trk-steps" aria-label={`Step ${at + 1} of ${STEPS.length}: ${STEPS[at]}`}>
@@ -119,6 +121,8 @@ function OrderCard({ number, info, practice, booth, now, onRemove }: { number: s
   const mins = t ? minutesLeft(t, booth, now) : null;
   const spins = t && t.status !== 'voided' ? t.spinsLeft : 0;
   const progress = t ? progressText(t) : null;
+  // Ordered ahead for a later break: "2 orders ahead, about 1 minute" would be wrong for hours.
+  const early = !!t && typeof t.dueAt === 'number' && now < t.dueAt;
   return (
     <section className={`trk-card trk-${kind}`} aria-live="polite">
       <div className="trk-card-head">
@@ -146,22 +150,23 @@ function OrderCard({ number, info, practice, booth, now, onRemove }: { number: s
         </>
       ) : (
         <>
-          <Steps status={t.status} />
+          <Steps status={t.status} delivery={t.delivery} />
+          {t.when && <p className="trk-when">{t.delivery ? `🚚 We bring it to you at ${t.when}` : `🕒 Pickup at ${t.when}`}</p>}
           {kind === 'preparing' ? (
             <>
               <p className="trk-state">{t.status === 'cooking' ? 'Cooking' : 'Received'}</p>
               {progress && <p className="trk-line trk-progress">{progress}</p>}
-              {ahead !== null && <p className="trk-line">{ahead === 0 ? "You're next!" : `${plural(ahead, 'order', 'orders')} ahead of you`}</p>}
-              {mins !== null && <p className="trk-line">About {plural(mins, 'minute', 'minutes')}</p>}
+              {ahead !== null && !early && <p className="trk-line">{ahead === 0 ? "You're next!" : `${plural(ahead, 'order', 'orders')} ahead of you`}</p>}
+              {mins !== null && !early && <p className="trk-line">About {plural(mins, 'minute', 'minutes')}</p>}
             </>
           ) : kind === 'ready' ? (
             <>
               <p className="trk-state trk-big">READY</p>
-              <p className="trk-line">{t.name ? `${t.name}, pick it up at the counter` : 'Pick it up at the counter'}</p>
+              <p className="trk-line">{t.delivery ? 'On its way to you' : t.name ? `${t.name}, pick it up at the counter` : 'Pick it up at the counter'}</p>
             </>
           ) : (
             <>
-              <p className="trk-state">Picked up</p>
+              <p className="trk-state">{t.delivery ? 'Delivered' : 'Picked up'}</p>
               <p className="trk-line">Enjoy{t.name ? `, ${t.name}` : ''}!</p>
             </>
           )}
@@ -576,12 +581,16 @@ export function Track({ mode }: { mode: DataMode }) {
     let stopped = false;
     const read = () => {
       last = Date.now();
-      getDoc(doc(db, 'public', `booth-${boothMode}`))
-        .then((s) => {
+      const get = (m: DataMode) => getDoc(doc(db, 'public', `booth-${m}`)).then((s) => (s.exists() ? (s.data() as BoothDoc) : null));
+      // On the real-orders link, the real booth decides whether practice orders are looked for,
+      // even while this phone only follows practice orders: once real selling starts, they stop.
+      const live = mode === 'live' ? get('live') : null;
+      const shown = boothMode === 'live' && live ? live : get(boothMode);
+      Promise.all([live, shown])
+        .then(([l, b]) => {
           if (stopped) return;
-          const b = s.exists() ? (s.data() as BoothDoc) : null;
           setBooth(b);
-          if (boothMode === 'live') setPracticeToo(!b?.open);
+          if (mode === 'live') setPracticeToo(!l?.open);
         })
         .catch(() => {
           /* offline or not switched on: keep what we have */
@@ -600,7 +609,7 @@ export function Track({ mode }: { mode: DataMode }) {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [db, boothMode, every]);
+  }, [db, mode, boothMode, every]);
 
   // Flash the tab title until the customer touches the page (or the order is no longer ready).
   const stillReady = flashing.filter((n) => statusOf(n) === 'ready');

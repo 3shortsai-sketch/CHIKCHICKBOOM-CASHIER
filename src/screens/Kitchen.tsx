@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { allTicked, itemProgress, liveTicks, NO_SIDE } from '../domain/kitchen';
 import { itemById } from '../domain/pricing';
+import { byPickup, dueAt, pickupOf, slotRank, slotText } from '../domain/pickup';
 import { kitchenMadeCounts } from '../domain/reports';
 import type { ComboPart, Order, OrderLine, Settings } from '../domain/types';
-import { modeOrders, openDay, patchOrder, tickItem, untickItem, useStore } from '../data/store';
+import { modeOrders, openDay, patchOrder, tickItem, undoReady, untickItem, useStore } from '../data/store';
 import { TopBar } from '../ui/TopBar';
 import { chime, minutesAgo, unlockSound, useNow, useWakeLock } from '../ui/ui';
 
@@ -100,7 +101,8 @@ export function Kitchen() {
   useWakeLock(started);
 
   const todays = useMemo(() => modeOrders(state).filter((o) => o.dayId === day?.id && !o.voided), [state, day]);
-  const queue = todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt);
+  // The next break first: a lunch order is not made while recess orders are waiting.
+  const queue = todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort(byPickup);
   const recent = todays
     .filter((o) => o.status === 'ready')
     .sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0))
@@ -146,7 +148,7 @@ export function Kitchen() {
   }, [stuck, started]);
 
   /** "Ready" tapped by mistake. An order that became ready by its last tick gets its ticks back to tick again. */
-  const undoReady = (o: Order) => patchOrder(o.id, { status: 'cooking', readyAt: undefined, ...(allTicked(o) ? { done: [] } : {}) });
+  const sendBack = (o: Order) => undoReady(o.id, allTicked(o) ? liveTicks(o).at(-1) : undefined);
 
   if (!started) {
     return (
@@ -179,12 +181,23 @@ export function Kitchen() {
       </div>
       <div className="kitchen-grid">
         {queue.length === 0 && <p className="empty">No orders waiting. 🎉</p>}
-        {queue.map((o) => {
-          const late = now - o.createdAt > s.kitchenLateMinutes * 60000;
+        {queue.map((o, i) => {
+          const p = pickupOf(o);
+          // A heading where a new break starts in the list.
+          const heading =
+            i === 0 || slotRank(queue[i - 1]) !== slotRank(o) ? (
+              <h2 key={`h-${slotRank(o)}`} className="kslot-head">
+                {p ? slotText(p.slot, s) : 'Now'}
+                <span>{queue.filter((x) => slotRank(x) === slotRank(o)).length} order{queue.filter((x) => slotRank(x) === slotRank(o)).length === 1 ? '' : 's'}</span>
+              </h2>
+            ) : null;
+          // An order placed ahead for a later break is late only once its break time has passed.
+          const late = now - dueAt(o, s) > s.kitchenLateMinutes * 60000;
           const ticked = new Set(liveTicks(o));
           const prog = itemProgress(o);
-          return (
-            <article key={o.id} className={`kcard ${o.status} ${late ? 'late' : ''}`}>
+          return [
+            heading,
+            <article key={o.id} className={`kcard ${o.status} ${late ? 'late' : ''} ${p?.deliverTo ? 'deliver' : ''}`}>
               <header>
                 <span className="knum-wrap">
                   {o.customerName ? (
@@ -198,6 +211,11 @@ export function Kitchen() {
                 </span>
                 <span className="kage">{minutesAgo(o.createdAt, now)}</span>
               </header>
+              {p && (
+                <p className={`k-when ${p.deliverTo ? 'deliver' : ''}`}>
+                  {p.deliverTo ? `🚚 ${p.deliverTo}` : '🕒 Pickup'} · {slotText(p.slot, s)}
+                </p>
+              )}
               {o.note && <p className="k-order-note">📝 {o.note}</p>}
               <ul className="klines">
                 {o.lines.map((l) => (
@@ -220,15 +238,15 @@ export function Kitchen() {
                   All ready
                 </button>
               </footer>
-            </article>
-          );
+            </article>,
+          ];
         })}
       </div>
       {recent.length > 0 && (
         <div className="kitchen-recent">
           <span>Just sent to the monitor:</span>
           {recent.map((o) => (
-            <button key={o.id} className="btn small ghost" onClick={() => undoReady(o)} title="Tapped Ready by mistake? Send it back.">
+            <button key={o.id} className="btn small ghost" onClick={() => sendBack(o)} title="Tapped Ready by mistake? Send it back.">
               {o.number}
               {o.customerName ? ` · ${o.customerName}` : ''} ↩ undo
             </button>

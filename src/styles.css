@@ -4501,3 +4501,112 @@ th:first-child {
 .pickup .modal-foot .btn {
   white-space: nowrap;
 }
+
+/* ---------- Pickup time: Recess, Lunch, Dismissal; pickup or delivery ---------- */
+.pickup-chooser {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem;
+  border: 2px dashed transparent;
+  border-radius: 12px;
+}
+.pickup-chooser.missing {
+  border-color: var(--red);
+  background: var(--danger-soft);
+}
+.pickup-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0.35rem;
+}
+.pickup-opt {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  min-height: 44px;
+  padding: 0.25rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+  cursor: pointer;
+}
+.pickup-opt b {
+  font-weight: 800;
+}
+.pickup-opt small {
+  color: var(--ink-soft);
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+.pickup-opt.small {
+  min-height: 36px;
+  font-weight: 700;
+}
+.pickup-opt.on {
+  background: var(--yellow);
+  border-color: var(--ink);
+  box-shadow: var(--comic-sm);
+}
+.pickup-opt:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+.ready-place {
+  font-weight: 700;
+}
+.pickup-when,
+.k-when {
+  margin: 0;
+  font-weight: 900;
+  font-size: 1.15rem;
+  background: #e8f3fd;
+  border: 2.5px solid var(--ink);
+  border-radius: 10px;
+  padding: 0.3rem 0.6rem;
+  overflow-wrap: anywhere;
+}
+.pickup-when.delivery,
+.k-when.deliver {
+  background: #ffe9c7;
+}
+.k-when {
+  margin: 0.2rem 0.9rem 0.3rem;
+}
+.kcard.deliver {
+  border-style: dashed;
+}
+.kslot-head {
+  grid-column: 1 / -1;
+  margin: 0.4rem 0 -0.3rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  font-family: var(--display);
+  font-size: 1.9rem;
+  letter-spacing: 0.04em;
+  color: var(--red);
+}
+.kslot-head:first-child {
+  margin-top: 0;
+}
+.kslot-head span {
+  font-family: var(--body);
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--ink-soft);
+  letter-spacing: 0;
+}
+.yo-when {
+  margin: 0;
+  font-weight: 800;
+}
+.trk-when {
+  font-weight: 800;
+}

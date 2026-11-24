@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { amountDue, checkCart, cleanName, createOrder, duplicateReference, nextSeq, orderNumber } from '../../domain/checkout';
 import { cleanNote, NOTE_MAX } from '../../domain/kitchen';
 import { lineBits } from '../../domain/lineText';
+import { EMPTY_PICKUP, pickupFrom, pickupText, pickupProblem, type PickupDraft, type Pickup } from '../../domain/pickup';
+import { PickupChooser } from './PickupChooser';
 import { cardStateFor } from '../../domain/cards';
 import { availableRewards, canRedeem, checkVoucher, localDate, parseCard } from '../../domain/loyalty';
 import { applyCombo, itemById, newId, lineTotal, lineUnitTotal, peso, spinsEarned, stockUsage, subtotal, suggestCombo } from '../../domain/pricing';
@@ -45,6 +47,8 @@ type Parked = {
   name?: string;
   /** The note for the kitchen about the whole order. */
   note?: string;
+  /** Pickup time and delivery place chosen so far. */
+  pickup?: PickupDraft;
   /** The name was filled in from the Boom Card, not typed. */
   nameFromCard?: boolean;
   at: number;
@@ -163,6 +167,9 @@ export function Cashier() {
   /** The ready order whose details are open, before "Picked up". */
   const [pickup, setPickup] = useState<string | null>(null);
   const [orderNote, setOrderNote] = useState('');
+  const [pickupDraft, setPickupDraft] = useState<PickupDraft>(EMPTY_PICKUP);
+  /** Pay was tried with the pickup time or delivery place missing. */
+  const [pickupMissing, setPickupMissing] = useState(false);
   /** Pay was tried with no name: the name box is marked until one is typed. */
   const [nameMissing, setNameMissing] = useState(false);
   const nameInput = useRef<HTMLInputElement>(null);
@@ -341,6 +348,8 @@ export function Cashier() {
   const clearOrder = () => {
     setLines([]);
     setOrderNote('');
+    setPickupDraft(EMPTY_PICKUP);
+    setPickupMissing(false);
     setNameMissing(false);
     setCustomerName('');
     setCardFilledName('');
@@ -359,6 +368,7 @@ export function Cashier() {
     voucher,
     name: customerName.trim() || undefined,
     note: cleanNote(orderNote),
+    pickup: pickupDraft,
     nameFromCard: (!!cardFilledName && customerName === cardFilledName) || undefined,
     at: Date.now(),
     mode: s.mode,
@@ -406,6 +416,7 @@ export function Cashier() {
     setVoucher(v);
     setCustomerName(p.name ?? '');
     setOrderNote(p.note ?? '');
+    setPickupDraft(p.pickup && typeof p.pickup === 'object' ? { ...EMPTY_PICKUP, ...p.pickup } : EMPTY_PICKUP);
     setCardFilledName(p.nameFromCard ? (p.name ?? '') : '');
     setCardInput('');
     setVoucherInput('');
@@ -443,7 +454,7 @@ export function Cashier() {
     if (!draftChecked.current || !day) return;
     saveDraft(lines.length ? parkCurrent(day) : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, cardId, voucher, customerName, orderNote, cardFilledName, s.mode, dayId]);
+  }, [lines, cardId, voucher, customerName, orderNote, pickupDraft, cardFilledName, s.mode, dayId]);
   useEffect(() => saveAfterPay(afterPay), [afterPay]);
 
   // ----- Pay -----
@@ -457,6 +468,12 @@ export function Cashier() {
       nameInput.current?.focus();
       return;
     }
+    const problem = pickupProblem(pickupDraft);
+    if (problem) {
+      setPickupMissing(true);
+      flash(problem, true);
+      return;
+    }
     setPaying(true);
   };
 
@@ -464,6 +481,12 @@ export function Cashier() {
     if (!day) return;
     if (!cleanName(customerName)) {
       const problem = "The customer's first name is missing. Close this and type it first.";
+      flash(problem, true);
+      return problem;
+    }
+    const pickup: Pickup | undefined = pickupFrom(pickupDraft);
+    if (!pickup) {
+      const problem = `${pickupProblem(pickupDraft)} Close this and choose it first.`;
       flash(problem, true);
       return problem;
     }
@@ -484,6 +507,7 @@ export function Cashier() {
         cardId,
         customerName,
         note: orderNote,
+        pickup,
         rewardsRedeemed: rewardsInCart,
         voucher,
         method,
@@ -538,8 +562,9 @@ export function Cashier() {
       spins,
       method: paying ? payMethod : undefined,
       name: customerName.trim() || undefined,
+      when: pickupText({ pickup: pickupFrom(pickupDraft) }, s) || undefined,
     });
-  }, [lines, paying, payMethod, voucher, afterOrder, afterPay?.mode, s, sub, due, spins, customerName]);
+  }, [lines, paying, payMethod, voucher, afterOrder, afterPay?.mode, s, sub, due, spins, customerName, pickupDraft]);
 
   // ----- Keyboard -----
   type Entry = { type: 'item'; m: MenuItem } | { type: 'combo'; c: Combo };
@@ -751,6 +776,7 @@ export function Cashier() {
                           <TilePhoto src={m.photo} />
                           <span className="tile-name">{m.name}</span>
                         </span>
+                        {m.kind === 'slushie' && <span className="tile-sub">Add fries or fruit on top</span>}
                         {allergenText(itemTags(m), true) && <span className="tile-allergens">{allergenText(itemTags(m), true)}</span>}
                         <span className="tile-foot">
                           <span className="tile-price">{peso(m.price)}</span>
@@ -789,8 +815,10 @@ export function Cashier() {
                   <span className="orders-label">Ready · tap to see the order, then Picked up</span>
                   {readyToClaim.map((o) => (
                     <button key={o.id} className="btn small success ready-chip" onClick={() => setPickup(o.id)}>
+                      {o.pickup?.deliverTo && '🚚 '}
                       {o.number}
                       {o.customerName && <b> · {o.customerName}</b>}
+                      {o.pickup?.deliverTo && <span className="ready-place"> → {o.pickup.deliverTo}</span>}
                     </button>
                   ))}
                 </div>
@@ -951,6 +979,7 @@ export function Cashier() {
                   aria-invalid={nameMissing && !customerName.trim()}
                 />
               </div>
+              <PickupChooser s={s} value={pickupDraft} onChange={setPickupDraft} missing={pickupMissing} />
               <div className="mini-form order-note-form">
                 <input
                   className="input"

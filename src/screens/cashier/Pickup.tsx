@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { lineBits } from '../../domain/lineText';
+import { isDelivery, pickupText } from '../../domain/pickup';
 import { peso } from '../../domain/pricing';
 import type { Order, Settings } from '../../domain/types';
 import { Modal, useLatest } from '../../ui/ui';
@@ -17,7 +18,8 @@ export function PickupModal({ order, s, onPickedUp, onClose }: { order: Order; s
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Enter on a button presses that button ("Not yet", "Picked up + log spins"); anywhere else it means Picked up.
-      if (e.key !== 'Enter' || e.repeat || e.target instanceof HTMLButtonElement) return;
+      // (A button outside this dialog, like the chip that opened it, does not count.)
+      if (e.key !== 'Enter' || e.repeat || (e.target instanceof HTMLButtonElement && e.target.closest('.modal'))) return;
       e.preventDefault();
       e.stopPropagation();
       done.current(false);
@@ -25,6 +27,8 @@ export function PickupModal({ order, s, onPickedUp, onClose }: { order: Order; s
     addEventListener('keydown', onKey, true);
     return () => removeEventListener('keydown', onKey, true);
   }, [done]);
+  const delivery = isDelivery(order);
+  const when = pickupText(order, s);
   const itemName = (id: string) => s.menu.find((m) => m.id === id)?.name ?? id;
   return (
     <Modal title={`Pickup · ${order.number}`} onClose={onClose}>
@@ -35,6 +39,7 @@ export function PickupModal({ order, s, onPickedUp, onClose }: { order: Order; s
             {order.number} · {pieces} item{pieces === 1 ? '' : 's'} · paid {peso(order.payment.due)} {METHOD[order.payment.method]}
           </span>
         </div>
+        {when && <p className={`pickup-when ${delivery ? 'delivery' : ''}`}>{delivery ? '🚚 ' : '🕒 '}{when}</p>}
         {order.note && <p className="pickup-note">Note: {order.note}</p>}
         <ul className="pickup-lines">
           {order.lines.map((l) => (
@@ -60,11 +65,11 @@ export function PickupModal({ order, s, onPickedUp, onClose }: { order: Order; s
           </button>
           {spinsLeft > 0 && (
             <button className="btn big" onClick={() => onPickedUp(true)}>
-              Picked up + log spin{spinsLeft === 1 ? '' : 's'}
+              {delivery ? 'Delivered' : 'Picked up'} + log spin{spinsLeft === 1 ? '' : 's'}
             </button>
           )}
           <button className="btn success big" onClick={() => onPickedUp(false)}>
-            Picked up ↵
+            {delivery ? 'Delivered ↵' : 'Picked up ↵'}
           </button>
         </div>
       </div>

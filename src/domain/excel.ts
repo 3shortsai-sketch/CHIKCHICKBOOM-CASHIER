@@ -140,7 +140,7 @@ export function daySheets(day: BusinessDay, all: Order[], s: Settings, cashMoves
   const moneyCols = new Set([11, 12, 13]);
   const orders: Sheet = {
     name: 'Orders',
-    widths: [11, 8, 7, 12, 9, 12, 10, 13, 36, 40, 6, 11, 11, 11, 7, 20],
+    widths: [11, 8, 7, 12, 9, 12, 10, 13, 36, 40, 6, 11, 11, 11, 7, 20, 11, 22],
     freezeHeader: true,
     rows: [head(...(rows[0] as string[])), ...rows.slice(1).map((r) => r.map((c, i): XCell => (typeof c === 'number' && moneyCols.has(i) ? money(c) : c)))],
   };

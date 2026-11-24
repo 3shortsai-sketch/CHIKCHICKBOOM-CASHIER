@@ -1,4 +1,5 @@
 import { usedAfterCount, usesStock } from './inventory';
+import { pickupOf, SLOT_LABEL } from './pickup';
 import { itemById, lineCostEach, lineTotal, money2, stockUsage } from './pricing';
 import { paidSoFar, PRIZE_LABEL, prizeRefundTotal } from './wheel';
 import type { BusinessDay, CashMove, MenuItem, Order, OrderLine, PaymentMethod, PrizeId, Settings } from './types';
@@ -336,11 +337,12 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * Amounts are numbers (for Excel); text stays text.
  */
 export function orderRows(day: BusinessDay | undefined, all: Order[], s: Settings): Cell[][] {
-  const header = ['date', 'order', 'time', 'cashier', 'payment', 'reference', 'card', 'row_type', 'item', 'details', 'qty', 'unit_price', 'amount', 'cost', 'voided', 'void_reason'];
+  const header = ['date', 'order', 'time', 'cashier', 'payment', 'reference', 'card', 'row_type', 'item', 'details', 'qty', 'unit_price', 'amount', 'cost', 'voided', 'void_reason', 'pickup_time', 'deliver_to'];
   const out: Cell[][] = [header];
   for (const o of dayOrders(day, all).sort((a, b) => a.seq - b.seq)) {
     const base: Cell[] = [day?.date ?? '', o.number, time(o.createdAt), o.cashier, o.payment.method, o.payment.reference ?? '', o.cardId ?? ''];
-    const tail: Cell[] = [o.voided ? 'yes' : 'no', o.voided?.reason ?? ''];
+    const p = pickupOf(o);
+    const tail: Cell[] = [o.voided ? 'yes' : 'no', o.voided?.reason ?? '', p ? SLOT_LABEL[p.slot] : '', p?.deliverTo ?? ''];
     for (const l of o.lines) {
       const details = [
         l.choices?.side && `side: ${l.choices.side}`,
@@ -366,7 +368,7 @@ export function orderRows(day: BusinessDay | undefined, all: Order[], s: Setting
   }
   for (const w of day?.waste ?? []) {
     const item = itemById(s, w.itemId);
-    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, w.qty, 0, 0, r2((item?.unitCost ?? 0) * w.qty), 'no', '']);
+    out.push([day?.date ?? '', '', time(w.at), w.by, '', '', '', 'waste', item?.name ?? w.itemId, w.reason, w.qty, 0, 0, r2((item?.unitCost ?? 0) * w.qty), 'no', '', '', '']);
   }
   return out;
 }

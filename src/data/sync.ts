@@ -24,6 +24,7 @@ import { cardStateFor } from '../domain/cards';
 import { MENU_VERSION } from '../domain/defaults';
 import { waitMinutes } from '../domain/inventory';
 import { itemProgress } from '../domain/kitchen';
+import { byPickup, dueAt, isDelivery, pickupOf, slotText, walkUpOrders } from '../domain/pickup';
 import { availableRewards, findVoucher, localDate, voucherTerms } from '../domain/loyalty';
 import { isAvailable, stockLeft } from '../domain/reports';
 import type { DataMode, Order } from '../domain/types';
@@ -133,9 +134,13 @@ function plain<T>(v: T): T {
 }
 
 /** A patch for a merge write: a field set to `undefined` means "remove it". */
-function patchFields(patch: Record<string, unknown>): Record<string, unknown> {
+function patchFields(patch: Record<string, unknown>, gone: Record<string, string[]> = {}): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(patch)) out[k] = v === undefined ? deleteField() : plain(v);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) out[k] = deleteField();
+    else if (gone[k]?.length && v && typeof v === 'object' && !Array.isArray(v)) out[k] = { ...(plain(v) as object), ...Object.fromEntries(gone[k].map((key) => [key, deleteField()])) };
+    else out[k] = plain(v);
+  }
   return out;
 }
 
@@ -148,14 +153,22 @@ let writeError: string | null = null;
 /** Listeners the server refused, by collection, until they connect again. */
 const listenProblem: Partial<Record<Collection, string>> = {};
 
+/** When this device last sent a change to each document, to tell its own echo from another device's change. */
+const ownWrites = new Map<string, number>();
+const OWN_WRITE_MS = 5000;
+
 function push(op: Op) {
   if (!db) return;
+  ownWrites.set(`${op.col}/${op.id}`, Date.now());
   const r = ref(op.col, op.id);
   const done =
     op.type === 'put'
       ? setDoc(r, plain(op.doc) as Record<string, unknown>)
       : op.type === 'patch'
-        ? setDoc(r, patchFields(op.patch), { merge: true })
+        ? // Maps (sold out, stock counts, break times) are merged entry by entry, so two
+          // devices changing different entries both keep theirs; the entries this
+          // change took out (op.gone) are removed by name, or they would come back.
+          setDoc(r, patchFields(op.patch, op.gone), { merge: true })
         : op.type === 'append'
           ? // The server adds the entry to whatever list it has, so two devices never overwrite each other.
             setDoc(r, { [op.field]: arrayUnion(plain(op.item)) }, { merge: true })
@@ -195,32 +208,101 @@ let cashBlocked = false;
 // ---------- Public copy for the customer page ----------
 // Customers are not signed in, so they can never read the booth data. The
 // device that changes an order also writes a tiny public copy of it: the
-// order number, its status and its times. No names, items or money.
+// order number, the customer's first name, its status, times and how many
+// items are done. No items, money, full names or delivery place. A copy can
+// only be opened by its exact id, never listed.
 
 let publicBlocked = false;
 /** What was last written to each public document, so the same thing is not written twice. */
 const lastPublic = new Map<string, string>();
 
-/** Forget what was written to the order, card and voucher copies (the booth summary keeps its own check). */
-function forgetPublicWrites() {
-  for (const key of [...lastPublic.keys()]) if (key.startsWith('tracker/')) lastPublic.delete(key);
+/**
+ * How to write a public copy again: it is worked out afresh from this
+ * device's data at that moment, so a late retry never sends an old status.
+ */
+type Redo = { k: 'order'; id: string } | { k: 'card'; mode: DataMode; n: string } | { k: 'voucher'; mode: DataMode; code: string } | { k: 'booth' };
+
+/**
+ * Public copies not yet accepted by Firebase (signed out, offline when the
+ * app closed, rules not published). Kept on the device and written again
+ * once it is signed in and has the shared data, so the customer page never
+ * stays wrong (stamps after "Start fresh", a voucher's status...).
+ */
+const PENDING_KEY = 'ccb:public-pending';
+
+function readPending(): Record<string, Redo> {
+  try {
+    const v = JSON.parse(localStorage.getItem(PENDING_KEY) ?? '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, Redo>) : {};
+  } catch {
+    return {};
+  }
 }
 
-function publicWrite(path: [string, string], data: Record<string, unknown>) {
+function setPending(key: string, redo: Redo | null) {
+  try {
+    const all = readPending();
+    if (redo) all[key] = redo;
+    else if (key in all) delete all[key];
+    else return;
+    if (Object.keys(all).length) localStorage.setItem(PENDING_KEY, JSON.stringify(all));
+    else localStorage.removeItem(PENDING_KEY);
+  } catch {
+    /* storage full or blocked: it is written again the next time this record changes */
+  }
+}
+
+/** Write every public copy still waiting. Called once the device is signed in and has the shared data. */
+function drainPending() {
+  const all = Object.values(readPending());
+  if (!all.length) return;
+  try {
+    localStorage.removeItem(PENDING_KEY);
+  } catch {
+    return;
+  }
+  for (const r of all) {
+    if (r.k === 'order') publishOrder(r.id);
+    else if (r.k === 'card') publishCard(r.mode, r.n);
+    else if (r.k === 'voucher') publishVoucher(r.mode, r.code);
+    else scheduleBoothSummary(true);
+  }
+}
+
+/** Another device changed this record and may have rewritten its public copies: the next write here must not be skipped. */
+function forgetPublicFor(col: Collection, data: Record<string, unknown>) {
+  const mode = data.mode as string | undefined;
+  if (col === 'cards' && typeof data.number === 'string' && mode) lastPublic.delete(`tracker/${publicCardId(mode, data.number)}`);
+  if (col !== 'orders' || !mode) return;
+  if (typeof data.number === 'string' && typeof data.createdAt === 'number') lastPublic.delete(`tracker/${trackerId(mode, localDate(data.createdAt), data.number)}`);
+  if (typeof data.cardId === 'string') lastPublic.delete(`tracker/${publicCardId(mode, data.cardId)}`);
+  const codes = [(data.voucher as { code?: unknown } | undefined)?.code, ...(Array.isArray(data.spins) ? data.spins.map((x: { voucherCode?: unknown }) => x?.voucherCode) : [])];
+  for (const c of codes) if (typeof c === 'string') lastPublic.delete(`tracker/${publicVoucherId(mode, c)}`);
+}
+
+function publicWrite(path: [string, string], data: Record<string, unknown>, redo: Redo) {
   if (!db) return;
   const key = path.join('/');
+  // Signed out, Firebase would refuse it: keep it for after signing in.
+  if (!authState.email) return setPending(key, redo);
   const json = JSON.stringify(data);
   if (lastPublic.get(key) === json) return;
   lastPublic.set(key, json);
-  setDoc(doc(db, path[0], path[1]), { ...data, updatedAt: Date.now() }).catch((e: { code?: string }) => {
-    lastPublic.delete(key);
-    // Until the new rules are published this fails; the booth keeps working.
-    if (!publicBlocked) console.warn('customer page copy not saved', e);
-    if (e.code === 'permission-denied' && !publicBlocked) {
-      publicBlocked = true;
-      updateStatus();
-    }
-  });
+  setPending(key, redo);
+  setDoc(doc(db, path[0], path[1]), { ...data, updatedAt: Date.now() })
+    .then(() => {
+      // Only if nothing newer was started for the same copy meanwhile.
+      if (lastPublic.get(key) === json) setPending(key, null);
+    })
+    .catch((e: { code?: string }) => {
+      lastPublic.delete(key);
+      // Until the rules are published this fails; the booth keeps working.
+      if (!publicBlocked) console.warn('customer page copy not saved', e);
+      if (e.code === 'permission-denied' && authState.email && !publicBlocked) {
+        publicBlocked = true;
+        updateStatus();
+      }
+    });
 }
 
 /** The id customers look up: mode, date and order number, e.g. live_2026-11-23_A-012. */
@@ -252,6 +334,12 @@ export type TrackerDoc = {
   /** Items the kitchen has finished, and items in the order. */
   done?: number;
   total?: number;
+  /** "Lunch" or "Lunch · 11:30 AM". */
+  when?: string | null;
+  /** The order is carried to the customer (the place itself is not made public). */
+  delivery?: boolean;
+  /** Ordered ahead: the time of its break. Until then no "minutes left" is shown. */
+  dueAt?: number | null;
 };
 
 /** A Boom Card as the customer sees it: stamps and rewards only, never the owner's name. */
@@ -299,8 +387,11 @@ function publishTracker(o: Order) {
     name: o.customerName ?? null,
     done: p.done,
     total: p.total,
+    when: pickupOf(o) ? slotText(pickupOf(o)!.slot, getState().settings) : null,
+    delivery: isDelivery(o),
+    dueAt: dueAt(o, getState().settings) > o.createdAt ? dueAt(o, getState().settings) : null,
   };
-  publicWrite(['tracker', trackerId(o.mode, localDate(o.createdAt), o.number)], data);
+  publicWrite(['tracker', trackerId(o.mode, localDate(o.createdAt), o.number)], data, { k: 'order', id: o.id });
 }
 
 /** Stamps and rewards of one card, worked out from its orders like everywhere else. */
@@ -319,7 +410,7 @@ export function publishCard(mode: DataMode, number: string) {
     ready: availableRewards(cs, s).map((r) => r.label),
     next: next ? { label: next.label, more: next.at - cs.stamps } : null,
   };
-  publicWrite(['tracker', publicCardId(mode, number)], data);
+  publicWrite(['tracker', publicCardId(mode, number)], data, { k: 'card', mode, n: number });
 }
 
 /** A change to a card record (name, stamp edit). Its id is "<mode>_<number>". */
@@ -347,7 +438,7 @@ function publishVoucher(mode: DataMode, code: string) {
     used: !!v?.usedBy,
     practice: mode === 'demo',
   };
-  publicWrite(['tracker', publicVoucherId(mode, code)], data);
+  publicWrite(['tracker', publicVoucherId(mode, code)], data, { k: 'voucher', mode, code });
 }
 
 /** Voucher codes each order had when it was last published, so an undone prize is taken back too. */
@@ -448,7 +539,6 @@ export function publicMenu(st: ReturnType<typeof getState>): BoothMenuItem[] {
 }
 
 let boothTimer: ReturnType<typeof setTimeout> | null = null;
-let lastBooth = '';
 const BOOTH_EVERY_MS = 20000;
 
 /** Sold out, queue, ready numbers and wait time for the customer page, at most every 20 seconds. */
@@ -477,18 +567,16 @@ function sendBoothSummary() {
   const summary: Omit<BoothDoc, 'updatedAt'> = {
     open: !!day,
     date: day?.date ?? null,
-    queue: todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt).map((o) => o.number),
-    ready: todays.filter((o) => o.status === 'ready').sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0)).slice(0, 10).map((o) => o.number),
-    waitMinutes: waitMinutes(todays, Date.now(), st.settings.defaultWaitMinutes),
+    queue: todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort(byPickup).map((o) => o.number),
+    // A delivery is carried to its place: it is not "ready at the counter".
+    ready: todays.filter((o) => o.status === 'ready' && !isDelivery(o)).sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0)).slice(0, 10).map((o) => o.number),
+    waitMinutes: waitMinutes(walkUpOrders(todays, st.settings), Date.now(), st.settings.defaultWaitMinutes),
     soldOut: st.settings.menu.filter((m) => m.active && day?.soldOut[m.id]).map((m) => m.name),
     menu: publicMenu(st),
     card: { prefix: st.settings.loyalty.prefix, first: st.settings.loyalty.first, last: st.settings.loyalty.last },
   };
-  const key = `${st.settings.mode}:${JSON.stringify(summary)}`;
-  if (key === lastBooth) return;
-  lastBooth = key;
   boothSentAt = Date.now();
-  publicWrite(['public', `booth-${st.settings.mode}`], summary);
+  publicWrite(['public', `booth-${st.settings.mode}`], summary, { k: 'booth' });
 }
 
 // What each listener last told us, to show one combined status.
@@ -559,7 +647,8 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
   for (const ch of snap.docChanges()) {
     // Another device changed something: it may have rewritten the public copies
     // too, so this device must not skip its next write as "same as last time".
-    if (!ch.doc.metadata.hasPendingWrites && !snap.metadata.fromCache) forgetPublicWrites();
+    // (The server confirming this device's own change is not "another device".)
+    if (!ch.doc.metadata.hasPendingWrites && !snap.metadata.fromCache && Date.now() - (ownWrites.get(`${col}/${ch.doc.id}`) ?? 0) > OWN_WRITE_MS) forgetPublicFor(col, ch.doc.data());
     if (ch.type === 'removed') {
       removed.add(ch.doc.id);
       ops.push({ type: 'remove', col, id: ch.doc.id });
@@ -591,7 +680,11 @@ function onCollection(col: 'orders' | 'days' | 'cards' | 'cashMoves', snap: Quer
     replayOutbox(col);
   }
   // Once this device has the shared orders and cards: the public copies from before this version.
-  if (replayed.orders && replayed.cards) backfillPublic();
+  if (replayed.orders && replayed.cards && !publicCaughtUp) {
+    publicCaughtUp = true;
+    backfillPublic();
+    drainPending();
+  }
   updateStatus();
 }
 
@@ -603,6 +696,8 @@ function isLeftover(col: Collection, data: Record<string, unknown>): boolean {
 }
 
 const replayed: Partial<Record<Collection, boolean>> = {};
+/** This connection has written the public copies that were waiting. */
+let publicCaughtUp = false;
 /** The old menu version this window already upgraded on the server (so it does it once). */
 let upgradedFrom: number | undefined;
 
@@ -697,6 +792,9 @@ function detach() {
   for (const k of Object.keys(replayed) as Collection[]) delete replayed[k];
   for (const k of Object.keys(listenProblem) as Collection[]) delete listenProblem[k];
   cashBlocked = false;
+  publicBlocked = false;
+  publicCaughtUp = false;
+  lastPublic.clear();
   writeError = null;
 }
 

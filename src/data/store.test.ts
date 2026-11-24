@@ -330,4 +330,44 @@ describe('store', () => {
     store.setRemote(null);
     store.enableOutbox(false);
   });
+  it('undoing a Ready that came from the last tick takes back only that tick', () => {
+    store.putOrder(order('k1', { status: 'ready', readyAt: 9, done: ['a', 'b', 'c'] }) as never);
+    store.undoReady('k1', 'c');
+    expect(store.getState().orders.k1).toMatchObject({ status: 'cooking', done: ['a', 'b'] });
+    expect(store.getState().orders.k1.readyAt).toBeUndefined();
+    store.putOrder(order('k2', { status: 'ready', readyAt: 9, done: ['a'] }) as never);
+    store.undoReady('k2');
+    expect(store.getState().orders.k2.done).toEqual(['a']);
+  });
+  it('notes which map entries a change removes, so the server can merge the rest', () => {
+    const dayDoc = { id: 'demo-g', mode: 'demo', date: '2026-11-24', openedAt: 1, openedBy: 'Ana', openingFloat: 0, stockStart: {}, soldOut: { water: true, fries: true } };
+    store.putDay(dayDoc as never);
+    const sent: Op[] = [];
+    store.setRemote({ push: (op) => sent.push(op) });
+    store.patchDay('demo-g', { soldOut: { fries: true, mango: true } });
+    store.saveSettings({ pickupTimes: { recess: '09:30', lunch: '11:30' } });
+    store.saveSettings({ pickupTimes: { lunch: '11:30' } });
+    store.undoReady('k1', 'b');
+    store.setRemote(null);
+    const patches = sent.filter((op) => op.type === 'patch') as Extract<Op, { type: 'patch' }>[];
+    expect(patches[0].gone).toEqual({ soldOut: ['water'] });
+    expect(patches[1].gone).toEqual({});
+    expect(patches[2].gone).toEqual({ pickupTimes: ['recess'] });
+    // Undo: the tick is taken back before the status goes back to cooking.
+    expect(sent.slice(-2).map((op) => op.type)).toEqual(['pull', 'patch']);
+  });
+
+  it('will not lift a Start fresh clear from a signed-out device', () => {
+    const dayDoc = { id: 'live-s', mode: 'live', date: '2026-11-22', openedAt: 1, openedBy: 'Ana', openingFloat: 0, stockStart: {}, soldOut: {}, closedAt: 9 };
+    store.putDay(dayDoc as never);
+    store.putOrder(order('S1', { mode: 'live', dayId: 'live-s' }) as never);
+    const backup = store.exportBackup();
+    store.startFresh('live');
+    const r = store.importBackup(backup, { signedOut: true });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/Sign this device in first/);
+    expect(store.getState().orders.S1).toBeUndefined();
+    expect(store.importBackup(backup).ok).toBe(true);
+    expect(store.getState().orders.S1).toBeTruthy();
+  });
 });
