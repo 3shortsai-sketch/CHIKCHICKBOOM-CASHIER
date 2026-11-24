@@ -90,3 +90,32 @@ export function slotRank(o: Pick<Order, 'pickup'>): number {
 export function byPickup<T extends Pick<Order, 'pickup' | 'createdAt'>>(a: T, b: T): number {
   return slotRank(a) - slotRank(b) || a.createdAt - b.createdAt;
 }
+
+/**
+ * When the kitchen should have it done by: the break's clock time on the day
+ * of the order, when Setup has one and the order was placed before it.
+ * Otherwise the order is wanted now (its own time).
+ */
+export function dueAt(o: Pick<Order, 'pickup' | 'createdAt'>, s: Settings): number {
+  const p = pickupOf(o);
+  const t = p ? slotTime(p.slot, s) : undefined;
+  if (!t) return o.createdAt;
+  const [h, m] = t.split(':').map(Number);
+  const d = new Date(o.createdAt);
+  d.setHours(h, m, 0, 0);
+  return Math.max(o.createdAt, d.getTime());
+}
+
+/** Ordered ahead for a break that has not come yet. */
+export function isAhead(o: Pick<Order, 'pickup' | 'createdAt'>, s: Settings, now: number): boolean {
+  return dueAt(o, s) > now;
+}
+
+/**
+ * The orders that say how long a customer ordering now waits: orders placed
+ * ahead for a later break are left out (they are not in the walk-up line,
+ * and their hours of waiting are not cooking time).
+ */
+export function walkUpOrders<T extends Pick<Order, 'pickup' | 'createdAt'>>(orders: T[], s: Settings): T[] {
+  return orders.filter((o) => dueAt(o, s) === o.createdAt);
+}

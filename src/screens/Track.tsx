@@ -121,6 +121,8 @@ function OrderCard({ number, info, practice, booth, now, onRemove }: { number: s
   const mins = t ? minutesLeft(t, booth, now) : null;
   const spins = t && t.status !== 'voided' ? t.spinsLeft : 0;
   const progress = t ? progressText(t) : null;
+  // Ordered ahead for a later break: "2 orders ahead, about 1 minute" would be wrong for hours.
+  const early = !!t && typeof t.dueAt === 'number' && now < t.dueAt;
   return (
     <section className={`trk-card trk-${kind}`} aria-live="polite">
       <div className="trk-card-head">
@@ -154,8 +156,8 @@ function OrderCard({ number, info, practice, booth, now, onRemove }: { number: s
             <>
               <p className="trk-state">{t.status === 'cooking' ? 'Cooking' : 'Received'}</p>
               {progress && <p className="trk-line trk-progress">{progress}</p>}
-              {ahead !== null && <p className="trk-line">{ahead === 0 ? "You're next!" : `${plural(ahead, 'order', 'orders')} ahead of you`}</p>}
-              {mins !== null && <p className="trk-line">About {plural(mins, 'minute', 'minutes')}</p>}
+              {ahead !== null && !early && <p className="trk-line">{ahead === 0 ? "You're next!" : `${plural(ahead, 'order', 'orders')} ahead of you`}</p>}
+              {mins !== null && !early && <p className="trk-line">About {plural(mins, 'minute', 'minutes')}</p>}
             </>
           ) : kind === 'ready' ? (
             <>

@@ -66,7 +66,7 @@ function RestorePanel({ msg, setMsg }: { msg: RestoreMsg; setMsg: (m: RestoreMsg
             return;
           }
           try {
-            setMsg(importBackup(await f.text(), { withSettings }));
+            setMsg(importBackup(await f.text(), { withSettings, signedOut: !!sync.needsSignIn }));
           } catch {
             setMsg({ ok: false, message: 'Could not read that file.' });
           }

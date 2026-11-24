@@ -82,13 +82,17 @@ await expectOk('booth writes an order copy for the customer page', () => setDoc(
 await expectOk('booth writes the booth summary', () => setDoc(doc(booth, 'public', 'booth-demo'), { open: true }));
 await expectDenied('booth cannot write another public document', () => setDoc(doc(booth, 'public', 'other'), { x: 1 }));
 
-// Saving a changed field replaces it whole (as the app now does), so a cleared value is gone on the server
-await setDoc(doc(booth, 'settings', 'main'), { pickupTimes: { lunch: '11:30' } }, { mergeFields: ['pickupTimes'] });
+// A map is merged entry by entry (as the app does), and an entry taken out is removed by name
+await setDoc(doc(booth, 'settings', 'main'), { pickupTimes: { lunch: '11:30', recess: deleteField() } }, { merge: true });
 const settings = (await getDoc(doc(booth, 'settings', 'main'))).data();
 await check('a cleared break time is gone from the server', settings.pickupTimes.recess === undefined && settings.pickupTimes.lunch === '11:30');
 await check('fields not in the change are kept', settings.mode === 'demo' && settings.wheel?.paused === false);
-await setDoc(doc(booth, 'days', 'x1'), { closedAt: 5 }, { mergeFields: ['closedAt'] });
-await setDoc(doc(booth, 'days', 'x1'), { closedAt: deleteField() }, { mergeFields: ['closedAt'] });
+await setDoc(doc(booth, 'days', 'x1'), { soldOut: { water: true } }, { merge: true });
+await setDoc(doc(booth, 'days', 'x1'), { soldOut: { fries: true } }, { merge: true });
+const soldOut = (await getDoc(doc(booth, 'days', 'x1'))).data().soldOut;
+await check('two devices marking different items sold out both keep theirs', soldOut.water === true && soldOut.fries === true);
+await setDoc(doc(booth, 'days', 'x1'), { closedAt: 5 }, { merge: true });
+await setDoc(doc(booth, 'days', 'x1'), { closedAt: deleteField() }, { merge: true });
 await check('reopening a day removes closedAt on the server', !('closedAt' in (await getDoc(doc(booth, 'days', 'x1'))).data()));
 
 // Another account (anyone can make one with the app's public config)

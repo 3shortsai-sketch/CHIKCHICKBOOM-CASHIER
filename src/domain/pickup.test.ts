@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createOrder } from './checkout';
 import { defaultSettings } from './defaults';
-import { byPickup, cleanPlace, EMPTY_PICKUP, isDelivery, pickupFrom, pickupOf, pickupProblem, pickupText, slotText } from './pickup';
+import { byPickup, cleanPlace, dueAt, isAhead, walkUpOrders, EMPTY_PICKUP, isDelivery, pickupFrom, pickupOf, pickupProblem, pickupText, slotText } from './pickup';
 import { ordersCsv } from './reports';
 import type { BusinessDay, Order, OrderLine } from './types';
 
@@ -58,5 +58,20 @@ describe('pickup time', () => {
     expect(rows[0].split(',').slice(-2)).toEqual(['pickup_time', 'deliver_to']);
     expect(rows[1]).toContain('Lunch,"Grade 5, Rizal"');
     expect(rows[1].split(',')[12]).toBe('139');
+  });
+
+  it('treats an order placed ahead as due at its break, not when it was paid', () => {
+    const at = (h: number, m = 0) => new Date(2026, 10, 24, h, m).getTime();
+    const timed = { ...s, pickupTimes: { lunch: '11:30', recess: '09:30' } };
+    const ahead = order({ slot: 'lunch' }, at(8));
+    expect(dueAt(ahead, timed)).toBe(at(11, 30));
+    expect(isAhead(ahead, timed, at(10))).toBe(true);
+    expect(isAhead(ahead, timed, at(11, 45))).toBe(false);
+    // Ordered during or after the break, or no clock time in Setup: wanted now.
+    const walkUp = order({ slot: 'lunch' }, at(11, 40));
+    expect(dueAt(walkUp, timed)).toBe(at(11, 40));
+    expect(dueAt(order({ slot: 'dismissal' }, at(8)), timed)).toBe(at(8));
+    expect(dueAt(ahead, s)).toBe(at(8));
+    expect(walkUpOrders([ahead, walkUp], timed)).toEqual([walkUp]);
   });
 });

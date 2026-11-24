@@ -287,7 +287,7 @@ Copy `firestore.rules` from this repo, put the booth login email(s) in place of 
 ## Testing Firebase on this computer
 
 - `npm run emulators` starts the Firebase login and database emulators with the rules from `firestore.rules` (a copy with the test login `booth@test.com` in place of the placeholder; it lives in `.emulator/`, which is not committed). Needs Java.
-- `npm run check:rules` (in a second terminal) checks 31 things against those rules: the booth login can read and write everything it needs, another account can read and write nothing, a customer can open one order copy but cannot list or change them, and a cleared value (a break time, a reopened day's `closedAt`) is really removed on the server.
+- `npm run check:rules` (in a second terminal) checks 32 things against those rules: the booth login can read and write everything it needs, another account can read and write nothing, a customer can open one order copy but cannot list or change them, and a cleared value (a break time, a reopened day's `closedAt`) is really removed on the server.
 - `VITE_FIREBASE_EMULATOR=1 npm run build && npx vite preview` runs the app against the emulators.
-- A change to a document now replaces each changed field whole on the server (`mergeFields`), the same way the device does. Before, nested maps were merged, so a removed entry (a cleared break time, a side's allergens) stayed on the server and came back.
+- A change to a map (sold out, stock counts, break times) is merged entry by entry on the server, so two devices changing different entries both keep theirs. The entries a change takes out are removed by name; before, they stayed on the server and came back.
 - Customer page copies that Firebase has not accepted yet (signed out, offline, rules not published) are kept on the device (`ccb:public-pending`) and written once it is signed in again.

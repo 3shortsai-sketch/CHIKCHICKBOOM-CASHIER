@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { allTicked, itemProgress, liveTicks, NO_SIDE } from '../domain/kitchen';
 import { itemById } from '../domain/pricing';
-import { byPickup, pickupOf, slotRank, slotText } from '../domain/pickup';
+import { byPickup, dueAt, pickupOf, slotRank, slotText } from '../domain/pickup';
 import { kitchenMadeCounts } from '../domain/reports';
 import type { ComboPart, Order, OrderLine, Settings } from '../domain/types';
 import { modeOrders, openDay, patchOrder, tickItem, undoReady, untickItem, useStore } from '../data/store';
@@ -191,7 +191,8 @@ export function Kitchen() {
                 <span>{queue.filter((x) => slotRank(x) === slotRank(o)).length} order{queue.filter((x) => slotRank(x) === slotRank(o)).length === 1 ? '' : 's'}</span>
               </h2>
             ) : null;
-          const late = now - o.createdAt > s.kitchenLateMinutes * 60000;
+          // An order placed ahead for a later break is late only once its break time has passed.
+          const late = now - dueAt(o, s) > s.kitchenLateMinutes * 60000;
           const ticked = new Set(liveTicks(o));
           const prog = itemProgress(o);
           return [

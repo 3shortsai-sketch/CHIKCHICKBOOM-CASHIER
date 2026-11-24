@@ -16,7 +16,13 @@ export type Collection = 'settings' | 'days' | 'orders' | 'cards' | 'cashMoves';
 
 export type Op =
   | { type: 'put'; col: Collection; id: string; doc: unknown }
-  | { type: 'patch'; col: Collection; id: string; patch: Record<string, unknown> }
+  /**
+   * `gone` lists, per map field in the patch, the entries this change took out
+   * (a cleared break time, an item no longer sold out). It is worked out when
+   * the change is made, so the server can merge the map (keeping entries
+   * another device added meanwhile) and still remove exactly these.
+   */
+  | { type: 'patch'; col: Collection; id: string; patch: Record<string, unknown>; gone?: Record<string, string[]> }
   /** Add one entry to a list field (waste, refunds). Two devices adding at once both keep their entry. */
   | { type: 'append'; col: Collection; id: string; field: string; item: unknown }
   /** Take one entry out of a list field (a kitchen tick). Entries other devices added at the same moment are kept. */
@@ -219,11 +225,29 @@ function dropWiped(): boolean {
   return changed;
 }
 
+const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** Remember which map entries a patch removes (once: a replayed or passed-on patch keeps what it noted when it was made). */
+function noteGone(op: Extract<Op, { type: 'patch' }>, before: Record<string, unknown>) {
+  if (op.gone) return;
+  const gone: Record<string, string[]> = {};
+  for (const [field, next] of Object.entries(op.patch)) {
+    const was = before[field];
+    if (!isMap(was) || !isMap(next)) continue;
+    const removed = Object.keys(was).filter((k) => !(k in next) || next[k] === undefined);
+    if (removed.length) gone[field] = removed;
+  }
+  op.gone = gone;
+}
+
 /** Returns false when the change does not apply (e.g. a patch for a document this device does not have). */
 function applyOp(op: Op): boolean {
   if (op.col === 'settings') {
     if (op.type === 'put') state = { ...state, settings: upgradeSettings(op.doc as Partial<Settings>) };
-    else if (op.type === 'patch') state = { ...state, settings: { ...state.settings, ...(op.patch as Partial<Settings>) } };
+    else if (op.type === 'patch') {
+      noteGone(op, state.settings as unknown as Record<string, unknown>);
+      state = { ...state, settings: { ...state.settings, ...(op.patch as Partial<Settings>) } };
+    }
     else return false;
     dropWiped();
   } else {
@@ -234,6 +258,7 @@ function applyOp(op: Op): boolean {
     } else if (op.type === 'patch') {
       // Never invent a half-empty document from a patch.
       if (!col[op.id]) return false;
+      noteGone(op, col[op.id] as Record<string, unknown>);
       col[op.id] = { ...(col[op.id] as object), ...op.patch };
     } else if (op.type === 'append') {
       const doc = col[op.id] as Record<string, unknown> | undefined;
@@ -458,8 +483,10 @@ export function tickItem(id: string, key: string, also?: Partial<Order>) {
  * its last tick, only that tick is taken back, not the others.
  */
 export function undoReady(id: string, lastTick?: string) {
-  const ops: Op[] = [{ type: 'patch', col: 'orders', id, patch: { status: 'cooking', readyAt: undefined } }];
+  // The tick goes first: no screen may see "cooking with every item ticked", which would finish the order again.
+  const ops: Op[] = [];
   if (lastTick) ops.push({ type: 'pull', col: 'orders', id, field: 'done', item: lastTick });
+  ops.push({ type: 'patch', col: 'orders', id, patch: { status: 'cooking', readyAt: undefined } });
   commit(...ops);
 }
 
@@ -642,7 +669,7 @@ function validCard(v: unknown): boolean {
  * days and cards already here are kept as they are (they may be newer).
  * Settings come along only when asked (a brand-new laptop).
  */
-export function importBackup(json: string, opts: { withSettings?: boolean } = {}): { ok: boolean; message: string } {
+export function importBackup(json: string, opts: { withSettings?: boolean; signedOut?: boolean } = {}): { ok: boolean; message: string } {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -684,6 +711,9 @@ export function importBackup(json: string, opts: { withSettings?: boolean } = {}
   const cleared = have.settings.wiped;
   const uncleared = cleared ? cleared.days.filter((d) => backDays.has(d)) : [];
   const wiped = cleared && uncleared.length ? { ...cleared, days: cleared.days.filter((d) => !backDays.has(d)) } : cleared;
+  // Lifting a clear is a change to the shared settings, and those are replaced
+  // by the shared copy on sign-in: done signed out, the days would vanish again.
+  if (uncleared.length && opts.signedOut) return { ok: false, message: 'Not restored. This file brings back days that "Start fresh" cleared. Sign this device in first, then pick the file again.' };
   // First, so the records below are let back in.
   if (uncleared.length) ops.unshift({ type: 'patch', col: 'settings', id: SETTINGS_ID, patch: { wiped, updatedAt: now } });
   // The file's settings never bring back an older "cleared" list: the current one stays.
