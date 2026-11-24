@@ -17,6 +17,8 @@ export type LiveCart =
       spins: number;
       method?: PaymentMethod;
       name?: string;
+      /** "Pickup at Lunch" or "Deliver to Grade 5 at Lunch", once chosen. */
+      when?: string;
     }
   | { stage: 'paid'; number: string; spins: number; change: number; paid: number; method: PaymentMethod; name?: string };
 

@@ -24,6 +24,7 @@ import { cardStateFor } from '../domain/cards';
 import { MENU_VERSION } from '../domain/defaults';
 import { waitMinutes } from '../domain/inventory';
 import { itemProgress } from '../domain/kitchen';
+import { byPickup, isDelivery, pickupOf, slotText } from '../domain/pickup';
 import { availableRewards, findVoucher, localDate, voucherTerms } from '../domain/loyalty';
 import { isAvailable, stockLeft } from '../domain/reports';
 import type { DataMode, Order } from '../domain/types';
@@ -252,6 +253,10 @@ export type TrackerDoc = {
   /** Items the kitchen has finished, and items in the order. */
   done?: number;
   total?: number;
+  /** "Lunch" or "Lunch · 11:30 AM". */
+  when?: string | null;
+  /** The order is carried to the customer (the place itself is not made public). */
+  delivery?: boolean;
 };
 
 /** A Boom Card as the customer sees it: stamps and rewards only, never the owner's name. */
@@ -299,6 +304,8 @@ function publishTracker(o: Order) {
     name: o.customerName ?? null,
     done: p.done,
     total: p.total,
+    when: pickupOf(o) ? slotText(pickupOf(o)!.slot, getState().settings) : null,
+    delivery: isDelivery(o),
   };
   publicWrite(['tracker', trackerId(o.mode, localDate(o.createdAt), o.number)], data);
 }
@@ -477,7 +484,7 @@ function sendBoothSummary() {
   const summary: Omit<BoothDoc, 'updatedAt'> = {
     open: !!day,
     date: day?.date ?? null,
-    queue: todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort((a, b) => a.createdAt - b.createdAt).map((o) => o.number),
+    queue: todays.filter((o) => o.status === 'new' || o.status === 'cooking').sort(byPickup).map((o) => o.number),
     ready: todays.filter((o) => o.status === 'ready').sort((a, b) => (b.readyAt ?? 0) - (a.readyAt ?? 0)).slice(0, 10).map((o) => o.number),
     waitMinutes: waitMinutes(todays, Date.now(), st.settings.defaultWaitMinutes),
     soldOut: st.settings.menu.filter((m) => m.active && day?.soldOut[m.id]).map((m) => m.name),
